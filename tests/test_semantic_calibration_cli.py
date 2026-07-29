@@ -216,6 +216,7 @@ def test_holdout_eligible_calibration_writes_a_validated_closed_report(
     assert model.closed is True
     report_path = tmp_path / "eval-20260729-calibration-cli.json"
     assert report_path.exists()
+    assert report_path.stat().st_mode & 0o077 == 0
     report = json.loads(report_path.read_text(encoding="utf-8"))
     assert report["schema_version"] == "2.0"
     assert (
@@ -236,9 +237,14 @@ def test_holdout_eligible_calibration_writes_a_validated_closed_report(
     )
 
 
+@pytest.mark.parametrize(
+    "custom_option",
+    ["--fixture-path", "--case-dir"],
+)
 def test_holdout_eligible_calibration_rejects_custom_corpus_before_model(
     tmp_path,
     monkeypatch,
+    custom_option,
 ):
     calls = {"settings": 0, "budget": 0, "model": 0}
     monkeypatch.setattr(
@@ -286,8 +292,8 @@ def test_holdout_eligible_calibration_rejects_custom_corpus_before_model(
         [
             "--mode",
             "holdout_eligible",
-            "--fixture-path",
-            str(tmp_path / "custom.jsonl"),
+            custom_option,
+            str(tmp_path / "custom-corpus"),
             "--output-root",
             str(tmp_path),
             "--run-id",
@@ -297,6 +303,76 @@ def test_holdout_eligible_calibration_rejects_custom_corpus_before_model(
 
     assert exit_code == 2
     assert calls == {"settings": 0, "budget": 0, "model": 0}
+
+
+@pytest.mark.parametrize(
+    "settings_kwargs",
+    [
+        {"deepseek_temperature": 1},
+        {
+            "deepseek_base_url": (
+                "https://api.deepseek.com@attacker.example"
+            )
+        },
+        {"deepseek_model": "attacker-model"},
+    ],
+)
+def test_calibration_rejects_runtime_drift_before_budget_or_model(
+    tmp_path,
+    monkeypatch,
+    settings_kwargs,
+):
+    calls = {"budget": 0, "model": 0}
+    real_settings = calibration_cli.Settings
+
+    monkeypatch.setattr(
+        calibration_cli,
+        "DEFAULT_OUTPUT_ROOT",
+        tmp_path,
+    )
+    monkeypatch.setattr(
+        calibration_cli,
+        "PRIVATE_ARTIFACT_ROOT",
+        tmp_path,
+    )
+    monkeypatch.setattr(
+        calibration_cli,
+        "Settings",
+        lambda: real_settings(**settings_kwargs),
+    )
+
+    def fail_budget(**kwargs):
+        del kwargs
+        calls["budget"] += 1
+        raise AssertionError("budget must not be created")
+
+    def fail_model(*args, **kwargs):
+        del args, kwargs
+        calls["model"] += 1
+        raise AssertionError("model must not be created")
+
+    monkeypatch.setattr(
+        calibration_cli,
+        "build_deepseek_budget_guard",
+        fail_budget,
+    )
+    monkeypatch.setattr(
+        calibration_cli,
+        "build_deepseek_client",
+        fail_model,
+    )
+
+    exit_code = calibration_cli.main(
+        [
+            "--output-root",
+            str(tmp_path),
+            "--run-id",
+            "eval-20260729-runtime-drift",
+        ]
+    )
+
+    assert exit_code == 2
+    assert calls == {"budget": 0, "model": 0}
 
 
 def test_calibration_rejects_diagnostic_mode_before_paid_runtime(

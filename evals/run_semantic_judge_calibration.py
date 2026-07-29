@@ -19,6 +19,7 @@ from app.config import Settings
 from evals.calibration_attestation import (
     CalibrationAttestationError,
     canonical_contract_set_sha256,
+    require_canonical_calibration_runtime,
     validate_calibration_attestation,
 )
 from evals.canonical_pricing import CanonicalPricingError
@@ -34,7 +35,6 @@ from evals.readonly_reporting import (
 )
 from evals.run_readonly_agent_evals import build_deepseek_budget_guard
 from evals.semantic_calibration import (
-    load_calibration_fixtures_snapshot,
     parse_calibration_fixtures_snapshot,
     run_calibration_fixture,
     summarize_calibration,
@@ -94,28 +94,33 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
+    if args.mode != "holdout_eligible":
+        print(
+            "CALIBRATION INPUT ERROR: only canonical holdout-eligible "
+            "calibration is permitted."
+        )
+        return 2
     run_id = args.run_id or create_server_run_id()
     if not _RUN_ID_PATTERN.fullmatch(run_id):
         print("CALIBRATION ERROR: invalid run id.")
         return 2
-    if args.mode == "holdout_eligible":
-        try:
-            args.output_root = prepare_fixed_private_output_root(
-                args.output_root,
-                allowed_root=DEFAULT_OUTPUT_ROOT,
-                private_root=PRIVATE_ARTIFACT_ROOT,
-            )
-        except PrivatePathError:
-            print(
-                "CALIBRATION INPUT ERROR: holdout-eligible reports "
-                "must use the fixed private output root."
-            )
-            return 2
+    try:
+        args.output_root = prepare_fixed_private_output_root(
+            args.output_root,
+            allowed_root=DEFAULT_OUTPUT_ROOT,
+            private_root=PRIVATE_ARTIFACT_ROOT,
+        )
+    except PrivatePathError:
+        print(
+            "CALIBRATION INPUT ERROR: holdout-eligible reports "
+            "must use the fixed private output root."
+        )
+        return 2
     report_path = args.output_root / f"{run_id}.json"
     if report_path.exists():
         print("CALIBRATION ERROR: report already exists.")
         return 3
-    if args.mode == "holdout_eligible" and (
+    if (
         args.fixture_path.resolve() != DEFAULT_FIXTURE_PATH.resolve()
         or args.case_dir.resolve() != DEFAULT_CASE_DIR.resolve()
     ):
@@ -126,38 +131,29 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
 
     settings = Settings()
-    if settings.deepseek_temperature != 0:
-        print("CONFIGURATION ERROR: semantic judge requires temperature 0.")
+    try:
+        require_canonical_calibration_runtime(settings)
+    except CalibrationAttestationError as exc:
+        print(f"CONFIGURATION ERROR: {exc}")
         return 2
-    source_git_commit: str | None = None
-    if args.mode == "holdout_eligible":
-        try:
-            source_git_commit = require_clean_git_worktree()
-        except ValueError as exc:
-            print(f"CALIBRATION PRECHECK ERROR: {exc}")
-            return 2
+    try:
+        source_git_commit = require_clean_git_worktree()
+    except ValueError as exc:
+        print(f"CALIBRATION PRECHECK ERROR: {exc}")
+        return 2
     try:
         frozen_harness = freeze_readonly_harness(settings)
-        if source_git_commit is not None:
-            require_clean_git_worktree(
-                expected_commit=source_git_commit
-            )
-        if args.mode == "holdout_eligible":
-            fixture_snapshot = (
-                frozen_harness.calibration_fixture_snapshot
-            )
-            fixtures = parse_calibration_fixtures_snapshot(
-                fixture_snapshot
-            )
-        else:
-            fixtures, fixture_snapshot = (
-                load_calibration_fixtures_snapshot(args.fixture_path)
-            )
+        fixture_snapshot = (
+            frozen_harness.calibration_fixture_snapshot
+        )
+        fixtures = parse_calibration_fixtures_snapshot(
+            fixture_snapshot
+        )
         cases = load_cases(args.case_dir)
         validate_calibration_coverage(
             fixtures=fixtures,
             cases=cases,
-            require_canonical=args.mode == "holdout_eligible",
+            require_canonical=True,
         )
     except (OSError, RuntimeError, ValueError) as exc:
         print(f"CALIBRATION INPUT ERROR: {exc}")
@@ -168,6 +164,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     harness = dict(frozen_harness.fingerprints)
 
     try:
+        require_clean_git_worktree(
+            expected_commit=source_git_commit
+        )
         budget_guard = build_deepseek_budget_guard(
             settings=settings,
             run_id=run_id,
@@ -205,27 +204,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         model.close()
     budget_report = budget_guard.snapshot()
     completed_at = datetime.now(UTC)
-    if source_git_commit is not None:
-        try:
-            require_clean_git_worktree(
-                expected_commit=source_git_commit
-            )
-        except ValueError as exc:
-            print(f"CALIBRATION SOURCE ERROR: {exc}")
-            return 3
+    try:
+        require_clean_git_worktree(
+            expected_commit=source_git_commit
+        )
+    except ValueError as exc:
+        print(f"CALIBRATION SOURCE ERROR: {exc}")
+        return 3
     report: dict[str, object] = {
         "schema_version": "2.0",
-        "attestation_kind": (
-            "semantic_judge_holdout_eligibility"
-            if args.mode == "holdout_eligible"
-            else "semantic_judge_diagnostic"
-        ),
+        "attestation_kind": "semantic_judge_holdout_eligibility",
         "run_id": run_id,
-        **(
-            {"source_git_commit": source_git_commit}
-            if source_git_commit is not None
-            else {}
-        ),
+        "source_git_commit": source_git_commit,
         "started_at": started_at.isoformat(),
         "completed_at": completed_at.isoformat(),
         "fixture_sha256": fixture_sha256,
@@ -236,17 +226,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         "results": [asdict(result) for result in results],
     }
     _write_private_report(report_path, report)
-    if args.mode == "holdout_eligible":
-        try:
-            validate_calibration_attestation(
-                report_path=report_path,
-                settings=settings,
-                fixture_snapshot=fixture_snapshot,
-                harness_fingerprints=harness,
-            )
-        except CalibrationAttestationError as exc:
-            print(f"CALIBRATION ATTESTATION ERROR: {exc}")
-            return 3
+    try:
+        validate_calibration_attestation(
+            report_path=report_path,
+            settings=settings,
+            fixture_snapshot=fixture_snapshot,
+            harness_fingerprints=harness,
+        )
+    except CalibrationAttestationError as exc:
+        print(f"CALIBRATION ATTESTATION ERROR: {exc}")
+        return 3
 
     for result in results:
         status = "PASS" if result.passed else "FAIL"
@@ -257,9 +246,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         f"positive={summary.positive_rate:.3f}."
     )
     print(f"Private calibration report: {report_path}")
-    if args.mode == "holdout_eligible":
-        return 0 if summary.gate_passed else 1
-    return 0 if summary.passed == summary.total else 1
+    return 0 if summary.gate_passed else 1
 
 
 if __name__ == "__main__":

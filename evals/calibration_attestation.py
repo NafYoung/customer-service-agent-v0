@@ -8,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Literal, Mapping
+from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -60,11 +61,41 @@ CANONICAL_FIXTURE_PATH = (
     ROOT / "evals" / "semantic_judge_calibration_cases.jsonl"
 )
 CANONICAL_CASE_DIR = ROOT / "evals" / "readonly_regression_cases"
+CANONICAL_DEEPSEEK_MODEL = "deepseek-v4-flash"
 _SHA256_PATTERN = r"^[0-9a-f]{64}$"
 
 
 class CalibrationAttestationError(RuntimeError):
     """A calibration report or independent review cannot be trusted."""
+
+
+def require_canonical_calibration_runtime(settings: Settings) -> None:
+    """Fail closed unless calibration uses the priced deterministic runtime."""
+
+    try:
+        endpoint = urlparse(settings.deepseek_base_url)
+        endpoint_port = endpoint.port
+    except (TypeError, ValueError) as exc:
+        raise CalibrationAttestationError(
+            "The calibration runtime endpoint is invalid."
+        ) from exc
+    if (
+        type(settings.deepseek_temperature) not in {int, float}
+        or settings.deepseek_temperature != 0
+        or settings.deepseek_model != CANONICAL_DEEPSEEK_MODEL
+        or endpoint.scheme != "https"
+        or endpoint.hostname != "api.deepseek.com"
+        or endpoint_port not in {None, 443}
+        or endpoint.username is not None
+        or endpoint.password is not None
+        or endpoint.query
+        or endpoint.fragment
+        or endpoint.path not in {"", "/"}
+    ):
+        raise CalibrationAttestationError(
+            "The calibration runtime must use temperature 0, the canonical "
+            "model, and the official DeepSeek HTTPS endpoint."
+        )
 
 
 class _StrictModel(BaseModel):
@@ -268,6 +299,12 @@ def _validate_result(
     settings: Settings,
     rates_cny: BudgetRatesCny,
     tokens_per_price_unit: int,
+    report_started_at: datetime,
+    report_completed_at: datetime,
+    identity_started_at: datetime,
+    identity_completed_at: datetime,
+    price_captured_at: datetime,
+    price_valid_until: datetime,
 ) -> tuple[int, int, Literal["exact", "upper_bound"]]:
     if (
         record.fixture_id != fixture.fixture_id
@@ -331,9 +368,12 @@ def _validate_result(
     if (
         call.status != "success"
         or call.phase != "semantic_judge"
+        or call.finish_reason != "stop"
+        or call.message_count != 2
         or call.tool_contract_count != 0
         or call.tool_calls
         or call.error_code is not None
+        or call.http_status is not None
         or call.observed_model != settings.deepseek_model
         or call.usage is None
         or call.provider_attempts is None
@@ -342,6 +382,24 @@ def _validate_result(
     ):
         raise CalibrationAttestationError(
             "A calibration model call has invalid model or protocol evidence."
+        )
+    if (
+        call.started_at.tzinfo is None
+        or not (
+            identity_started_at
+            <= report_started_at
+            <= call.started_at
+            <= identity_completed_at
+            <= report_completed_at
+        )
+        or not (
+            price_captured_at
+            <= call.started_at
+            <= price_valid_until
+        )
+    ):
+        raise CalibrationAttestationError(
+            "A calibration model call has an invalid timestamp."
         )
     assert call.usage is not None
     assert isinstance(call.provider_attempts, int)
@@ -370,6 +428,7 @@ def validate_calibration_attestation(
 ) -> ValidatedCalibrationAttestation:
     """Validate and independently recompute a holdout-eligibility report."""
 
+    require_canonical_calibration_runtime(settings)
     try:
         require_private_regular_file(
             report_path,
@@ -487,17 +546,29 @@ def validate_calibration_attestation(
         canonical_price.rates_cny.model_dump()
     )
     attempt_evidence = budget.attempt_evidence
+    run_identity = budget.run_identity
+    assert run_identity is not None
+    assert run_identity.completed_at is not None
     if (
         budget.enforcement_mode != "persistent_sqlite"
         or budget.run_status != "completed"
-        or budget.run_identity is None
         or attempt_evidence is None
         or not attempt_evidence.run
         or not attempt_evidence.cumulative
-        or budget.run_identity.run_id != report.run_id
-        or budget.run_identity.purpose
+        or run_identity.run_id != report.run_id
+        or run_identity.purpose
         != "semantic_judge_calibration"
+        or run_identity.model != settings.deepseek_model
+        or run_identity.price_sha256 != budget.price.snapshot_sha256
         or budget.price.model != settings.deepseek_model
+        or not (
+            run_identity.started_at
+            <= report.started_at
+            <= run_identity.completed_at
+            <= report.completed_at
+        )
+        or run_identity.started_at < budget.price.captured_at
+        or run_identity.completed_at > budget.price.valid_until
         or report.started_at < budget.price.captured_at
         or report.completed_at > budget.price.valid_until
         or budget.run.reserved_count != 0
@@ -526,6 +597,12 @@ def validate_calibration_attestation(
             tokens_per_price_unit=(
                 canonical_price.tokens_per_price_unit
             ),
+            report_started_at=report.started_at,
+            report_completed_at=report.completed_at,
+            identity_started_at=run_identity.started_at,
+            identity_completed_at=run_identity.completed_at,
+            price_captured_at=budget.price.captured_at,
+            price_valid_until=budget.price.valid_until,
         )
         for record in report.results
     ]

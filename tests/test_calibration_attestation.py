@@ -370,6 +370,29 @@ def test_calibration_attestation_recomputes_results_summary_and_budget(
         )
 
 
+def test_calibration_attestation_accepts_canonical_trailing_slash_endpoint(
+    tmp_path: Path,
+) -> None:
+    report = _valid_report()
+    settings = Settings(
+        deepseek_model="deepseek-v4-flash",
+        deepseek_base_url="https://api.deepseek.com/",
+        deepseek_temperature=0,
+    )
+    report["harness"] = current_readonly_harness_fingerprints(settings)
+
+    validated = validate_calibration_attestation(
+        report_path=_write_json(
+            tmp_path / "canonical-trailing-slash.json",
+            report,
+        ),
+        settings=settings,
+        now=datetime(2026, 7, 29, 13, tzinfo=UTC),
+    )
+
+    assert validated.run_id == report["run_id"]
+
+
 @pytest.mark.parametrize(
     ("temperature", "base_url", "model"),
     [
