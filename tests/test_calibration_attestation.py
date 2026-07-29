@@ -371,6 +371,158 @@ def test_calibration_attestation_recomputes_results_summary_and_budget(
 
 
 @pytest.mark.parametrize(
+    ("temperature", "base_url", "model"),
+    [
+        (1, "https://api.deepseek.com", "deepseek-v4-flash"),
+        (0.7, "https://api.deepseek.com", "deepseek-v4-flash"),
+        (
+            0,
+            "https://api.deepseek.com@attacker.example",
+            "deepseek-v4-flash",
+        ),
+        (0, "https://api.deepseek.com/v1", "deepseek-v4-flash"),
+        (0, "https://api.deepseek.com:8443", "deepseek-v4-flash"),
+        (0, "https://api.deepseek.com", "attacker-model"),
+    ],
+)
+def test_calibration_attestation_rejects_noncanonical_runtime_settings(
+    tmp_path: Path,
+    temperature: float,
+    base_url: str,
+    model: str,
+) -> None:
+    report = _valid_report()
+    settings = Settings(
+        deepseek_model=model,
+        deepseek_base_url=base_url,
+        deepseek_temperature=temperature,
+    )
+    report["harness"] = current_readonly_harness_fingerprints(settings)
+
+    with pytest.raises(
+        CalibrationAttestationError,
+        match="runtime|temperature|endpoint|model",
+    ):
+        validate_calibration_attestation(
+            report_path=_write_json(
+                tmp_path
+                / (
+                    f"runtime-{temperature}-"
+                    f"{hashlib.sha256(base_url.encode()).hexdigest()[:8]}-"
+                    f"{model}.json"
+                ),
+                report,
+            ),
+            settings=settings,
+            now=datetime(2026, 7, 29, 13, tzinfo=UTC),
+        )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("status", "error"),
+        ("phase", "agent"),
+        ("finish_reason", "tool_calls"),
+        ("message_count", 0),
+        (
+            "tool_calls",
+            [
+                {
+                    "tool_call_id": "forged-call",
+                    "tool_name": "execute_action",
+                    "arguments": "{}",
+                }
+            ],
+        ),
+        ("error_code", "forged_error"),
+        ("http_status", 200),
+        ("provider_attempts", 0),
+    ],
+)
+def test_calibration_attestation_rejects_invalid_model_call_protocol(
+    tmp_path: Path,
+    field: str,
+    value: object,
+) -> None:
+    report = _valid_report()
+    report["results"][0]["model_calls"][0][field] = value
+
+    with pytest.raises(
+        CalibrationAttestationError,
+        match="model call|protocol|schema",
+    ):
+        validate_calibration_attestation(
+            report_path=_write_json(
+                tmp_path / f"invalid-call-{field}.json",
+                report,
+            ),
+            settings=Settings(
+                deepseek_model="deepseek-v4-flash",
+                deepseek_temperature=0,
+            ),
+            now=datetime(2026, 7, 29, 13, tzinfo=UTC),
+        )
+
+
+@pytest.mark.parametrize(
+    "started_at",
+    [
+        "2020-01-01T00:00:00+00:00",
+        "2026-07-29T12:01:00",
+        "2026-07-29T12:06:00+00:00",
+    ],
+)
+def test_calibration_attestation_binds_call_time_to_report_budget_and_price(
+    tmp_path: Path,
+    started_at: str,
+) -> None:
+    report = _valid_report()
+    report["results"][0]["model_calls"][0]["started_at"] = started_at
+
+    with pytest.raises(
+        CalibrationAttestationError,
+        match="time|timestamp|protocol|schema",
+    ):
+        validate_calibration_attestation(
+            report_path=_write_json(
+                tmp_path / f"invalid-call-time-{started_at[:4]}.json",
+                report,
+            ),
+            settings=Settings(
+                deepseek_model="deepseek-v4-flash",
+                deepseek_temperature=0,
+            ),
+            now=datetime(2026, 7, 29, 13, tzinfo=UTC),
+        )
+
+
+def test_calibration_attestation_binds_budget_identity_lifecycle(
+    tmp_path: Path,
+) -> None:
+    report = _valid_report()
+    report["budget"]["run_identity"]["started_at"] = (
+        "2020-01-01T00:00:00+00:00"
+    )
+
+    with pytest.raises(
+        CalibrationAttestationError,
+        match="budget|time|identity|lifecycle",
+    ):
+        validate_calibration_attestation(
+            report_path=_write_json(
+                tmp_path / "invalid-budget-identity-time.json",
+                report,
+            ),
+            settings=Settings(
+                deepseek_model="deepseek-v4-flash",
+                deepseek_temperature=0,
+            ),
+            now=datetime(2026, 7, 29, 13, tzinfo=UTC),
+        )
+
+
+@pytest.mark.parametrize(
     "attack",
     [
         "missing_attempt_evidence",

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
+
+import pytest
 
 from app.agent.openai_compatible import AssistantTurn
 from evals import run_semantic_judge_calibration as calibration_cli
@@ -15,6 +18,7 @@ class _ClosedBudgetGuard:
     def __init__(self, attempt_count: int):
         self.attempt_count = attempt_count
         self.closed = False
+        self.started_at = datetime.now(UTC)
 
     def close(self) -> None:
         self.closed = True
@@ -48,8 +52,8 @@ class _ClosedBudgetGuard:
                 "model": "deepseek-v4-flash",
                 "price_sha256": price["snapshot_sha256"],
                 "status": "completed",
-                "started_at": "2026-07-29T12:00:00+00:00",
-                "completed_at": "2026-07-29T12:05:00+00:00",
+                "started_at": self.started_at.isoformat(),
+                "completed_at": datetime.now(UTC).isoformat(),
             },
             "price": price,
             "reservation_cny_per_attempt": "1.002048",
@@ -236,7 +240,7 @@ def test_holdout_eligible_calibration_rejects_custom_corpus_before_model(
     tmp_path,
     monkeypatch,
 ):
-    called = False
+    calls = {"settings": 0, "budget": 0, "model": 0}
     monkeypatch.setattr(
         calibration_cli,
         "DEFAULT_OUTPUT_ROOT",
@@ -248,15 +252,34 @@ def test_holdout_eligible_calibration_rejects_custom_corpus_before_model(
         tmp_path,
     )
 
-    def fail_if_called(**kwargs):
-        nonlocal called
-        called = True
+    def fail_settings():
+        calls["settings"] += 1
+        raise AssertionError("settings must not be loaded")
+
+    def fail_budget(**kwargs):
+        del kwargs
+        calls["budget"] += 1
         raise AssertionError("budget must not be created")
+
+    def fail_model(*args, **kwargs):
+        del args, kwargs
+        calls["model"] += 1
+        raise AssertionError("model must not be created")
 
     monkeypatch.setattr(
         calibration_cli,
         "build_deepseek_budget_guard",
-        fail_if_called,
+        fail_budget,
+    )
+    monkeypatch.setattr(
+        calibration_cli,
+        "build_deepseek_client",
+        fail_model,
+    )
+    monkeypatch.setattr(
+        calibration_cli,
+        "Settings",
+        fail_settings,
     )
 
     exit_code = calibration_cli.main(
@@ -273,7 +296,54 @@ def test_holdout_eligible_calibration_rejects_custom_corpus_before_model(
     )
 
     assert exit_code == 2
-    assert called is False
+    assert calls == {"settings": 0, "budget": 0, "model": 0}
+
+
+def test_calibration_rejects_diagnostic_mode_before_paid_runtime(
+    tmp_path,
+    monkeypatch,
+):
+    calls = {"settings": 0, "budget": 0, "model": 0}
+
+    def fail_settings():
+        calls["settings"] += 1
+        raise AssertionError("settings must not be loaded")
+
+    def fail_budget(**kwargs):
+        del kwargs
+        calls["budget"] += 1
+        raise AssertionError("budget must not be created")
+
+    def fail_model(*args, **kwargs):
+        del args, kwargs
+        calls["model"] += 1
+        raise AssertionError("model must not be created")
+
+    monkeypatch.setattr(calibration_cli, "Settings", fail_settings)
+    monkeypatch.setattr(
+        calibration_cli,
+        "build_deepseek_budget_guard",
+        fail_budget,
+    )
+    monkeypatch.setattr(
+        calibration_cli,
+        "build_deepseek_client",
+        fail_model,
+    )
+
+    exit_code = calibration_cli.main(
+        [
+            "--mode",
+            "diagnostic",
+            "--output-root",
+            str(tmp_path),
+            "--run-id",
+            "eval-20260729-diagnostic-calibration",
+        ]
+    )
+
+    assert exit_code == 2
+    assert calls == {"settings": 0, "budget": 0, "model": 0}
 
 
 def test_holdout_eligible_calibration_checks_clean_git_before_budget(
@@ -325,3 +395,77 @@ def test_holdout_eligible_calibration_checks_clean_git_before_budget(
 
     assert exit_code == 2
     assert budget_called is False
+
+
+def test_calibration_rechecks_clean_source_after_cases_load_before_budget(
+    tmp_path,
+    monkeypatch,
+):
+    cases_loaded = False
+    clean_checks: list[str | None] = []
+    calls = {"budget": 0, "model": 0}
+    real_load_cases = calibration_cli.load_cases
+
+    monkeypatch.setattr(
+        calibration_cli,
+        "DEFAULT_OUTPUT_ROOT",
+        tmp_path,
+    )
+    monkeypatch.setattr(
+        calibration_cli,
+        "PRIVATE_ARTIFACT_ROOT",
+        tmp_path,
+    )
+
+    def load_then_drift(path):
+        nonlocal cases_loaded
+        cases = real_load_cases(path)
+        cases_loaded = True
+        return cases
+
+    def detect_drift(*, expected_commit=None):
+        clean_checks.append(expected_commit)
+        if cases_loaded:
+            raise ValueError("source drifted after case load")
+        return "1" * 40
+
+    def fail_budget(**kwargs):
+        del kwargs
+        calls["budget"] += 1
+        raise AssertionError("budget must not be created")
+
+    def fail_model(*args, **kwargs):
+        del args, kwargs
+        calls["model"] += 1
+        raise AssertionError("model must not be created")
+
+    monkeypatch.setattr(calibration_cli, "load_cases", load_then_drift)
+    monkeypatch.setattr(
+        calibration_cli,
+        "require_clean_git_worktree",
+        detect_drift,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        calibration_cli,
+        "build_deepseek_budget_guard",
+        fail_budget,
+    )
+    monkeypatch.setattr(
+        calibration_cli,
+        "build_deepseek_client",
+        fail_model,
+    )
+
+    exit_code = calibration_cli.main(
+        [
+            "--output-root",
+            str(tmp_path),
+            "--run-id",
+            "eval-20260729-post-load-drift",
+        ]
+    )
+
+    assert exit_code == 2
+    assert clean_checks == [None, "1" * 40]
+    assert calls == {"budget": 0, "model": 0}
