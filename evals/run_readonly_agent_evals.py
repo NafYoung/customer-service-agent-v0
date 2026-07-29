@@ -54,6 +54,7 @@ from evals.holdout_lock import (
     verify_holdout_receipt_chain,
 )
 from evals.nonformal_paid_contract import (
+    require_nonformal_paid_case_payload,
     require_nonformal_paid_case_set,
 )
 from evals.private_paths import (
@@ -376,6 +377,19 @@ def run_eval_suite(
     partial_results: list[ReadonlyEvalResult] | None = None,
     pre_write_check: Callable[[], None] | None = None,
 ) -> tuple[list[ReadonlyEvalResult], dict, Path]:
+    if purpose not in {
+        "diagnostic",
+        "dev_repeat",
+        "holdout_formal",
+    }:
+        raise ValueError("Unsupported Eval purpose")
+    if purpose in {"diagnostic", "dev_repeat"}:
+        require_nonformal_paid_case_payload(
+            purpose=purpose,
+            case_set_name=case_set_name,
+            cases=cases,
+            planned_trials=trials,
+        )
     started_at = datetime.now(UTC)
     runtime_harness = frozen_harness or freeze_readonly_harness(
         settings

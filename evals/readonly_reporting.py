@@ -630,6 +630,9 @@ def _require_completed_paid_trial_calls(
     expected_model: str,
 ) -> None:
     observed_models: set[str] = set()
+    expected_agent_contract_count = len(
+        get_read_only_tool_contracts()
+    )
     for result in results:
         trial_started = _paid_evidence_datetime(
             result.started_at,
@@ -657,6 +660,11 @@ def _require_completed_paid_trial_calls(
             or judge_calls[0].sequence != 1
             or judge_calls[0].tool_contract_count != 0
             or bool(judge_calls[0].tool_calls)
+            or any(
+                call.tool_contract_count
+                != expected_agent_contract_count
+                for call in agent_calls
+            )
         ):
             raise ValueError(
                 f"{label} each completed trial requires consecutive "
@@ -676,6 +684,8 @@ def _require_completed_paid_trial_calls(
                 or call.usage is None
                 or call.provider_attempts != 1
                 or call.observed_model != expected_model
+                or call.error_code is not None
+                or call.http_status is not None
             ):
                 raise ValueError(
                     f"{label} calls require the exact model and "
@@ -877,7 +887,7 @@ def build_readonly_manifest(
         if harness_fingerprints is not None
         else current_readonly_harness_fingerprints(settings)
     )
-    if purpose == "dev_repeat":
+    if purpose in {"diagnostic", "dev_repeat"}:
         require_nonformal_paid_case_payload(
             purpose=purpose,
             case_set_name=case_set_name,

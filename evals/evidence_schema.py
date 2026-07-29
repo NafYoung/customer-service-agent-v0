@@ -21,6 +21,7 @@ from app.agent.deepseek_budget import (
     cny_to_units,
     units_to_cny,
 )
+from app.tools.contracts import get_read_only_tool_contracts
 from evals.canonical_pricing import (
     CanonicalPricingError,
     canonical_price_file_sha256,
@@ -286,7 +287,7 @@ class ReadonlyManifest(StrictEvidenceModel):
                 raise ValueError(
                     "Non-formal evidence cannot claim formal attestations"
                 )
-            if self.purpose == "dev_repeat":
+            if self.purpose in {"diagnostic", "dev_repeat"}:
                 contract = nonformal_paid_contract(self.purpose)
                 if (
                     self.eval.case_set_name != contract.case_set_name
@@ -299,8 +300,16 @@ class ReadonlyManifest(StrictEvidenceModel):
                     or self.execution.case_order
                     != list(contract.case_ids)
                     or self.status != "completed"
-                    or self.execution.completed_trials != 4
-                    or self.budget.enforcement_mode
+                    or self.execution.completed_trials
+                    != contract.planned_trials
+                ):
+                    raise ValueError(
+                        f"{self.purpose} evidence is not canonical "
+                        "and completed"
+                    )
+            if self.purpose == "dev_repeat":
+                if (
+                    self.budget.enforcement_mode
                     != "persistent_sqlite"
                     or self.budget.run_status != "completed"
                     or self.model.observed_models
@@ -1196,6 +1205,9 @@ def _require_completed_paid_bundle_records(
             f"{label} run is outside canonical pricing"
         )
     observed_models: set[str] = set()
+    expected_agent_contract_count = len(
+        get_read_only_tool_contracts()
+    )
     for record in records:
         calls = record.model_calls
         agent_calls = [
@@ -1215,6 +1227,11 @@ def _require_completed_paid_bundle_records(
             or judge_calls[0].sequence != 1
             or judge_calls[0].tool_contract_count != 0
             or bool(judge_calls[0].tool_calls)
+            or any(
+                call.tool_contract_count
+                != expected_agent_contract_count
+                for call in agent_calls
+            )
         ):
             raise ValueError(
                 f"{label} each completed trial requires consecutive "
@@ -1238,6 +1255,8 @@ def _require_completed_paid_bundle_records(
                 or call.provider_attempts != 1
                 or call.observed_model
                 != manifest.model.requested_model
+                or call.error_code is not None
+                or call.http_status is not None
             ):
                 raise ValueError(
                     f"{label} model-call usage is not exact"

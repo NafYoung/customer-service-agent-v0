@@ -450,31 +450,54 @@ def test_diagnostic_manifest_and_schema_reject_noncanonical_identity() -> None:
     result = _result(case_id=arbitrary_case.case_id, trial=1)
     started = datetime(2026, 7, 29, 12, tzinfo=UTC)
 
+    with pytest.raises(ValueError, match="canonical|case"):
+        build_readonly_manifest(
+            run_id="eval-20260729-diagnostic-builder-forgery",
+            purpose="diagnostic",
+            split="dev",
+            case_set_name="arbitrary-diagnostic-v1",
+            cases=[arbitrary_case],
+            results=[result],
+            settings=_settings(),
+            planned_trials=1,
+            started_at=started,
+            completed_at=started + timedelta(minutes=1),
+        )
+
+    canonical_cases = load_cases(DEFAULT_CASE_DIR)
+    canonical_results = [
+        _result(case_id=case.case_id, trial=1)
+        for case in canonical_cases
+    ]
     manifest = build_readonly_manifest(
-        run_id="eval-20260729-diagnostic-forgery",
+        run_id="eval-20260729-diagnostic-schema-forgery",
         purpose="diagnostic",
         split="dev",
-        case_set_name="arbitrary-diagnostic-v1",
-        cases=[arbitrary_case],
-        results=[result],
+        case_set_name="readonly-dev-v1",
+        cases=canonical_cases,
+        results=canonical_results,
         settings=_settings(),
         planned_trials=1,
         started_at=started,
         completed_at=started + timedelta(minutes=1),
     )
+    manifest["eval"]["case_set_name"] = "arbitrary-diagnostic-v1"
     manifest["artifacts"] = {
         "cases": "cases.jsonl",
         "summary": "summary.json",
         "trajectories": "trajectories/",
         "integrity": "integrity.json",
     }
-    records = [result_to_record(result, split="dev")]
+    records = [
+        result_to_record(item, split="dev")
+        for item in canonical_results
+    ]
     payload = {
         "manifest": manifest,
         "cases": records,
         "summary": summarize_results(
             run_id=manifest["run_id"],
-            results=[result],
+            results=canonical_results,
             planned_trials=1,
         ),
         "trajectories": deepcopy(records),

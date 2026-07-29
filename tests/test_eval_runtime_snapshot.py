@@ -23,7 +23,12 @@ from evals.file_snapshot import (
     read_file_snapshot,
     require_private_regular_file,
 )
-from evals.readonly_eval import ReadonlyEvalCase, run_case
+from evals.readonly_eval import (
+    DEFAULT_CASE_DIR,
+    ReadonlyEvalCase,
+    load_cases,
+    run_case,
+)
 from evals.run_readonly_agent_evals import run_eval_suite
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -283,16 +288,7 @@ def test_eval_suite_reuses_one_snapshot_after_source_file_drift(
         Settings(deepseek_api_key=None)
     )
     model = _PromptMutationModel(prompt_path)
-    cases = [
-        ReadonlyEvalCase.model_validate(
-            {
-                "case_id": f"frozen-suite-{index}",
-                "user_message": "查询订单。",
-                "expected": {},
-            }
-        )
-        for index in range(2)
-    ]
+    cases = load_cases(DEFAULT_CASE_DIR)
 
     _, _, bundle_path = run_eval_suite(
         model=model,
@@ -301,14 +297,14 @@ def test_eval_suite_reuses_one_snapshot_after_source_file_drift(
         run_id="eval-frozen-suite-0001",
         purpose="diagnostic",
         split="dev",
-        case_set_name="frozen-suite-v1",
-        trials=2,
+        case_set_name="readonly-dev-v1",
+        trials=1,
         output_root=tmp_path / "bundles",
         frozen_harness=frozen,
     )
 
     assert model.closed is True
-    assert model.system_prompts == ["FROZEN PROMPT"] * 4
+    assert model.system_prompts == ["FROZEN PROMPT"] * 10
     manifest = (
         bundle_path / "manifest.json"
     ).read_text(encoding="utf-8")
@@ -335,15 +331,7 @@ def test_eval_suite_keeps_partial_results_and_checks_source_before_write(
     prompt_path = tmp_path / "mutated-source.md"
     prompt_path.write_text("initial", encoding="utf-8")
     model = _PromptMutationModel(prompt_path)
-    cases = [
-        ReadonlyEvalCase.model_validate(
-            {
-                "case_id": "prewrite-source-gate",
-                "user_message": "查询订单。",
-                "expected": {},
-            }
-        )
-    ]
+    cases = load_cases(DEFAULT_CASE_DIR)
     partial_results = []
 
     with pytest.raises(RuntimeError, match="source drift"):
@@ -354,7 +342,7 @@ def test_eval_suite_keeps_partial_results_and_checks_source_before_write(
             run_id="eval-prewrite-source-gate",
             purpose="diagnostic",
             split="dev",
-            case_set_name="prewrite-source-gate",
+            case_set_name="readonly-dev-v1",
             trials=1,
             output_root=tmp_path / "bundles",
             partial_results=partial_results,
@@ -363,5 +351,5 @@ def test_eval_suite_keeps_partial_results_and_checks_source_before_write(
             ),
         )
 
-    assert len(partial_results) == 1
+    assert len(partial_results) == 10
     assert not (tmp_path / "bundles").exists()

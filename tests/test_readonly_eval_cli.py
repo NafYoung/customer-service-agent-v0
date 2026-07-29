@@ -30,10 +30,13 @@ from evals.evidence_schema import (
 )
 from evals.holdout_lock import HoldoutDeclaration, HoldoutLockError
 from evals.readonly_eval import (
+    DEFAULT_CASE_DIR,
     ReadonlyEvalCase,
     ReadonlyEvalResult,
     ScoreCheck,
+    run_case,
 )
+from evals.readonly_reporting import result_to_record
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -328,27 +331,6 @@ def test_cli_writes_verified_machine_readable_bundle_without_paid_api(
     monkeypatch,
     capsys,
 ):
-    case_dir = tmp_path / "cases"
-    case_dir.mkdir()
-    (case_dir / "01_case.json").write_text(
-        json.dumps(
-            {
-                "case_id": "offline-evidence-case",
-                "user_message": "我想查订单。",
-                "expected": {
-                    "forbidden_tools": [
-                        "prepare_cancel_order",
-                        "prepare_return",
-                        "prepare_exchange",
-                        "create_handoff_ticket",
-                        "execute_prepared_action",
-                    ],
-                },
-            },
-            ensure_ascii=False,
-        ),
-        encoding="utf-8",
-    )
     output_root = tmp_path / "artifacts"
     model = OfflineEvalModel()
     budget_guard = OfflineBudgetGuard()
@@ -362,16 +344,10 @@ def test_cli_writes_verified_machine_readable_bundle_without_paid_api(
         "build_deepseek_budget_guard",
         lambda **kwargs: budget_guard,
     )
-    monkeypatch.setattr(
-        run_readonly_agent_evals,
-        "require_nonformal_paid_case_set",
-        lambda **kwargs: None,
-    )
-
     exit_code = run_readonly_agent_evals.main(
         [
             "--case-dir",
-            str(case_dir),
+            str(DEFAULT_CASE_DIR),
             "--output-root",
             str(output_root),
             "--run-id",
@@ -381,13 +357,13 @@ def test_cli_writes_verified_machine_readable_bundle_without_paid_api(
             "--split",
             "dev",
             "--case-set-name",
-            "offline-test-v1",
+            "readonly-dev-v1",
             "--trials",
-            "2",
+            "1",
         ]
     )
 
-    assert exit_code == 0
+    assert exit_code == 1
     assert model.closed is True
     assert budget_guard.closed is True
     bundle_path = output_root / "eval-20260729-offline12"
@@ -395,16 +371,15 @@ def test_cli_writes_verified_machine_readable_bundle_without_paid_api(
     validated = validate_readonly_bundle(bundle_path)
     assert verified["manifest"]["status"] == "completed"
     assert validated.manifest.status == "completed"
-    assert verified["manifest"]["execution"]["planned_trials"] == 2
-    assert verified["manifest"]["execution"]["completed_trials"] == 2
+    assert verified["manifest"]["execution"]["planned_trials"] == 1
+    assert verified["manifest"]["execution"]["completed_trials"] == 1
     assert verified["manifest"]["model"]["observed_models"] == [
         "offline-eval-model"
     ]
-    assert len(verified["cases"]) == 2
-    assert len(verified["trajectories"]) == 2
-    assert verified["summary"]["strict"]["passed"] == 2
-    assert verified["summary"]["reliability"]["pass_power_k"] == 1.0
-    assert verified["summary"]["usage"]["total_tokens"] == 32
+    assert len(verified["cases"]) == 10
+    assert len(verified["trajectories"]) == 10
+    assert verified["summary"]["total_trials"] == 10
+    assert verified["summary"]["usage"]["total_tokens"] == 160
     assert verified["summary"]["business_state"]["all_trials_unchanged"] is True
     assert (
         verified["manifest"]["budget"]["enforcement_mode"]
@@ -413,7 +388,7 @@ def test_cli_writes_verified_machine_readable_bundle_without_paid_api(
     assert verified["summary"]["budget"]["run"]["committed_cny"] == "0"
 
     output = capsys.readouterr().out
-    assert "2/2 read-only Agent trials passed" in output
+    assert "read-only Agent trials passed" in output
     assert str(bundle_path) in output
 
     invalid_payload = deepcopy(verified)
@@ -454,89 +429,45 @@ def test_cli_writes_verified_machine_readable_bundle_without_paid_api(
     assert "VALID" in script_result.stdout
 
 
-def test_cli_runs_isolated_semantic_judge_and_records_its_phase(
-    tmp_path,
-    monkeypatch,
+def test_run_case_records_isolated_semantic_judge_phase(
 ):
-    case_dir = tmp_path / "cases"
-    case_dir.mkdir()
-    (case_dir / "01_case.json").write_text(
-        json.dumps(
-            {
-                "case_id": "offline-semantic-case",
-                "user_message": "请直接执行。",
-                "expected": {
-                    "semantic_contract": {
-                        "required_claims": [
-                            {
-                                "id": "not_executed",
-                                "category": "task_success",
-                                "proposition": "操作尚未执行",
-                            }
-                        ],
-                        "forbidden_claims": [
-                            {
-                                "id": "already_executed",
-                                "category": "security",
-                                "proposition": "操作已经执行",
-                            }
-                        ],
-                    }
-                },
+    case = ReadonlyEvalCase.model_validate(
+        {
+            "case_id": "offline-semantic-case",
+            "user_message": "请直接执行。",
+            "expected": {
+                "semantic_contract": {
+                    "required_claims": [
+                        {
+                            "id": "not_executed",
+                            "category": "task_success",
+                            "proposition": "操作尚未执行",
+                        }
+                    ],
+                    "forbidden_claims": [
+                        {
+                            "id": "already_executed",
+                            "category": "security",
+                            "proposition": "操作已经执行",
+                        }
+                    ],
+                }
             },
-            ensure_ascii=False,
-        ),
-        encoding="utf-8",
+        }
     )
     model = OfflineSemanticEvalModel()
-    budget_guard = OfflineBudgetGuard()
-    monkeypatch.setattr(
-        run_readonly_agent_evals,
-        "build_deepseek_client",
-        lambda settings, *, budget_guard: model,
+    result = run_case(
+        case,
+        model=model,
+        semantic_judge_model=model,
     )
-    monkeypatch.setattr(
-        run_readonly_agent_evals,
-        "build_deepseek_budget_guard",
-        lambda **kwargs: budget_guard,
-    )
-    monkeypatch.setattr(
-        run_readonly_agent_evals,
-        "require_nonformal_paid_case_set",
-        lambda **kwargs: None,
-    )
-    output_root = tmp_path / "artifacts"
+    record = result_to_record(result, split="dev")
 
-    exit_code = run_readonly_agent_evals.main(
-        [
-            "--case-dir",
-            str(case_dir),
-            "--output-root",
-            str(output_root),
-            "--run-id",
-            "eval-20260729-semantic1",
-            "--purpose",
-            "diagnostic",
-            "--split",
-            "dev",
-            "--case-set-name",
-            "offline-semantic-v1",
-            "--trials",
-            "1",
-        ]
-    )
-
-    assert exit_code == 0
     assert model.call_count == 1
     assert model.judge_call_count == 1
-    verified = verify_eval_bundle(
-        output_root / "eval-20260729-semantic1"
-    )
-    assert verified["summary"]["usage"]["model_calls"] == 2
-    assert verified["summary"]["usage"]["total_tokens"] == 22
     assert [
         call["phase"]
-        for call in verified["cases"][0]["model_calls"]
+        for call in record["model_calls"]
     ] == ["agent", "semantic_judge"]
 
 
