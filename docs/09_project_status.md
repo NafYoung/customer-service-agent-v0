@@ -1,10 +1,10 @@
 # 项目现役状态
 
-最后核对：2026-07-29 19:20 UTC
+最后核对：2026-07-29 20:00 UTC
 
 本地分支：`main`
 
-当前实现检查点：`94eb7a8`（Phase 2 adversarial repair）
+当前实现检查点：`1305f94`（Phase 2 fresh-audit repair）
 
 Preparation Agent 检查点：`1b034cd`
 
@@ -20,8 +20,8 @@ Preparation Agent 检查点：`1b034cd`
 | Eval 证据与预算闸门 | verified-current | 开发集 40/40；累计已结算费用 ¥0.12738404 |
 | holdout v1 | verified-current / retired | 唯一正式结果 46/80、`pass^4=0.35`；禁止重跑 |
 | Preparation Agent | changed-and-verified | 提交 `1b034cd`；独立审查 Gate GO |
-| 原子命题语义门 | changed-and-verified / pending re-audit | 49 条固定夹具已有逐 claim 人工证据区域和矛盾双侧标注；纯标点、跨 claim 和单侧证据失败关闭 |
-| 正式 Eval 证据链 | changed-and-verified / pending re-audit | `94eb7a8` 绑定持久预算身份、完整 bundle 内容、固定私有路径及权限；失败正式运行形成独立 failed-attempt bundle 和 terminal 链，不能冒充成功结果 |
+| 原子命题语义门 | changed-and-verified / pending fresh re-audit | 49 条固定夹具已有逐 claim 人工证据区域和矛盾双侧标注；单字、子串、删否定、跨 claim 和单侧证据失败关闭 |
+| 正式 Eval 证据链 | changed-and-verified / pending fresh re-audit | `1305f94` 绑定 canonical 价格、record 重算 summary、owner-only 完整回执链及 persistent failed-attempt 预算；失败结果不能冒充成功 |
 | DeepSeek 语义校准 | pending | 尚未调用，新增费用为 0 |
 | 公开回归与 holdout v2 | pending | 必须等待语义校准和独立审查通过 |
 | 宿主确认、并发、UI、GitHub、公开演示 | pending | 尚未实现或发布 |
@@ -30,14 +30,14 @@ Preparation Agent 检查点：`1b034cd`
 
 ## 最近验证
 
-2026-07-29 在 `94eb7a8` 实现上执行：
+2026-07-29 在 `1305f94` 实现上执行：
 
 ```text
 ruff: passed
-mypy: 49 source files passed
+mypy: 50 source files passed
 schema freshness: passed
-pytest: 276 passed
-branch coverage: 82.54%
+pytest: 308 passed
+branch coverage: 82.36%
 pip-audit: no known runtime vulnerabilities
 Reference Eval: 8/8
 ```
@@ -49,10 +49,10 @@ Reference Eval: 8/8
 
 ## 回家后唯一恢复顺序
 
-1. 先查看 `git status` 和检查点 `94eb7a8`，不要重跑 holdout v1。
-2. 对 `94eb7a8` 完成全新 `phase2_fresh_adversarial_reaudit`：语义绕过、校准标签、干净源码
-   门、冻结 runtime、逐 attempt 价格、费用重算、唯一运行锁、完整回执链和
-   正式输出隐私。
+1. 先查看 `git status` 和检查点 `1305f94`，不要重跑 holdout v1。
+2. 对 `1305f94` 完成全新 `phase2_fresh_adversarial_reaudit`：语义绕过、
+   canonical 价格单次冻结、校准标签、干净源码门、逐 attempt 费用、summary
+   重算、失败预算、唯一运行锁、完整回执链和正式输出隐私。
 3. 修复复审发现的所有 P0/P1 和影响交付合同的 P2，再运行完整离线门。
 4. 仅在价格快照仍有效、预算账本无未知预留且审查 Gate GO 后，安全加载
    `.env` 并运行公开语义校准。不得打印环境变量。
@@ -75,9 +75,10 @@ Reference Eval: 8/8
 
 ## 当前工作区说明
 
-Preparation Agent 与 Phase 2 对抗修复都已保存为本地检查点，但 Phase 2
-还没有复审 GO、真实校准或公开回归结果，不能视为验收完成。首轮三个并行
-只读审查均返回 NO-GO；`94eb7a8` 已逐项关闭其预算低记、预算身份脱钩、
-cases/trajectory 分叉、runtime 配置漏绑、回执链不完整、私有路径越界、
-证据 span 语义不足及失败轨迹丢失问题。下一步必须由未参与这些修改的全新
-审查者重新签发 Gate。复核现场保留，未删除缓存、数据库或私有 artifact。
+Preparation Agent 与 Phase 2 两轮对抗修复都已保存为本地检查点，但 Phase 2
+还没有 fresh re-audit GO、真实校准或公开回归结果，不能视为验收完成。
+对 `18433e6` 的三组全新只读审查再次返回 NO-GO，发现 artifact 自报定价、
+旧 80/80 summary、failed-attempt 低报预算、receipt/权限/路径披露和语义
+子串绕过；集成复查随后又复现价格冻结与预算守卫二次读取间的 P0 换包窗口。
+`1305f94` 已逐项关闭并新增 RED/GREEN 回归。下一步必须由未参与这些修改的
+全新审查者重新签发 Gate。复核现场保留，未删除缓存、数据库或私有 artifact。
