@@ -212,12 +212,17 @@ def _validate_annotated_regions(
     if len(regions) != len(set(regions)):
         raise ValueError(f"Duplicate {kind} evidence region.")
     for region in regions:
+        core = _semantic_text_core(region)
         categories = [
             unicodedata.category(character)
-            for character in region
+            for character in core
         ]
         if (
-            not any(category[0] in {"L", "N"} for category in categories)
+            sum(
+                category[0] in {"L", "N"}
+                for category in categories
+            )
+            < 2
             or any(category[0] == "C" for category in categories)
             or region not in assistant_answer
         ):
@@ -249,12 +254,19 @@ def _matching_region_indexes(
     assistant_answer: str,
 ) -> set[int]:
     core = _semantic_text_core(span)
-    if not core or span not in assistant_answer:
+    meaningful_character_count = sum(
+        unicodedata.category(character)[0] in {"L", "N"}
+        for character in core
+    )
+    if (
+        meaningful_character_count < 2
+        or span not in assistant_answer
+    ):
         return set()
     return {
         index
         for index, region in enumerate(regions)
-        if core in _semantic_text_core(region)
+        if core == _semantic_text_core(region)
     }
 
 

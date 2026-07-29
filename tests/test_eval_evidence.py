@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import stat
 from dataclasses import asdict
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import select
@@ -12,6 +13,7 @@ from app.config import Settings
 from app.database import Database
 from app.models import Inventory, ToolEvent
 from app.seed import seed_demo_data
+from evals import evidence_schema
 from evals.evidence import (
     ArtifactIntegrityError,
     ObservedChatModel,
@@ -300,3 +302,30 @@ def test_eval_bundle_rejects_unsafe_run_ids(tmp_path, run_id):
             case_records=[],
             summary={},
         )
+
+
+def test_formal_bundle_validator_requires_owner_only_permissions(
+    tmp_path,
+    monkeypatch,
+):
+    bundle_path = write_eval_bundle(
+        output_root=tmp_path,
+        run_id="eval-formal-private-permissions",
+        manifest={"run_id": "eval-formal-private-permissions"},
+        case_records=[],
+        summary={},
+    )
+    monkeypatch.setattr(
+        evidence_schema,
+        "validate_readonly_payload",
+        lambda payload: SimpleNamespace(
+            manifest=SimpleNamespace(
+                purpose="holdout_formal",
+                schema_version="2.0",
+            )
+        ),
+    )
+
+    bundle_path.chmod(0o755)
+    with pytest.raises(ArtifactIntegrityError, match="0700"):
+        evidence_schema.validate_readonly_bundle(bundle_path)

@@ -4,7 +4,6 @@ import argparse
 import re
 import sys
 from datetime import UTC, datetime
-from decimal import Decimal
 from pathlib import Path
 from typing import Callable, Literal, Protocol, Sequence
 from urllib.parse import urlparse
@@ -16,7 +15,6 @@ from app.agent.deepseek_budget import (
     BudgetError,
     DeepSeekBudgetGuard,
     SQLiteBudgetLedger,
-    load_price_snapshot,
 )
 from app.agent.factory import build_deepseek_client
 from app.agent.openai_compatible import ChatModel
@@ -28,19 +26,29 @@ from evals.calibration_attestation import (
     validate_calibration_attestation,
     validate_calibration_review,
 )
+from evals.canonical_pricing import (
+    FORMAL_EXECUTION_LIMIT_CNY,
+    FORMAL_HARD_LIMIT_CNY,
+    CanonicalPricingError,
+    require_frozen_canonical_price,
+)
 from evals.evidence import write_eval_bundle
 from evals.evidence_schema import validate_readonly_bundle
-from evals.file_snapshot import FileSnapshotError, read_file_snapshot
+from evals.file_snapshot import (
+    FileSnapshotError,
+    read_file_snapshot,
+    read_json_object_snapshot,
+)
 from evals.formal_failure_evidence import (
     FormalFailureContext,
     write_formal_failure_bundle,
 )
 from evals.holdout_lock import (
+    AcquiredHoldoutRunLock,
     HoldoutDeclaration,
     HoldoutLockError,
-    acquire_holdout_run_lock,
+    acquire_holdout_run_lock_with_hash,
     finalize_holdout_run_lock,
-    holdout_lock_receipt_sha256,
     validate_holdout_declaration,
     verify_failed_holdout_receipt_chain,
     verify_holdout_receipt_chain,
@@ -79,13 +87,6 @@ DEFAULT_BUDGET_LEDGER = (
 DEFAULT_HOLDOUT_LOCK_ROOT = (
     ROOT / "artifacts" / "private" / "holdout" / "formal-run-locks"
 )
-PRICE_SNAPSHOT_PATH = (
-    ROOT / "pricing" / "deepseek-v4-flash-2026-07-29.json"
-)
-HARD_BUDGET_LIMIT_CNY = Decimal("20")
-EXECUTION_BUDGET_LIMIT_CNY = Decimal("18")
-
-
 class ClosableChatModel(ChatModel, Protocol):
     def close(self) -> None: ...
 
@@ -105,6 +106,64 @@ def _stable_failure_code(error: BaseException) -> str:
     ).upper()
     normalized = re.sub(r"[^A-Z0-9_]", "_", normalized)
     return normalized[:96] if len(normalized) >= 3 else "EVAL_ERROR"
+
+
+def _finalize_terminal_with_retry(
+    *,
+    lock_path: Path,
+    status: Literal["completed", "failed"],
+    run_id: str,
+    start_receipt_sha256: str,
+    bundle_integrity_sha256: str | None = None,
+    attempt_bundle_integrity_sha256: str | None = None,
+) -> tuple[Path, BaseException | None]:
+    """Persist a terminal receipt after one asynchronous interruption."""
+
+    def write_terminal() -> Path:
+        return finalize_holdout_run_lock(
+            lock_path=lock_path,
+            status=status,
+            run_id=run_id,
+            expected_start_receipt_sha256=start_receipt_sha256,
+            bundle_integrity_sha256=bundle_integrity_sha256,
+            attempt_bundle_integrity_sha256=(
+                attempt_bundle_integrity_sha256
+            ),
+        )
+
+    try:
+        return write_terminal(), None
+    except BaseException as exc:
+        terminal_path = lock_path.with_name(
+            "readonly-holdout-v2.terminal.json"
+        )
+        if not terminal_path.exists():
+            terminal_path = write_terminal()
+        return terminal_path, exc
+
+
+def _recover_owned_start_receipt_sha256(
+    *,
+    lock_path: Path,
+    run_id: str,
+) -> str | None:
+    """Recover an already-fsynced start after an interrupted return boundary."""
+
+    for _ in range(2):
+        try:
+            payload, receipt_sha256 = read_json_object_snapshot(
+                lock_path,
+                label="holdout start receipt",
+            )
+            if (
+                payload.get("run_id") == run_id
+                and payload.get("status") == "started"
+            ):
+                return receipt_sha256
+            return None
+        except BaseException:
+            continue
+    return None
 
 
 def _quarantine_unverified_formal_bundle(
@@ -150,18 +209,24 @@ def build_deepseek_budget_guard(
     settings: Settings,
     run_id: str,
     purpose: str,
+    frozen_harness: FrozenReadonlyHarness,
 ) -> DeepSeekBudgetGuard:
     validate_paid_eval_settings(settings)
-    snapshot = load_price_snapshot(PRICE_SNAPSHOT_PATH)
+    price_snapshot = require_frozen_canonical_price(
+        frozen_harness.canonical_price,
+        expected_file_sha256=frozen_harness.fingerprints[
+            "canonical_price_snapshot_sha256"
+        ],
+    )
     return DeepSeekBudgetGuard(
         ledger=SQLiteBudgetLedger(
             path=DEFAULT_BUDGET_LEDGER,
-            hard_limit_cny=HARD_BUDGET_LIMIT_CNY,
-            execution_limit_cny=EXECUTION_BUDGET_LIMIT_CNY,
+            hard_limit_cny=FORMAL_HARD_LIMIT_CNY,
+            execution_limit_cny=FORMAL_EXECUTION_LIMIT_CNY,
         ),
         run_id=run_id,
         purpose=purpose,
-        price_snapshot=snapshot,
+        price_snapshot=price_snapshot,
         model=settings.deepseek_model,
         max_output_tokens=settings.deepseek_max_tokens,
     )
@@ -389,7 +454,10 @@ def _print_results(
     bundle_path: Path,
     *,
     disclose_case_details: bool = True,
+    disclose_bundle_path: bool | None = None,
 ) -> None:
+    if disclose_bundle_path is None:
+        disclose_bundle_path = disclose_case_details
     if disclose_case_details:
         print("| case | trial | result | tools | business state changed |")
         print("|---|---:|---:|---|---:|")
@@ -420,7 +488,10 @@ def _print_results(
         "business-state changes: "
         f"{summary['business_state']['changed_trials']}."
     )
-    print(f"Verified evidence bundle: {bundle_path}")
+    if disclose_bundle_path:
+        print(f"Verified evidence bundle: {bundle_path}")
+    else:
+        print("Verified private evidence bundle.")
     print(
         "This is a versioned harness result, not a production safety "
         "certification."
@@ -473,10 +544,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         cases = load_cases(args.case_dir)
     except (OSError, ValueError) as exc:
-        print(f"CASE ERROR: {exc}")
+        if args.purpose == "holdout_formal":
+            print("FORMAL PRECHECK ERROR: private holdout cases are invalid.")
+        else:
+            print(f"CASE ERROR: {exc}")
         return 2
     if not cases:
-        print(f"CASE ERROR: no Eval cases found in {args.case_dir}")
+        if args.purpose == "holdout_formal":
+            print("FORMAL PRECHECK ERROR: private holdout cases are invalid.")
+        else:
+            print(f"CASE ERROR: no Eval cases found in {args.case_dir}")
         return 2
     bundle_target = args.output_root / run_id
     if bundle_target.exists():
@@ -536,15 +613,31 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "declaration is invalid."
             )
             return 2
+    if frozen_harness is None:
+        try:
+            frozen_harness = freeze_readonly_harness(settings)
+        except (FileSnapshotError, CanonicalPricingError, ValueError):
+            print(
+                "CONFIGURATION ERROR: runtime inputs are invalid."
+            )
+            return 2
     budget_guard = None
+    assert frozen_harness is not None
     try:
         budget_guard = build_deepseek_budget_guard(
             settings=settings,
             run_id=run_id,
             purpose=args.purpose,
+            frozen_harness=frozen_harness,
         )
-    except (BudgetError, ValueError) as exc:
-        print(f"BUDGET OR CONFIGURATION ERROR: {exc}")
+    except (BudgetError, CanonicalPricingError, ValueError) as exc:
+        if args.purpose == "holdout_formal":
+            print(
+                "FORMAL PRECHECK ERROR: budget or model configuration "
+                "is invalid."
+            )
+        else:
+            print(f"BUDGET OR CONFIGURATION ERROR: {exc}")
         return 2
 
     try:
@@ -554,18 +647,28 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
     except ValueError as exc:
         budget_guard.close()
-        print(f"CONFIGURATION ERROR: {exc}")
-        print(
-            "Load a private DEEPSEEK_API_KEY into the process environment, "
-            "then rerun this command."
-        )
+        if args.purpose == "holdout_formal":
+            print(
+                "FORMAL PRECHECK ERROR: budget or model configuration "
+                "is invalid."
+            )
+        else:
+            print(f"CONFIGURATION ERROR: {exc}")
+            print(
+                "Load a private DEEPSEEK_API_KEY into the process "
+                "environment, then rerun this command."
+            )
         return 2
 
     holdout_lock_path: Path | None = None
     holdout_start_receipt_sha256: str | None = None
     formal_holdout_evidence: FormalHoldoutEvidence | None = None
     formal_attempt_started_at: datetime | None = None
+    acquired_lock: AcquiredHoldoutRunLock | None = None
     if declaration is not None:
+        holdout_lock_path = DEFAULT_HOLDOUT_LOCK_ROOT / (
+            "readonly-holdout-v2.start.json"
+        )
         try:
             assert source_git_commit is not None
             assert frozen_harness is not None
@@ -574,14 +677,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                 expected_commit=source_git_commit
             )
             formal_attempt_started_at = datetime.now(UTC)
-            holdout_lock_path = acquire_holdout_run_lock(
+            acquired_lock = acquire_holdout_run_lock_with_hash(
                 lock_root=DEFAULT_HOLDOUT_LOCK_ROOT,
                 declaration=declaration,
                 run_id=run_id,
             )
-            holdout_start_receipt_sha256 = (
-                holdout_lock_receipt_sha256(holdout_lock_path)
-            )
+            holdout_lock_path = acquired_lock.path
+            holdout_start_receipt_sha256 = acquired_lock.receipt_sha256
             formal_holdout_evidence = FormalHoldoutEvidence(
                 declaration_manifest_sha256=(
                     declaration.manifest_sha256
@@ -591,10 +693,62 @@ def main(argv: Sequence[str] | None = None) -> int:
                     declaration.harness_sha256
                 ),
             )
-        except (HoldoutLockError, ValueError) as exc:
-            model.close()
-            budget_guard.close()
-            print(f"HOLDOUT LOCK ERROR: {exc}")
+        except BaseException as exc:
+            for close_resource in (model.close, budget_guard.close):
+                try:
+                    close_resource()
+                except BaseException:
+                    pass
+            if acquired_lock is not None:
+                holdout_lock_path = acquired_lock.path
+                holdout_start_receipt_sha256 = (
+                    acquired_lock.receipt_sha256
+                )
+            elif (
+                holdout_start_receipt_sha256 is None
+                and holdout_lock_path.exists()
+            ):
+                holdout_start_receipt_sha256 = (
+                    _recover_owned_start_receipt_sha256(
+                        lock_path=holdout_lock_path,
+                        run_id=run_id,
+                    )
+                )
+            if holdout_start_receipt_sha256 is not None:
+                try:
+                    _, interrupted_terminal = (
+                        _finalize_terminal_with_retry(
+                            lock_path=holdout_lock_path,
+                            status="failed",
+                            run_id=run_id,
+                            start_receipt_sha256=(
+                                holdout_start_receipt_sha256
+                            ),
+                        )
+                    )
+                    if isinstance(
+                        interrupted_terminal,
+                        (KeyboardInterrupt, SystemExit),
+                    ):
+                        raise interrupted_terminal
+                except BaseException as terminal_exc:
+                    print(
+                        "HOLDOUT LOCK ERROR: terminal evidence is invalid."
+                    )
+                    if isinstance(
+                        terminal_exc,
+                        (KeyboardInterrupt, SystemExit),
+                    ):
+                        raise terminal_exc from None
+                    if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+                        raise exc from None
+                    return 3
+            if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+                raise exc
+            if args.purpose == "holdout_formal":
+                print("HOLDOUT LOCK ERROR: formal start receipt is invalid.")
+            else:
+                print(f"HOLDOUT LOCK ERROR: {exc}")
             return 2
 
     run_error: BaseException | None = None
@@ -733,6 +887,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if holdout_lock_path is not None:
         assert holdout_start_receipt_sha256 is not None
+        terminal_write_error: BaseException | None = None
         try:
             completed_integrity_sha256 = (
                 read_file_snapshot(
@@ -750,17 +905,21 @@ def main(argv: Sequence[str] | None = None) -> int:
                 and failed_attempt_bundle is not None
                 else None
             )
-            terminal_path = finalize_holdout_run_lock(
-                lock_path=holdout_lock_path,
-                status=lock_status,
-                run_id=run_id,
-                expected_start_receipt_sha256=(
-                    holdout_start_receipt_sha256
-                ),
-                bundle_integrity_sha256=completed_integrity_sha256,
-                attempt_bundle_integrity_sha256=(
-                    failed_integrity_sha256
-                ),
+            terminal_path, terminal_write_error = (
+                _finalize_terminal_with_retry(
+                    lock_path=holdout_lock_path,
+                    status=lock_status,
+                    run_id=run_id,
+                    start_receipt_sha256=(
+                        holdout_start_receipt_sha256
+                    ),
+                    bundle_integrity_sha256=(
+                        completed_integrity_sha256
+                    ),
+                    attempt_bundle_integrity_sha256=(
+                        failed_integrity_sha256
+                    ),
+                )
             )
             if lock_status == "completed" and bundle_path is not None:
                 assert args.holdout_manifest is not None
@@ -781,7 +940,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                     terminal_path=terminal_path,
                     bundle_path=failed_attempt_bundle,
                 )
-        except Exception as exc:
+            if isinstance(
+                terminal_write_error,
+                (KeyboardInterrupt, SystemExit),
+            ):
+                raise terminal_write_error
+        except BaseException as exc:
+            if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+                raise
             if args.purpose == "holdout_formal":
                 print("HOLDOUT LOCK ERROR: terminal evidence is invalid.")
             else:
@@ -810,6 +976,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         summary,
         bundle_path,
         disclose_case_details=args.purpose != "holdout_formal",
+        disclose_bundle_path=args.purpose != "holdout_formal",
     )
     return 0 if all(result.passed for result in results) else 1
 

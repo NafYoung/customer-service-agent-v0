@@ -1,13 +1,23 @@
 from __future__ import annotations
 
 import hashlib
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
+from app.agent.deepseek_budget import PriceRates
 from app.agent.openai_compatible import AssistantTurn
 from app.config import Settings
-from evals import readonly_reporting, semantic_calibration
+from evals import (
+    readonly_reporting,
+    run_readonly_agent_evals,
+    semantic_calibration,
+)
+from evals.canonical_pricing import (
+    CanonicalPricingError,
+    FrozenCanonicalPrice,
+)
 from evals.file_snapshot import (
     FileSnapshotError,
     read_file_snapshot,
@@ -95,6 +105,51 @@ def test_frozen_harness_binds_exact_runtime_inputs() -> None:
         "semantic_calibration_corpus_sha256"
     ] == frozen.calibration_fixture_snapshot.sha256
     assert frozen.fingerprints["evidence_protocol_sha256"]
+    assert frozen.fingerprints[
+        "canonical_price_snapshot_sha256"
+    ] == frozen.canonical_price.file_snapshot.sha256
+
+
+def test_paid_guard_rejects_price_identity_split_before_ledger_start(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    frozen = readonly_reporting.freeze_readonly_harness(Settings())
+    forged_price = frozen.canonical_price.price_snapshot.model_copy(
+        update={
+            "rates_cny": PriceRates(
+                prompt_cache_hit="0.01",
+                prompt_cache_miss="0.01",
+                completion="0.01",
+            )
+        }
+    )
+    forged_harness = replace(
+        frozen,
+        canonical_price=FrozenCanonicalPrice(
+            file_snapshot=frozen.canonical_price.file_snapshot,
+            price_snapshot=forged_price,
+        ),
+    )
+    ledger_path = tmp_path / "must-not-start.sqlite3"
+    monkeypatch.setattr(
+        run_readonly_agent_evals,
+        "DEFAULT_BUDGET_LEDGER",
+        ledger_path,
+    )
+
+    with pytest.raises(
+        CanonicalPricingError,
+        match="identity|pricing|inconsistent",
+    ):
+        run_readonly_agent_evals.build_deepseek_budget_guard(
+            settings=Settings(),
+            run_id="eval-price-identity-split",
+            purpose="diagnostic",
+            frozen_harness=forged_harness,
+        )
+
+    assert ledger_path.exists() is False
 
 
 class _CapturingFrozenModel:

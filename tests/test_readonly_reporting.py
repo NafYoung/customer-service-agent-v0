@@ -8,6 +8,7 @@ from decimal import Decimal
 
 import pytest
 
+from app.agent.deepseek_budget import load_price_snapshot
 from app.config import Settings
 from evals import readonly_reporting
 from evals.calibration_attestation import (
@@ -34,6 +35,29 @@ from evals.readonly_reporting import (
     result_to_record,
     summarize_results,
 )
+
+PRICE_SNAPSHOT_PATH = (
+    readonly_reporting.ROOT
+    / "pricing"
+    / "deepseek-v4-flash-2026-07-29.json"
+)
+
+
+def _canonical_price_summary() -> dict:
+    snapshot = load_price_snapshot(PRICE_SNAPSHOT_PATH)
+    payload = snapshot.model_dump(mode="json")
+    return {
+        "provider": payload["provider"],
+        "model": payload["model"],
+        "currency": payload["currency"],
+        "snapshot_sha256": snapshot.sha256,
+        "source_url": payload["source_url"],
+        "usage_source_url": payload["usage_source_url"],
+        "captured_at": payload["captured_at"],
+        "valid_until": payload["valid_until"],
+        "rates_cny": payload["rates_cny"],
+        "tokens_per_price_unit": payload["tokens_per_price_unit"],
+    }
 
 
 def _budget_report(
@@ -66,31 +90,14 @@ def _budget_report(
             "run_id": run_id,
             "purpose": purpose,
             "model": "deepseek-v4-flash",
-            "price_sha256": "f" * 64,
+            "price_sha256": _canonical_price_summary()[
+                "snapshot_sha256"
+            ],
             "status": "completed",
             "started_at": "2026-07-29T12:00:00+00:00",
             "completed_at": "2026-07-29T12:05:00+00:00",
         },
-        "price": {
-            "provider": "deepseek",
-            "model": "deepseek-v4-flash",
-            "currency": "CNY",
-            "snapshot_sha256": "f" * 64,
-            "source_url": (
-                "https://api-docs.deepseek.com/zh-cn/quick_start/pricing/"
-            ),
-            "usage_source_url": (
-                "https://api-docs.deepseek.com/api/create-chat-completion/"
-            ),
-            "captured_at": "2026-07-29T08:58:58+00:00",
-            "valid_until": "2026-07-30T08:58:58+00:00",
-            "rates_cny": {
-                "prompt_cache_hit": "0.02",
-                "prompt_cache_miss": "1",
-                "completion": "2",
-            },
-            "tokens_per_price_unit": 1_000_000,
-        },
+        "price": _canonical_price_summary(),
         "reservation_cny_per_attempt": "1.002048",
         "run": dict(amount),
         "cumulative": dict(amount),
@@ -136,6 +143,17 @@ def _result(
     passed: bool,
     efficiency_passed: bool = True,
 ) -> ReadonlyEvalResult:
+    score_checks = [
+        ScoreCheck("task_success", "task result", True),
+        ScoreCheck("tool_selection", "tool result", True),
+        ScoreCheck("security", "security result", True),
+        ScoreCheck("communication", "communication result", True),
+        ScoreCheck(
+            "efficiency",
+            "efficiency result",
+            efficiency_passed,
+        ),
+    ]
     return ReadonlyEvalResult(
         case_id=case_id,
         trial=trial,
@@ -145,17 +163,13 @@ def _result(
         started_at="2026-07-29T10:00:00+00:00",
         completed_at="2026-07-29T10:00:01+00:00",
         duration_ms=1000 + trial,
-        score_checks=[
-            ScoreCheck("task_success", "task result", True),
-            ScoreCheck("tool_selection", "tool result", True),
-            ScoreCheck("security", "security result", True),
-            ScoreCheck("communication", "communication result", True),
-            ScoreCheck(
-                "efficiency",
-                "efficiency result",
-                efficiency_passed,
-            ),
+        checks=[
+            check.message for check in score_checks if check.passed
         ],
+        failures=[
+            check.message for check in score_checks if not check.passed
+        ],
+        score_checks=score_checks,
         final_text="safe answer",
         model_calls=(
             ModelCallEvidence(
@@ -358,6 +372,7 @@ def test_manifest_fingerprints_harness_and_never_serializes_secret_or_holdout_id
     assert manifest["harness"]["policies_sha256"]
     assert manifest["harness"]["agent_loop_sha256"]
     assert manifest["harness"]["model_runtime_sha256"]
+    assert manifest["harness"]["canonical_price_snapshot_sha256"]
     assert manifest["harness"]["semantic_judge_prompt_sha256"]
     assert manifest["harness"]["semantic_judge_source_sha256"]
     assert manifest["harness"]["semantic_calibration_source_sha256"]
@@ -401,7 +416,9 @@ def test_manifest_fingerprints_harness_and_never_serializes_secret_or_holdout_id
         "thinking": "disabled",
     }
     assert manifest["eval"]["scorer_version"] == "readonly-scorer-v6"
-    assert manifest["budget"]["price_snapshot_sha256"] == "f" * 64
+    assert manifest["budget"]["price_snapshot_sha256"] == (
+        _canonical_price_summary()["snapshot_sha256"]
+    )
     assert manifest["budget"]["hard_limit_cny"] == "20"
 
     dev_cases = load_cases()[:2]
@@ -582,6 +599,114 @@ def test_formal_manifest_recomputes_exact_cost_from_every_model_call():
         )
 
 
+@pytest.mark.parametrize("attack", ["forged_price", "lower_limits"])
+def test_formal_manifest_rejects_noncanonical_budget_contract(
+    attack: str,
+) -> None:
+    settings = Settings(deepseek_model="deepseek-v4-flash")
+    cases = _formal_cases()
+    results = [
+        _result(case_id=case.case_id, trial=trial, passed=True)
+        for trial in range(1, 5)
+        for case in cases
+    ]
+    budget = _budget_report(
+        len(results),
+        run_id="eval-20260729-formal-canonical-price",
+    )
+    if attack == "forged_price":
+        fake_sha256 = "0" * 64
+        budget["run_identity"]["price_sha256"] = fake_sha256
+        budget["price"]["snapshot_sha256"] = fake_sha256
+        budget["price"]["rates_cny"] = {
+            "prompt_cache_hit": "0",
+            "prompt_cache_miss": "0",
+            "completion": "0",
+        }
+        for scope in ("run", "cumulative"):
+            budget[scope]["committed_cny"] = "0"
+            budget[scope]["settled_cny"] = "0"
+            budget[scope]["remaining_execution_cny"] = "18"
+    else:
+        for scope in ("run", "cumulative"):
+            budget[scope]["hard_limit_cny"] = "5"
+            budget[scope]["execution_limit_cny"] = "5"
+            budget[scope]["remaining_execution_cny"] = format(
+                Decimal("5")
+                - Decimal(budget[scope]["committed_cny"]),
+                "f",
+            )
+
+    started = datetime.now(UTC)
+    with pytest.raises(
+        ValueError,
+        match="pricing|price|budget|limit",
+    ):
+        build_readonly_manifest(
+            run_id="eval-20260729-formal-canonical-price",
+            purpose="holdout_formal",
+            split="holdout",
+            case_set_name="readonly-holdout-v2",
+            cases=cases,
+            results=results,
+            settings=settings,
+            planned_trials=4,
+            started_at=started,
+            completed_at=started + timedelta(seconds=1),
+            budget_report=budget,
+            calibration_attestation=_attestation(),
+            calibration_review=_review(),
+            formal_holdout_evidence=_formal_holdout_evidence(),
+        )
+
+
+def test_formal_manifest_rejects_a_settled_execution_overrun() -> None:
+    settings = Settings(deepseek_model="deepseek-v4-flash")
+    cases = _formal_cases()
+    results = [
+        _result(case_id=case.case_id, trial=trial, passed=True)
+        for trial in range(1, 5)
+        for case in cases
+    ]
+    results[0].model_calls = (
+        replace(
+            results[0].model_calls[0],
+            usage={
+                "prompt_tokens": 18_000_000,
+                "completion_tokens": 0,
+                "total_tokens": 18_000_000,
+            },
+        ),
+    )
+    budget = _budget_report(
+        len(results),
+        run_id="eval-20260729-formal-overrun",
+    )
+    for scope in ("run", "cumulative"):
+        budget[scope]["committed_cny"] = "18.000948"
+        budget[scope]["settled_cny"] = "18.000948"
+        budget[scope]["remaining_execution_cny"] = "0"
+    started = datetime.now(UTC)
+
+    with pytest.raises(ValueError, match="budget|limit|overrun"):
+        build_readonly_manifest(
+            run_id="eval-20260729-formal-overrun",
+            purpose="holdout_formal",
+            split="holdout",
+            case_set_name="readonly-holdout-v2",
+            cases=cases,
+            results=results,
+            settings=settings,
+            planned_trials=4,
+            started_at=started,
+            completed_at=started + timedelta(seconds=1),
+            budget_report=budget,
+            calibration_attestation=_attestation(),
+            calibration_review=_review(),
+            formal_holdout_evidence=_formal_holdout_evidence(),
+        )
+
+
 def test_formal_bundle_schema_recomputes_cost_instead_of_trusting_summary():
     settings = Settings(deepseek_model="deepseek-v4-flash")
     cases = _formal_cases()
@@ -641,12 +766,72 @@ def test_formal_bundle_schema_recomputes_cost_instead_of_trusting_summary():
     }
 
     validate_readonly_payload(payload)
+    forged_price = deepcopy(payload)
+    forged_price["manifest"]["budget"][
+        "price_snapshot_sha256"
+    ] = "0" * 64
+    forged_budget = forged_price["summary"]["budget"]
+    forged_budget["run_identity"]["price_sha256"] = "0" * 64
+    forged_budget["price"]["snapshot_sha256"] = "0" * 64
+    forged_budget["price"]["rates_cny"] = {
+        "prompt_cache_hit": "0",
+        "prompt_cache_miss": "0",
+        "completion": "0",
+    }
+    for scope in ("run", "cumulative"):
+        forged_budget[scope]["committed_cny"] = "0"
+        forged_budget[scope]["settled_cny"] = "0"
+        forged_budget[scope]["remaining_execution_cny"] = "18"
+    with pytest.raises(ValueError, match="canonical|pricing|price"):
+        validate_readonly_payload(forged_price)
+
+    lowered_limits = deepcopy(payload)
+    lowered_limits["manifest"]["budget"]["hard_limit_cny"] = "5"
+    lowered_limits["manifest"]["budget"][
+        "execution_limit_cny"
+    ] = "5"
+    lowered_budget = lowered_limits["summary"]["budget"]
+    for scope in ("run", "cumulative"):
+        lowered_budget[scope]["hard_limit_cny"] = "5"
+        lowered_budget[scope]["execution_limit_cny"] = "5"
+        lowered_budget[scope]["remaining_execution_cny"] = format(
+            Decimal("5")
+            - Decimal(lowered_budget[scope]["committed_cny"]),
+            "f",
+        )
+    with pytest.raises(ValueError, match="canonical|budget|limit"):
+        validate_readonly_payload(lowered_limits)
+
     mismatched_trajectory = deepcopy(payload)
     mismatched_trajectory["trajectories"][0]["final_text"] = (
         "forged trajectory content"
     )
     with pytest.raises(ValueError, match="Case|trajectory|differ"):
         validate_readonly_payload(mismatched_trajectory)
+
+    stale_summary = deepcopy(payload)
+    for record_set in ("cases", "trajectories"):
+        first = stale_summary[record_set][0]
+        first["status"] = "failed"
+        first["scores"]["efficiency"] = False
+        efficiency_check = next(
+            check
+            for check in first["score_checks"]
+            if check["category"] == "efficiency"
+        )
+        efficiency_check["passed"] = False
+        first["checks"].remove(efficiency_check["message"])
+        first["failures"].append(efficiency_check["message"])
+    with pytest.raises(ValueError, match="[Ss]ummary|record"):
+        validate_readonly_payload(stale_summary)
+
+    forged_record = deepcopy(payload)
+    for record_set in ("cases", "trajectories"):
+        first = forged_record[record_set][0]
+        first["status"] = "failed"
+        first["failures"].append("forged unscored failure")
+    with pytest.raises(ValueError, match="[Ss]tatus|score|check|failure"):
+        validate_readonly_payload(forged_record)
 
     mismatched_execution_limit = deepcopy(payload)
     mismatched_execution_limit["manifest"]["budget"][

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import stat
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -121,6 +122,7 @@ def _write_manifest_for_cases(
         json.dumps(payload, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+    path.chmod(0o600)
     return path
 
 
@@ -132,6 +134,7 @@ def _manifest(
     scorer_sha256: str | None = None,
     settings: Settings | None = None,
 ) -> Path:
+    path.parent.chmod(0o700)
     cases = _cases()
     harness = current_readonly_harness_fingerprints(settings)
     payload = {
@@ -174,6 +177,7 @@ def _manifest(
         json.dumps(payload, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+    path.chmod(0o600)
     return path
 
 
@@ -232,6 +236,72 @@ def test_holdout_lock_is_exclusive_and_final_status_is_persisted(
     assert "user_message" not in json.dumps(
         {"start": lock_payload, "terminal": terminal_payload}
     )
+
+
+@pytest.mark.parametrize(
+    "receipt_name",
+    [
+        "readonly-holdout-v2.start.json",
+        "readonly-holdout-v2.terminal.json",
+    ],
+)
+def test_exclusive_receipt_write_cleans_partial_file_on_keyboard_interrupt(
+    tmp_path: Path,
+    monkeypatch,
+    receipt_name: str,
+) -> None:
+    receipt_path = tmp_path / receipt_name
+    real_write = os.write
+    interrupted = False
+
+    def interrupt_after_partial_write(
+        descriptor: int,
+        data: bytes | memoryview,
+    ) -> int:
+        nonlocal interrupted
+        if not interrupted:
+            interrupted = True
+            real_write(descriptor, bytes(data[:5]))
+            raise KeyboardInterrupt
+        return real_write(descriptor, data)
+
+    monkeypatch.setattr(os, "write", interrupt_after_partial_write)
+
+    with pytest.raises(KeyboardInterrupt):
+        holdout_protocol._write_exclusive_json(
+            receipt_path,
+            {"schema_version": "1.0", "status": "started"},
+        )
+
+    assert receipt_path.exists() is False
+
+
+def test_lock_acquisition_returns_exact_receipt_hash_without_reread(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    declaration = validate_holdout_declaration(
+        manifest_path=_manifest(tmp_path / "manifest.json"),
+        case_set_name="readonly-holdout-v2",
+        cases=_cases(),
+        calibration_attestation=_attestation(),
+        calibration_review=_review(),
+    )
+    monkeypatch.setattr(
+        holdout_protocol,
+        "_read_manifest_with_sha256",
+        lambda path: (_ for _ in ()).throw(KeyboardInterrupt),
+    )
+
+    acquired = holdout_protocol.acquire_holdout_run_lock_with_hash(
+        lock_root=tmp_path / "private-locks",
+        declaration=declaration,
+        run_id="eval-20260729-atomic-start-hash",
+    )
+
+    assert acquired.receipt_sha256 == hashlib.sha256(
+        acquired.path.read_bytes()
+    ).hexdigest()
 
 
 def test_holdout_declaration_requires_calibration_from_same_source_commit(
@@ -505,6 +575,54 @@ def test_completed_holdout_chain_links_manifest_start_bundle_and_terminal(
         bundle_path=bundle_path,
     )
     assert validation_calls == 1
+
+    for private_path in (
+        manifest_path,
+        start_path,
+        terminal_path,
+    ):
+        private_path.chmod(0o644)
+        with pytest.raises(
+            HoldoutLockError,
+            match="private|permission|owner|regular",
+        ):
+            holdout_protocol.verify_holdout_receipt_chain(
+                manifest_path=manifest_path,
+                start_path=start_path,
+                terminal_path=terminal_path,
+                bundle_path=bundle_path,
+            )
+        private_path.chmod(0o600)
+
+    bundle_path.chmod(0o755)
+    with pytest.raises(
+        HoldoutLockError,
+        match="private|permission|owner|directory",
+    ):
+        holdout_protocol.verify_holdout_receipt_chain(
+            manifest_path=manifest_path,
+            start_path=start_path,
+            terminal_path=terminal_path,
+            bundle_path=bundle_path,
+        )
+    bundle_path.chmod(0o700)
+
+    summary_path = bundle_path / "summary.json"
+    real_summary_path = bundle_path.parent / "summary-real.json"
+    summary_path.rename(real_summary_path)
+    summary_path.symlink_to(real_summary_path)
+    with pytest.raises(
+        HoldoutLockError,
+        match="private|permission|symlink|regular",
+    ):
+        holdout_protocol.verify_holdout_receipt_chain(
+            manifest_path=manifest_path,
+            start_path=start_path,
+            terminal_path=terminal_path,
+            bundle_path=bundle_path,
+        )
+    summary_path.unlink()
+    real_summary_path.rename(summary_path)
 
     bundle_manifest["eval"]["formal_holdout"][
         "declared_harness_sha256"

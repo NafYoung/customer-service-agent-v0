@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+from app.agent.deepseek_budget import load_price_snapshot
 from app.config import Settings
 from evals.calibration_attestation import (
     CalibrationAttestationError,
@@ -30,6 +31,9 @@ from evals.semantic_calibration import (
 
 FIXTURE_PATH = Path("evals/semantic_judge_calibration_cases.jsonl")
 CASE_DIR = Path("evals/readonly_regression_cases")
+PRICE_SNAPSHOT_PATH = Path(
+    "pricing/deepseek-v4-flash-2026-07-29.json"
+)
 
 
 def _file_sha256(path: Path) -> str:
@@ -103,6 +107,23 @@ def _model_call(model_name: str) -> dict[str, object]:
     }
 
 
+def _canonical_price_summary() -> dict[str, object]:
+    snapshot = load_price_snapshot(PRICE_SNAPSHOT_PATH)
+    payload = snapshot.model_dump(mode="json")
+    return {
+        "provider": payload["provider"],
+        "model": payload["model"],
+        "currency": payload["currency"],
+        "snapshot_sha256": snapshot.sha256,
+        "source_url": payload["source_url"],
+        "usage_source_url": payload["usage_source_url"],
+        "captured_at": payload["captured_at"],
+        "valid_until": payload["valid_until"],
+        "rates_cny": payload["rates_cny"],
+        "tokens_per_price_unit": payload["tokens_per_price_unit"],
+    }
+
+
 def _settled_budget(attempt_count: int) -> dict[str, object]:
     settled = Decimal(attempt_count) * Decimal("0.00002")
     settled_cny = format(settled, "f")
@@ -128,29 +149,14 @@ def _settled_budget(attempt_count: int) -> dict[str, object]:
             "run_id": "eval-20260729-calibration-attestation",
             "purpose": "semantic_judge_calibration",
             "model": "deepseek-v4-flash",
-            "price_sha256": "c" * 64,
+            "price_sha256": _canonical_price_summary()[
+                "snapshot_sha256"
+            ],
             "status": "completed",
             "started_at": "2026-07-29T12:00:00+00:00",
             "completed_at": "2026-07-29T12:05:00+00:00",
         },
-        "price": {
-            "provider": "deepseek",
-            "model": "deepseek-v4-flash",
-            "currency": "CNY",
-            "snapshot_sha256": "c" * 64,
-            "source_url": "https://api-docs.deepseek.com/quick_start/pricing",
-            "usage_source_url": (
-                "https://api-docs.deepseek.com/api/create-chat-completion/"
-            ),
-            "captured_at": "2026-07-29T08:58:58+00:00",
-            "valid_until": "2026-07-30T08:58:58+00:00",
-            "rates_cny": {
-                "prompt_cache_hit": "0.02",
-                "prompt_cache_miss": "1",
-                "completion": "2",
-            },
-            "tokens_per_price_unit": 1_000_000,
-        },
+        "price": _canonical_price_summary(),
         "reservation_cny_per_attempt": "0.01",
         "run": dict(snapshot),
         "cumulative": dict(snapshot),
@@ -340,6 +346,84 @@ def test_calibration_attestation_recomputes_results_summary_and_budget(
                 unbound_source,
             ),
             settings=settings,
+            now=datetime(2026, 7, 29, 13, tzinfo=UTC),
+        )
+
+
+@pytest.mark.parametrize("attack", ["forged_price", "lower_limits"])
+def test_calibration_attestation_rejects_noncanonical_budget_contract(
+    tmp_path: Path,
+    attack: str,
+) -> None:
+    report = _valid_report()
+    budget = report["budget"]
+    if attack == "forged_price":
+        fake_sha256 = "0" * 64
+        budget["run_identity"]["price_sha256"] = fake_sha256
+        budget["price"]["snapshot_sha256"] = fake_sha256
+        budget["price"]["rates_cny"] = {
+            "prompt_cache_hit": "0",
+            "prompt_cache_miss": "0",
+            "completion": "0",
+        }
+        for scope in ("run", "cumulative"):
+            budget[scope]["committed_cny"] = "0"
+            budget[scope]["settled_cny"] = "0"
+            budget[scope]["remaining_execution_cny"] = "18"
+    else:
+        for scope in ("run", "cumulative"):
+            budget[scope]["hard_limit_cny"] = "5"
+            budget[scope]["execution_limit_cny"] = "5"
+            budget[scope]["remaining_execution_cny"] = format(
+                Decimal("5")
+                - Decimal(budget[scope]["committed_cny"]),
+                "f",
+            )
+
+    with pytest.raises(
+        CalibrationAttestationError,
+        match="pricing|price|budget|limit",
+    ):
+        validate_calibration_attestation(
+            report_path=_write_json(
+                tmp_path / f"{attack}.json",
+                report,
+            ),
+            settings=Settings(
+                deepseek_model="deepseek-v4-flash",
+                deepseek_temperature=0,
+            ),
+            now=datetime(2026, 7, 29, 13, tzinfo=UTC),
+        )
+
+
+def test_calibration_attestation_rejects_a_settled_execution_overrun(
+    tmp_path: Path,
+) -> None:
+    report = _valid_report()
+    report["results"][0]["model_calls"][0]["usage"] = {
+        "prompt_tokens": 18_000_000,
+        "completion_tokens": 0,
+        "total_tokens": 18_000_000,
+    }
+    for scope in ("run", "cumulative"):
+        report["budget"][scope]["committed_cny"] = "18.00096"
+        report["budget"][scope]["settled_cny"] = "18.00096"
+        report["budget"][scope]["remaining_execution_cny"] = "0"
+
+    with pytest.raises(
+        CalibrationAttestationError,
+        match="budget|limit|overrun",
+    ):
+        validate_calibration_attestation(
+            report_path=_write_json(
+                tmp_path / "execution-overrun.json",
+                report,
+            ),
+            settings=Settings(
+                deepseek_model="deepseek-v4-flash",
+                deepseek_temperature=0,
+            ),
             now=datetime(2026, 7, 29, 13, tzinfo=UTC),
         )
 

@@ -16,6 +16,10 @@ from app.agent.deepseek_budget import (
     cny_to_units,
 )
 from app.config import Settings
+from evals.canonical_pricing import (
+    CanonicalPricingError,
+    require_canonical_paid_budget,
+)
 from evals.evidence import stable_sha256
 from evals.evidence_schema import (
     BudgetRatesCny,
@@ -443,6 +447,28 @@ def validate_calibration_attestation(
         raise CalibrationAttestationError(
             "The calibration budget evidence is missing pricing."
         )
+    try:
+        canonical_price = require_canonical_paid_budget(
+            price=budget.price,
+            expected_model=settings.deepseek_model,
+            run_hard_limit_cny=budget.run.hard_limit_cny,
+            run_execution_limit_cny=(
+                budget.run.execution_limit_cny
+            ),
+            cumulative_hard_limit_cny=(
+                budget.cumulative.hard_limit_cny
+            ),
+            cumulative_execution_limit_cny=(
+                budget.cumulative.execution_limit_cny
+            ),
+        )
+    except CanonicalPricingError as exc:
+        raise CalibrationAttestationError(
+            "The calibration budget pricing or limits are not canonical."
+        ) from exc
+    canonical_rates = BudgetRatesCny.model_validate(
+        canonical_price.rates_cny.model_dump()
+    )
     if (
         budget.enforcement_mode != "persistent_sqlite"
         or budget.run_status != "completed"
@@ -462,6 +488,8 @@ def validate_calibration_attestation(
             budget.cumulative.committed_cny
             != budget.cumulative.settled_cny
         )
+        or Decimal(budget.cumulative.committed_cny)
+        > Decimal(budget.cumulative.execution_limit_cny)
     ):
         raise CalibrationAttestationError(
             "The calibration budget evidence is unsettled or inconsistent."
@@ -472,9 +500,9 @@ def validate_calibration_attestation(
             fixture=fixture_by_id[record.fixture_id],
             case=case_by_id[record.case_id],
             settings=settings,
-            rates_cny=budget.price.rates_cny,
+            rates_cny=canonical_rates,
             tokens_per_price_unit=(
-                budget.price.tokens_per_price_unit
+                canonical_price.tokens_per_price_unit
             ),
         )
         for record in report.results

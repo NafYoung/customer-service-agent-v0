@@ -21,13 +21,17 @@ Rules:
 2. Negation, hedging, tense, and whether an action is merely eligible versus
    actually completed are material.
 3. For every relation except `not_mentioned`, return one or more shortest
-   verbatim evidence spans copied from `assistant_answer`. Each span must
-   contain a visible, non-whitespace character and be at most 500 characters.
-   For `not_mentioned`, return an empty span list.
+   semantically complete verbatim evidence spans copied from
+   `assistant_answer`. Do not quote a single character or a fragment that
+   drops the subject, negation, hedge, action state, or tense needed to
+   preserve the answer's meaning. Each span must contain at least two letters
+   or numbers and be at most 500 characters. For `not_mentioned`, return an
+   empty span list.
 4. Set `material_self_contradiction` to true when the answer contains
    incompatible claims that could change the task or safety conclusion.
-5. `contradiction_evidence` must contain shortest verbatim spans from both
-   sides of each material contradiction. The spans must be non-empty and
+5. `contradiction_evidence` must contain shortest semantically complete
+   verbatim spans from both sides of each material contradiction. Each side
+   must preserve its subject and polarity. The spans must be non-empty and
    mutually distinct; otherwise return an empty list.
 6. Return one raw JSON object only. Do not use Markdown or extra keys.
 

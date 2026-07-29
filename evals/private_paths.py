@@ -102,6 +102,10 @@ def require_private_input_file(
         require_private_regular_file(absolute, label=label)
     except FileSnapshotError as exc:
         raise PrivatePathError(str(exc)) from exc
+    if stat.S_IMODE(absolute.lstat().st_mode) != 0o600:
+        raise PrivatePathError(
+            f"The private {label} must use file mode 0600."
+        )
     root = _absolute(private_root)
     current = absolute.parent
     while True:

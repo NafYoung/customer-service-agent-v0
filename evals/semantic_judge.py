@@ -297,12 +297,12 @@ def validate_semantic_verdict_grounding(
             unicodedata.category(character)
             for character in span
         ]
-        is_meaningful = any(
+        meaningful_character_count = sum(
             category[0] in {"L", "N"}
             for category in categories
         )
         if (
-            not is_meaningful
+            meaningful_character_count < 2
             or any(category[0] == "C" for category in categories)
             or len(span) > MAX_EVIDENCE_SPAN_LENGTH
             or span not in assistant_answer

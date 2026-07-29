@@ -98,12 +98,19 @@ and the automatic execution limit is CNY 18. Missing or inconsistent billing
 evidence retains the full reservation. The public demo will not deploy the
 project API key.
 
-Each run writes a private integrity-checked bundle under `artifacts/eval-runs/`.
-Verify one independently:
+Each run writes a private integrity-checked bundle under
+`artifacts/private/eval-runs/`. Diagnostic and development bundles can be
+verified directly:
 
 ```bash
-python evals/verify_eval_bundle.py artifacts/eval-runs/<run-id>
+python evals/verify_eval_bundle.py artifacts/private/eval-runs/<run-id>
 ```
+
+Formal v2 completed and failed-attempt bundles are not valid as standalone
+artifacts. The public verifier requires the sealed manifest plus the immutable
+start and terminal receipts, and rejects symlinks or any formal directory/file
+whose mode is not exactly `0700`/`0600`. The formal runner's console output
+withholds both case details and private filesystem paths.
 
 See `docs/testing/eval-evidence-budget-guard.tdd.md` for the artifact contract,
 budget semantics, official pricing sources, and evidence boundaries. See

@@ -4,11 +4,13 @@ import hashlib
 import json
 import stat
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
 
+from evals.canonical_pricing import canonical_budget_price_payload
 from evals.evidence import ArtifactIntegrityError
 from evals.evidence_schema import validate_readonly_bundle
 from evals.formal_failure_evidence import (
@@ -92,10 +94,79 @@ def _case_record(
             }
             for category, passed in scores.items()
         ],
-        "checks": [],
-        "failures": (
-            [] if status == "passed" else ["provider request failed"]
+        "checks": [
+            f"{category} check"
+            for category, passed in scores.items()
+            if passed
+        ],
+        "failures": [
+            f"{category} check"
+            for category, passed in scores.items()
+            if not passed
+        ],
+    }
+
+
+def _persistent_budget_report(
+    *,
+    run_id: str,
+    attempt_count: int,
+    committed_cny: str = "0",
+) -> dict[str, object]:
+    committed = Decimal(committed_cny)
+    amount = {
+        "currency": "CNY",
+        "hard_limit_cny": "20",
+        "execution_limit_cny": "18",
+        "committed_cny": committed_cny,
+        "settled_cny": committed_cny,
+        "remaining_execution_cny": format(
+            max(Decimal("0"), Decimal("18") - committed),
+            "f",
         ),
+        "attempt_count": attempt_count,
+        "reserved_count": 0,
+        "uncertain_count": 0,
+    }
+    price = canonical_budget_price_payload()
+    return {
+        "schema_version": "1.0",
+        "enforcement_mode": "persistent_sqlite",
+        "run_status": "completed",
+        "run_identity": {
+            "run_id": run_id,
+            "purpose": "holdout_formal",
+            "model": price["model"],
+            "price_sha256": price["snapshot_sha256"],
+            "status": "completed",
+            "started_at": "2026-07-29T15:59:00+00:00",
+            "completed_at": "2026-07-29T16:01:00+00:00",
+        },
+        "price": price,
+        "reservation_cny_per_attempt": "1.002048",
+        "run": dict(amount),
+        "cumulative": dict(amount),
+    }
+
+
+def _model_error_with_attempts(attempts: int) -> dict[str, object]:
+    return {
+        "sequence": 1,
+        "status": "error",
+        "started_at": "2026-07-29T15:59:59+00:00",
+        "latency_ms": 20,
+        "message_count": 2,
+        "tool_contract_count": 6,
+        "phase": "agent",
+        "tool_calls": [],
+        "finish_reason": None,
+        "response_id": None,
+        "observed_model": "deepseek-v4-flash",
+        "usage": None,
+        "error_code": "MODEL_HTTP_ERROR",
+        "http_status": 500,
+        "provider_request_id": None,
+        "provider_attempts": attempts,
     }
 
 
@@ -167,12 +238,16 @@ def test_partial_failed_attempt_cross_validates_records_and_budget(
         _case_record(trial=2, status="failed"),
     ]
 
+    run_id = "formal-failed-20260729-a2"
     bundle_path = write_formal_failure_bundle(
         output_root=tmp_path / "failed-attempts",
-        context=_context(run_id="formal-failed-20260729-a2"),
+        context=_context(run_id=run_id),
         case_records=records,
         records_captured=True,
-        budget_summary=offline_budget_report(),
+        budget_summary=_persistent_budget_report(
+            run_id=run_id,
+            attempt_count=0,
+        ),
     )
 
     bundle = validate_formal_failure_bundle(bundle_path)
@@ -185,11 +260,74 @@ def test_partial_failed_attempt_cross_validates_records_and_budget(
     assert bundle.summary.partial.error_counts == {"MODEL_HTTP_ERROR": 1}
     assert bundle.summary.budget_capture_status == "captured"
     assert bundle.summary.budget is not None
+    assert bundle.summary.budget_attempt_delta == 0
+    assert bundle.summary.budget_limit_breached is False
     assert [
         item.model_dump(mode="json") for item in bundle.cases
     ] == [
         item.model_dump(mode="json") for item in bundle.trajectories
     ]
+
+
+def test_failed_attempt_rejects_offline_or_underreported_budget(
+    tmp_path: Path,
+) -> None:
+    run_id = "formal-failed-20260729-budget"
+    failed_record = _case_record(status="failed")
+    failed_record["model_calls"] = [_model_error_with_attempts(3)]
+
+    with pytest.raises(
+        (ValidationError, ValueError),
+        match="persistent|budget",
+    ):
+        write_formal_failure_bundle(
+            output_root=tmp_path / "offline",
+            context=_context(run_id=run_id),
+            case_records=[failed_record],
+            records_captured=True,
+            budget_summary=offline_budget_report(),
+        )
+
+    with pytest.raises(
+        (ValidationError, ValueError),
+        match="attempt|budget",
+    ):
+        write_formal_failure_bundle(
+            output_root=tmp_path / "underreported",
+            context=_context(run_id=run_id),
+            case_records=[failed_record],
+            records_captured=True,
+            budget_summary=_persistent_budget_report(
+                run_id=run_id,
+                attempt_count=0,
+            ),
+        )
+
+
+def test_failed_attempt_preserves_a_real_budget_overrun(
+    tmp_path: Path,
+) -> None:
+    run_id = "formal-failed-20260729-overrun"
+    failed_record = _case_record(status="failed")
+    failed_record["model_calls"] = [_model_error_with_attempts(3)]
+
+    bundle_path = write_formal_failure_bundle(
+        output_root=tmp_path / "failed-attempts",
+        context=_context(run_id=run_id),
+        case_records=[failed_record],
+        records_captured=True,
+        budget_summary=_persistent_budget_report(
+            run_id=run_id,
+            attempt_count=4,
+            committed_cny="18.1",
+        ),
+    )
+
+    bundle = validate_formal_failure_bundle(bundle_path)
+    assert bundle.summary.budget_attempt_delta == 1
+    assert bundle.summary.budget_limit_breached is True
+    assert bundle.summary.budget is not None
+    assert bundle.summary.budget.cumulative.committed_cny == "18.1"
 
 
 @pytest.mark.parametrize(

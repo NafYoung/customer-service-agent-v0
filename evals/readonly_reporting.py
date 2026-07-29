@@ -22,6 +22,13 @@ from app.agent.deepseek_budget import (
 )
 from app.config import Settings
 from app.tools.contracts import get_read_only_tool_contracts
+from evals.canonical_pricing import (
+    CANONICAL_PRICE_SNAPSHOT_PATH,
+    CanonicalPricingError,
+    FrozenCanonicalPrice,
+    freeze_canonical_price_snapshot,
+    require_canonical_paid_budget,
+)
 from evals.evidence import stable_sha256
 from evals.evidence_schema import BudgetSummary
 from evals.file_snapshot import FileSnapshot, read_file_snapshot
@@ -75,6 +82,9 @@ PRIVATE_PATHS_SOURCE_PATH = ROOT / "evals" / "private_paths.py"
 FORMAL_FAILURE_SOURCE_PATH = (
     ROOT / "evals" / "formal_failure_evidence.py"
 )
+CANONICAL_PRICING_SOURCE_PATH = (
+    ROOT / "evals" / "canonical_pricing.py"
+)
 BUDGET_GUARD_PATH = ROOT / "app" / "agent" / "deepseek_budget.py"
 POLICY_DIR = ROOT / "policies"
 _SOURCE_SUFFIXES = {".py", ".md", ".json", ".toml", ".txt", ".yml", ".yaml"}
@@ -106,6 +116,7 @@ class FrozenReadonlyHarness:
     policy_documents: Mapping[str, str]
     tool_contracts: tuple[dict[str, Any], ...]
     calibration_fixture_snapshot: FileSnapshot
+    canonical_price: FrozenCanonicalPrice
     fingerprints: Mapping[str, str]
 
 
@@ -211,6 +222,7 @@ def freeze_readonly_harness(
     """Read every runtime text input once and fingerprint those same bytes."""
 
     runtime_settings = settings or Settings()
+    frozen_canonical_price = freeze_canonical_price_snapshot()
     prompt_snapshot = read_file_snapshot(PROMPT_PATH)
     semantic_prompt_snapshot = read_file_snapshot(
         SEMANTIC_JUDGE_PROMPT_PATH
@@ -244,12 +256,16 @@ def freeze_readonly_harness(
         EVIDENCE_SOURCE_PATH,
         PRIVATE_PATHS_SOURCE_PATH,
         FORMAL_FAILURE_SOURCE_PATH,
+        CANONICAL_PRICING_SOURCE_PATH,
         BUDGET_GUARD_PATH,
     )
     evidence_protocol_fingerprints = {
         path.relative_to(ROOT).as_posix(): _file_sha256(path)
         for path in evidence_protocol_paths
     }
+    evidence_protocol_fingerprints[
+        CANONICAL_PRICE_SNAPSHOT_PATH.relative_to(ROOT).as_posix()
+    ] = frozen_canonical_price.file_snapshot.sha256
     fingerprints = {
         "prompt_sha256": prompt_snapshot.sha256,
         "tool_contracts_sha256": stable_sha256(
@@ -279,6 +295,9 @@ def freeze_readonly_harness(
         ),
         "evidence_protocol_sha256": stable_sha256(
             evidence_protocol_fingerprints
+        ),
+        "canonical_price_snapshot_sha256": (
+            frozen_canonical_price.file_snapshot.sha256
         ),
         "model_runtime_sha256": stable_sha256(
             {
@@ -322,6 +341,7 @@ def freeze_readonly_harness(
         policy_documents=policy_documents,
         tool_contracts=tool_contracts,
         calibration_fixture_snapshot=calibration_fixture_snapshot,
+        canonical_price=frozen_canonical_price,
         fingerprints=MappingProxyType(fingerprints),
     )
 
@@ -687,9 +707,47 @@ def build_readonly_manifest(
                 validated_budget.cumulative.committed_cny
                 != validated_budget.cumulative.settled_cny
             )
+            or Decimal(
+                validated_budget.cumulative.committed_cny
+            )
+            > Decimal(
+                validated_budget.cumulative.execution_limit_cny
+            )
         ):
             raise ValueError(
                 "formal holdout budget must be completed and settled"
+            )
+        if validated_budget.price is None:
+            raise ValueError(
+                "formal holdout budget is missing canonical pricing"
+            )
+        try:
+            canonical_price = require_canonical_paid_budget(
+                price=validated_budget.price,
+                expected_model=settings.deepseek_model,
+                run_hard_limit_cny=(
+                    validated_budget.run.hard_limit_cny
+                ),
+                run_execution_limit_cny=(
+                    validated_budget.run.execution_limit_cny
+                ),
+                cumulative_hard_limit_cny=(
+                    validated_budget.cumulative.hard_limit_cny
+                ),
+                cumulative_execution_limit_cny=(
+                    validated_budget.cumulative.execution_limit_cny
+                ),
+            )
+        except CanonicalPricingError as exc:
+            raise ValueError(
+                "formal holdout budget pricing or limits are not canonical"
+            ) from exc
+        if (
+            started_at < canonical_price.captured_at
+            or completed_at > canonical_price.valid_until
+        ):
+            raise ValueError(
+                "formal holdout run is outside the canonical price window"
             )
         provider_attempts = sum(
             call.provider_attempts or 0
@@ -721,10 +779,10 @@ def build_readonly_manifest(
             recomputed_cost_units = sum(
                 calculate_usage_cost_from_rates(
                     rates_cny=(
-                        validated_budget.price.rates_cny.model_dump()
+                        canonical_price.rates_cny.model_dump()
                     ),
                     tokens_per_price_unit=(
-                        validated_budget.price.tokens_per_price_unit
+                        canonical_price.tokens_per_price_unit
                     ),
                     usage=call.usage,
                 ).units
@@ -892,6 +950,11 @@ def build_readonly_manifest(
             "evidence_protocol_sha256": harness_fingerprints[
                 "evidence_protocol_sha256"
             ],
+            "canonical_price_snapshot_sha256": (
+                harness_fingerprints[
+                    "canonical_price_snapshot_sha256"
+                ]
+            ),
             "max_tool_rounds": settings.agent_max_tool_rounds,
             "max_tool_calls": settings.agent_max_tool_calls,
         },

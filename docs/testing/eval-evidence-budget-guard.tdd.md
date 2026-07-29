@@ -107,7 +107,25 @@ run ID 无法再次取得付费运行 lease。
 - 正式输入与输出固定在 owner-only 私有根，拒绝符号链接、越界和宽松权限；
 - 可捕获失败写入独立 failed-attempt bundle，保存已完成记录、真实预算或
   明确的 unavailable 状态，并由 failed terminal 单独绑定。失败 Schema
-  无法通过 completed Eval validator。
+  无法通过 completed Eval validator；
+- 校准和 formal v2 只接受仓库 canonical price snapshot 的真实内容哈希、
+  model、费率、计价单位、URL 和时间窗，并强制 ¥20/¥18；价格文件本身进入
+  frozen harness 和 evidence protocol 指纹。原始文件 SHA-256 同时固定在
+  代码中；一次安全读取产生的同一内存快照同时供指纹和预算守卫使用，二者
+  身份不一致时会在创建 SQLite run、start receipt 或 provider attempt 前
+  失败关闭；
+- 成功 bundle 的 summary 从完整 case records 重算，case 的 status、分层
+  scores、score checks、checks/failures 与业务状态必须内部一致，不能把失败
+  record 配成旧的 80/80 summary；
+- failed-attempt 只有持久 SQLite 预算身份才能标记 `captured`；记录中的
+  provider attempts 不得高于 run ledger，差额单独保存。真实 committed
+  超过 ¥18 时保留原值并显式标记 `budget_limit_breached=true`，不能因 Schema
+  拒绝而丢失超支证据；
+- start 哈希由独占写入的确切字节直接返回，半写 start/terminal 在
+  `BaseException` 下清理；有效 start 后的异步中断会先形成 failed terminal；
+- formal bundle、manifest、start、terminal 的目录/文件权限固定为
+  `0700`/`0600` 且拒绝 symlink；公开 CLI 不再认证缺少完整回执链的 formal；
+- formal 预检错误和成功摘要均不回显私有案例或 artifact 路径。
 
 ## 首次 4-trial 开发集结果
 

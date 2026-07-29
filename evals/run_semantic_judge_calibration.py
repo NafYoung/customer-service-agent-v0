@@ -21,6 +21,7 @@ from evals.calibration_attestation import (
     canonical_contract_set_sha256,
     validate_calibration_attestation,
 )
+from evals.canonical_pricing import CanonicalPricingError
 from evals.private_paths import (
     PrivatePathError,
     prepare_fixed_private_output_root,
@@ -171,8 +172,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             settings=settings,
             run_id=run_id,
             purpose="semantic_judge_calibration",
+            frozen_harness=frozen_harness,
         )
-    except (BudgetError, ValueError) as exc:
+    except (BudgetError, CanonicalPricingError, ValueError) as exc:
         print(f"CONFIGURATION ERROR: {exc}")
         return 2
     try:

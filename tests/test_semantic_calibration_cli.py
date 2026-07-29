@@ -7,6 +7,7 @@ from pathlib import Path
 from app.agent.openai_compatible import AssistantTurn
 from evals import run_semantic_judge_calibration as calibration_cli
 from evals.calibration_attestation import validate_calibration_attestation
+from evals.canonical_pricing import canonical_budget_price_payload
 from evals.semantic_calibration import load_calibration_fixtures
 
 
@@ -20,6 +21,7 @@ class _ClosedBudgetGuard:
 
     def snapshot(self) -> dict[str, object]:
         assert self.closed is True
+        price = canonical_budget_price_payload()
         settled = Decimal(self.attempt_count) * Decimal("0.00002")
         settled_cny = format(settled, "f")
         amounts = {
@@ -44,32 +46,12 @@ class _ClosedBudgetGuard:
                 "run_id": "eval-20260729-calibration-cli",
                 "purpose": "semantic_judge_calibration",
                 "model": "deepseek-v4-flash",
-                "price_sha256": "d" * 64,
+                "price_sha256": price["snapshot_sha256"],
                 "status": "completed",
                 "started_at": "2026-07-29T12:00:00+00:00",
                 "completed_at": "2026-07-29T12:05:00+00:00",
             },
-            "price": {
-                "provider": "deepseek",
-                "model": "deepseek-v4-flash",
-                "currency": "CNY",
-                "snapshot_sha256": "d" * 64,
-                "source_url": (
-                    "https://api-docs.deepseek.com/quick_start/pricing"
-                ),
-                "usage_source_url": (
-                    "https://api-docs.deepseek.com/api/"
-                    "create-chat-completion/"
-                ),
-                "captured_at": "2026-07-29T08:58:58+00:00",
-                "valid_until": "2026-07-30T08:58:58+00:00",
-                "rates_cny": {
-                    "prompt_cache_hit": "0.02",
-                    "prompt_cache_miss": "1",
-                    "completion": "2",
-                },
-                "tokens_per_price_unit": 1_000_000,
-            },
+            "price": price,
             "reservation_cny_per_attempt": "0.01",
             "run": dict(amounts),
             "cumulative": dict(amounts),

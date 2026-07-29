@@ -293,10 +293,15 @@ Prompt 优化，不能替代隐藏 holdout，也不能据此声称生产安全�
 每次正式运行只会在被 Git 忽略的 `artifacts/private/eval-runs/` 写入
 owner-only 私有证据包。成功结果与失败 attempt 使用互斥 Schema 和回执字段；
 失败包保留已完成的 partial trajectory，不能冒充 completed 结果。
-独立验证：
+非正式 diagnostic/dev bundle 可独立验证。正式 v2 不能脱离封存声明和
+start/terminal receipt 单独认证，必须提供完整回执链：
 
 ```bash
-python evals/verify_eval_bundle.py artifacts/private/eval-runs/<run-id>
+python evals/verify_eval_bundle.py \
+  artifacts/private/eval-runs/<run-id> \
+  --holdout-manifest <sealed-holdout-v2-manifest.json> \
+  --holdout-start <readonly-holdout-v2.start.json> \
+  --holdout-terminal <readonly-holdout-v2.terminal.json>
 ```
 
 公开仓库后只提交额外生成的脱敏证据投影，不提交原始轨迹、预算账本、

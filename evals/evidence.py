@@ -5,6 +5,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import tempfile
 import time
 from dataclasses import asdict, dataclass, is_dataclass
@@ -623,3 +624,45 @@ def verify_eval_bundle(bundle_path: Path) -> dict[str, Any]:
         "trajectories": trajectories,
         "integrity": integrity,
     }
+
+
+def verify_private_eval_bundle_permissions(bundle_path: Path) -> None:
+    """Require an owner-only, symlink-free formal evidence bundle."""
+
+    def validate_path(path: Path) -> None:
+        mode = path.lstat().st_mode
+        if stat.S_ISLNK(mode):
+            raise ArtifactIntegrityError(
+                "Private Eval bundles cannot contain symlinks"
+            )
+        if stat.S_ISDIR(mode):
+            if stat.S_IMODE(mode) != 0o700:
+                raise ArtifactIntegrityError(
+                    "Private Eval bundle directories must use mode 0700"
+                )
+        elif stat.S_ISREG(mode):
+            if stat.S_IMODE(mode) != 0o600:
+                raise ArtifactIntegrityError(
+                    "Private Eval bundle files must use mode 0600"
+                )
+        else:
+            raise ArtifactIntegrityError(
+                "Private Eval bundles may contain only regular files "
+                "and directories"
+            )
+
+    try:
+        for ancestor in bundle_path.parents:
+            if stat.S_ISLNK(ancestor.lstat().st_mode):
+                raise ArtifactIntegrityError(
+                    "Private Eval bundle paths cannot traverse symlinks"
+                )
+        validate_path(bundle_path)
+        for path in bundle_path.rglob("*"):
+            validate_path(path)
+    except ArtifactIntegrityError:
+        raise
+    except OSError as exc:
+        raise ArtifactIntegrityError(
+            "Private Eval bundle permissions are unreadable"
+        ) from exc

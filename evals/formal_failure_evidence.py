@@ -3,11 +3,16 @@ from __future__ import annotations
 import stat
 from collections import Counter
 from datetime import datetime
+from decimal import Decimal
 from pathlib import Path
 from typing import Annotated, Any, Literal, Mapping, Sequence
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from evals.canonical_pricing import (
+    CanonicalPricingError,
+    require_canonical_paid_budget,
+)
 from evals.evidence import verify_eval_bundle, write_eval_bundle
 from evals.evidence_schema import (
     ArtifactPaths,
@@ -158,6 +163,8 @@ class FormalFailureSummary(StrictFailureModel):
     partial: FormalFailurePartialSummary | None
     budget_capture_status: Literal["captured", "unavailable"]
     budget: BudgetSummary | None
+    budget_attempt_delta: NonNegativeInt | None
+    budget_limit_breached: bool | None
 
     @model_validator(mode="after")
     def validate_capture_states(self) -> FormalFailureSummary:
@@ -178,6 +185,49 @@ class FormalFailureSummary(StrictFailureModel):
         ):
             raise ValueError(
                 "Budget capture status does not match budget evidence"
+            )
+        if self.budget is None:
+            if (
+                self.budget_attempt_delta is not None
+                or self.budget_limit_breached is not None
+            ):
+                raise ValueError(
+                    "Unavailable budget cannot claim derived evidence"
+                )
+            return self
+        if (
+            self.budget.enforcement_mode != "persistent_sqlite"
+            or self.budget.run_identity is None
+            or self.budget.price is None
+        ):
+            raise ValueError(
+                "Captured formal failure budget must be persistent"
+            )
+        captured_provider_attempts = (
+            self.partial.provider_attempt_count
+            if self.partial is not None
+            else 0
+        )
+        budget_attempts = self.budget.run.attempt_count
+        if budget_attempts < captured_provider_attempts:
+            raise ValueError(
+                "Captured budget underreports provider attempts"
+            )
+        expected_attempt_delta = (
+            budget_attempts - captured_provider_attempts
+        )
+        expected_limit_breached = Decimal(
+            self.budget.cumulative.committed_cny
+        ) > Decimal(
+            self.budget.cumulative.execution_limit_cny
+        )
+        if (
+            self.budget_attempt_delta != expected_attempt_delta
+            or self.budget_limit_breached
+            is not expected_limit_breached
+        ):
+            raise ValueError(
+                "Failed-attempt budget derivations are inconsistent"
             )
         return self
 
@@ -201,20 +251,39 @@ class FormalFailureEvidenceBundle(StrictFailureModel):
             raise ValueError(
                 "Failed-attempt manifest and summary identity differ"
             )
-        if (
-            summary.budget is not None
-            and summary.budget.enforcement_mode
-            == "persistent_sqlite"
-        ):
+        if summary.budget is not None:
             budget_identity = summary.budget.run_identity
+            budget_price = summary.budget.price
             if (
                 budget_identity is None
+                or budget_price is None
                 or budget_identity.run_id != manifest.run_id
                 or budget_identity.purpose != "holdout_formal"
             ):
                 raise ValueError(
                     "Failed-attempt budget identity differs from the run"
                 )
+            try:
+                require_canonical_paid_budget(
+                    price=budget_price,
+                    expected_model=budget_identity.model,
+                    run_hard_limit_cny=(
+                        summary.budget.run.hard_limit_cny
+                    ),
+                    run_execution_limit_cny=(
+                        summary.budget.run.execution_limit_cny
+                    ),
+                    cumulative_hard_limit_cny=(
+                        summary.budget.cumulative.hard_limit_cny
+                    ),
+                    cumulative_execution_limit_cny=(
+                        summary.budget.cumulative.execution_limit_cny
+                    ),
+                )
+            except CanonicalPricingError as exc:
+                raise ValueError(
+                    "Failed-attempt budget pricing is not canonical"
+                ) from exc
 
         case_keys = [(item.case_id, item.trial) for item in self.cases]
         trajectory_keys = [
@@ -401,6 +470,11 @@ def write_formal_failure_bundle(
         if budget_summary is not None
         else None
     )
+    partial_summary = (
+        _summarize_partial_records(records)
+        if records_captured
+        else None
+    )
     completed_record_count = len(records)
     manifest = FormalFailureManifest(
         schema_version="1.0",
@@ -421,15 +495,29 @@ def write_formal_failure_bundle(
         record_capture_status=(
             "captured" if records_captured else "unavailable"
         ),
-        partial=(
-            _summarize_partial_records(records)
-            if records_captured
-            else None
-        ),
+        partial=partial_summary,
         budget_capture_status=(
             "captured" if budget is not None else "unavailable"
         ),
         budget=budget,
+        budget_attempt_delta=(
+            budget.run.attempt_count
+            - (
+                partial_summary.provider_attempt_count
+                if partial_summary is not None
+                else 0
+            )
+            if budget is not None
+            else None
+        ),
+        budget_limit_breached=(
+            Decimal(budget.cumulative.committed_cny)
+            > Decimal(
+                budget.cumulative.execution_limit_cny
+            )
+            if budget is not None
+            else None
+        ),
     )
 
     record_payloads = [

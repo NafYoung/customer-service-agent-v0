@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import stat
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -16,6 +18,7 @@ from evals.evidence import (
     ArtifactIntegrityError,
     stable_sha256,
     verify_eval_bundle,
+    verify_private_eval_bundle_permissions,
 )
 from evals.evidence_schema import validate_readonly_payload
 from evals.file_snapshot import (
@@ -64,6 +67,12 @@ class HoldoutDeclaration:
     calibration_reviewer_id: str
     calibration_reviewed_count: int
     harness_sha256: str
+
+
+@dataclass(frozen=True)
+class AcquiredHoldoutRunLock:
+    path: Path
+    receipt_sha256: str
 
 
 def _read_manifest_with_sha256(
@@ -263,7 +272,7 @@ def validate_holdout_declaration(
     )
 
 
-def _write_exclusive_json(path: Path, payload: dict[str, Any]) -> None:
+def _write_exclusive_json(path: Path, payload: dict[str, Any]) -> str:
     data = (
         json.dumps(
             payload,
@@ -276,6 +285,7 @@ def _write_exclusive_json(path: Path, payload: dict[str, Any]) -> None:
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
+    descriptor: int | None = None
     try:
         descriptor = os.open(path, flags, 0o600)
     except FileExistsError as exc:
@@ -283,6 +293,7 @@ def _write_exclusive_json(path: Path, payload: dict[str, Any]) -> None:
             "This formal holdout declaration has already been consumed."
         ) from exc
     try:
+        assert descriptor is not None
         remaining = memoryview(data)
         while remaining:
             written = os.write(descriptor, remaining)
@@ -290,32 +301,41 @@ def _write_exclusive_json(path: Path, payload: dict[str, Any]) -> None:
                 raise OSError("exclusive receipt write made no progress")
             remaining = remaining[written:]
         os.fsync(descriptor)
-    except Exception:
+        os.close(descriptor)
+        descriptor = None
+    except BaseException:
+        if descriptor is not None:
+            try:
+                os.close(descriptor)
+            except BaseException:
+                pass
         try:
             path.unlink()
         except OSError:
             pass
         raise
-    finally:
-        os.close(descriptor)
+    return hashlib.sha256(data).hexdigest()
 
 
-def acquire_holdout_run_lock(
+def acquire_holdout_run_lock_with_hash(
     *,
     lock_root: Path,
     declaration: HoldoutDeclaration,
     run_id: str,
     now: datetime | None = None,
-) -> Path:
-    """Consume the one formal run immediately before provider use."""
+) -> AcquiredHoldoutRunLock:
+    """Consume the run and bind the exact receipt bytes without rereading."""
 
-    if lock_root.exists() and lock_root.is_symlink():
-        raise HoldoutLockError("The private holdout lock root cannot be a symlink.")
+    for candidate in (lock_root, *lock_root.parents):
+        if candidate.is_symlink():
+            raise HoldoutLockError(
+                "The private holdout lock path cannot contain a symlink."
+            )
     lock_root.mkdir(parents=True, exist_ok=True, mode=0o700)
     lock_root.chmod(0o700)
     lock_path = lock_root / "readonly-holdout-v2.start.json"
     created_at = (now or datetime.now(UTC)).astimezone(UTC).isoformat()
-    _write_exclusive_json(
+    receipt_sha256 = _write_exclusive_json(
         lock_path,
         {
             "schema_version": "1.0",
@@ -356,7 +376,75 @@ def acquire_holdout_run_lock(
             "completed_at": None,
         },
     )
-    return lock_path
+    return AcquiredHoldoutRunLock(
+        path=lock_path,
+        receipt_sha256=receipt_sha256,
+    )
+
+
+def acquire_holdout_run_lock(
+    *,
+    lock_root: Path,
+    declaration: HoldoutDeclaration,
+    run_id: str,
+    now: datetime | None = None,
+) -> Path:
+    """Consume the one formal run immediately before provider use."""
+
+    return acquire_holdout_run_lock_with_hash(
+        lock_root=lock_root,
+        declaration=declaration,
+        run_id=run_id,
+        now=now,
+    ).path
+
+
+def _require_private_receipt_file(path: Path, *, label: str) -> None:
+    try:
+        for ancestor in path.parents:
+            if stat.S_ISLNK(ancestor.lstat().st_mode):
+                raise HoldoutLockError(
+                    f"The private {label} path cannot contain symlinks."
+                )
+        file_mode = path.lstat().st_mode
+        parent_mode = path.parent.lstat().st_mode
+    except OSError as exc:
+        raise HoldoutLockError(
+            f"The private {label} permissions are unreadable."
+        ) from exc
+    if (
+        stat.S_ISLNK(file_mode)
+        or not stat.S_ISREG(file_mode)
+        or stat.S_IMODE(file_mode) != 0o600
+        or stat.S_ISLNK(parent_mode)
+        or not stat.S_ISDIR(parent_mode)
+        or stat.S_IMODE(parent_mode) != 0o700
+    ):
+        raise HoldoutLockError(
+            f"The private {label} requires a 0600 regular file "
+            "inside a 0700 directory."
+        )
+
+
+def _require_private_completed_chain_paths(
+    *,
+    manifest_path: Path,
+    start_path: Path,
+    terminal_path: Path,
+    bundle_path: Path,
+) -> None:
+    for path, label in (
+        (manifest_path, "holdout manifest"),
+        (start_path, "holdout start receipt"),
+        (terminal_path, "holdout terminal receipt"),
+    ):
+        _require_private_receipt_file(path, label=label)
+    try:
+        verify_private_eval_bundle_permissions(bundle_path)
+    except ArtifactIntegrityError as exc:
+        raise HoldoutLockError(
+            "The private formal bundle permissions are invalid."
+        ) from exc
 
 
 def holdout_lock_receipt_sha256(lock_path: Path) -> str:
@@ -456,6 +544,12 @@ def verify_holdout_receipt_chain(
 ) -> None:
     """Verify sealed manifest -> start -> bundle -> terminal hash links."""
 
+    _require_private_completed_chain_paths(
+        manifest_path=manifest_path,
+        start_path=start_path,
+        terminal_path=terminal_path,
+        bundle_path=bundle_path,
+    )
     manifest, manifest_sha256 = _read_manifest_with_sha256(
         manifest_path
     )
@@ -585,6 +679,12 @@ def verify_failed_holdout_receipt_chain(
         validate_formal_failure_bundle,
     )
 
+    _require_private_completed_chain_paths(
+        manifest_path=manifest_path,
+        start_path=start_path,
+        terminal_path=terminal_path,
+        bundle_path=bundle_path,
+    )
     manifest, manifest_sha256 = _read_manifest_with_sha256(
         manifest_path
     )

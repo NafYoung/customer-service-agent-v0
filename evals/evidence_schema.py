@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+from collections import Counter, defaultdict
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
@@ -12,7 +14,15 @@ from app.agent.deepseek_budget import (
     calculate_usage_cost_from_rates,
     cny_to_units,
 )
-from evals.evidence import verify_eval_bundle
+from evals.canonical_pricing import (
+    CanonicalPricingError,
+    canonical_price_file_sha256,
+    require_canonical_paid_budget,
+)
+from evals.evidence import (
+    verify_eval_bundle,
+    verify_private_eval_bundle_permissions,
+)
 from evals.readonly_eval import SCORE_CATEGORIES
 
 Sha256 = str
@@ -139,6 +149,10 @@ class HarnessSnapshot(StrictEvidenceModel):
         default=None,
         pattern=r"^[0-9a-f]{64}$",
     )
+    canonical_price_snapshot_sha256: Sha256 | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{64}$",
+    )
     max_tool_rounds: int = Field(ge=1)
     max_tool_calls: int = Field(ge=1)
 
@@ -245,6 +259,12 @@ class ReadonlyManifest(StrictEvidenceModel):
 
     @model_validator(mode="after")
     def validate_formal_contract(self) -> ReadonlyManifest:
+        if (
+            self.created_at.tzinfo is None
+            or self.completed_at.tzinfo is None
+            or self.completed_at < self.created_at
+        ):
+            raise ValueError("Eval manifest timestamps are invalid")
         if self.purpose != "holdout_formal":
             if self.eval.split != "dev":
                 raise ValueError(
@@ -284,6 +304,7 @@ class ReadonlyManifest(StrictEvidenceModel):
             self.harness.semantic_calibration_runner_sha256,
             self.harness.semantic_calibration_corpus_sha256,
             self.harness.evidence_protocol_sha256,
+            self.harness.canonical_price_snapshot_sha256,
         )
         if (
             self.status != "completed"
@@ -368,7 +389,7 @@ class BudgetAmountSummary(StrictEvidenceModel):
         remaining = Decimal(self.remaining_execution_cny)
         if hard > Decimal("20") or execution > hard:
             raise ValueError("Budget limits exceed the artifact contract")
-        if committed > execution or settled > committed:
+        if settled > committed:
             raise ValueError("Budget commitments are inconsistent")
         if remaining > execution:
             raise ValueError("Remaining budget exceeds execution limit")
@@ -572,6 +593,30 @@ class BusinessStateRecord(StrictEvidenceModel):
         for value in (self.before_sha256, self.after_sha256):
             if value is not None and not re_full_sha256(value):
                 raise ValueError("Business-state hash must be SHA-256")
+        if self.changed is None:
+            if (
+                self.changed_tables
+                or self.before_sha256 is not None
+                or self.after_sha256 is not None
+            ):
+                raise ValueError(
+                    "Unknown business state cannot claim hashes or changes"
+                )
+        elif (
+            self.before_sha256 is None
+            or self.after_sha256 is None
+            or (self.changed and not self.changed_tables)
+            or (not self.changed and self.changed_tables)
+            or (
+                self.changed
+                and self.before_sha256 == self.after_sha256
+            )
+            or (
+                not self.changed
+                and self.before_sha256 != self.after_sha256
+            )
+        ):
+            raise ValueError("Business-state evidence is inconsistent")
         return self
 
 
@@ -612,7 +657,190 @@ class ReadonlyCaseRecord(StrictEvidenceModel):
     def validate_scores(self) -> ReadonlyCaseRecord:
         if set(self.scores) != set(SCORE_CATEGORIES):
             raise ValueError("Case scores do not match scorer categories")
+        if (
+            self.started_at.tzinfo is None
+            or self.completed_at.tzinfo is None
+            or self.completed_at < self.started_at
+        ):
+            raise ValueError("Case record timestamps are invalid")
+        expected_scores = {
+            category: True for category in SCORE_CATEGORIES
+        }
+        for check in self.score_checks:
+            if check.category not in expected_scores:
+                raise ValueError("Score check uses an unknown category")
+            expected_scores[check.category] = (
+                expected_scores[check.category] and check.passed
+            )
+        expected_checks = [
+            check.message for check in self.score_checks if check.passed
+        ]
+        expected_failures = [
+            check.message
+            for check in self.score_checks
+            if not check.passed
+        ]
+        if self.scores != expected_scores:
+            raise ValueError(
+                "Case scores differ from their score checks"
+            )
+        if (
+            self.checks != expected_checks
+            or self.failures != expected_failures
+        ):
+            raise ValueError(
+                "Case check and failure lists differ from score checks"
+            )
+        if (self.status == "passed") != (not self.failures):
+            raise ValueError("Case status differs from score failures")
+        if self.termination_reason != (
+            self.error_code or "completed"
+        ):
+            raise ValueError(
+                "Case termination reason differs from its error"
+            )
         return self
+
+
+def _summary_rate(passed: int, total: int) -> float:
+    return round(passed / total, 6) if total else 0.0
+
+
+def _summary_distribution(
+    values: list[int],
+) -> dict[str, int | float | None]:
+    if not values:
+        return {
+            "p50": None,
+            "p95": None,
+            "max": None,
+            "total": 0,
+        }
+    ordered = sorted(values)
+    midpoint = len(ordered) // 2
+    p50: int | float
+    if len(ordered) % 2:
+        p50 = ordered[midpoint]
+    else:
+        p50 = (
+            ordered[midpoint - 1] + ordered[midpoint]
+        ) / 2
+    p95_index = max(0, math.ceil(len(ordered) * 0.95) - 1)
+    return {
+        "p50": p50,
+        "p95": ordered[p95_index],
+        "max": ordered[-1],
+        "total": sum(ordered),
+    }
+
+
+def _recompute_summary_without_budget(
+    *,
+    run_id: str,
+    records: list[ReadonlyCaseRecord],
+    planned_trials: int,
+) -> dict[str, Any]:
+    total = len(records)
+    strict_passed = sum(
+        record.status == "passed" for record in records
+    )
+    grouped: dict[str, list[ReadonlyCaseRecord]] = defaultdict(
+        list
+    )
+    for record in records:
+        grouped[record.case_id].append(record)
+    cases_all_trials_passed = sum(
+        len(case_records) == planned_trials
+        and all(
+            record.status == "passed"
+            for record in case_records
+        )
+        for case_records in grouped.values()
+    )
+    score_layers: dict[str, dict[str, int | float]] = {}
+    for category in SCORE_CATEGORIES:
+        passed = sum(
+            record.scores[category] for record in records
+        )
+        score_layers[category] = {
+            "passed": passed,
+            "failed": total - passed,
+            "rate": _summary_rate(passed, total),
+        }
+
+    usage: Counter[str] = Counter()
+    model_call_latencies: list[int] = []
+    model_call_count = 0
+    for record in records:
+        for call in record.model_calls:
+            model_call_count += 1
+            model_call_latencies.append(call.latency_ms)
+            if call.usage is not None:
+                usage.update(call.usage)
+    security_passed = sum(
+        record.scores["security"] for record in records
+    )
+    changed_trials = sum(
+        record.business_state.changed is True
+        for record in records
+    )
+    unknown_trials = sum(
+        record.business_state.changed is None
+        for record in records
+    )
+    errors = Counter(
+        record.error_code
+        for record in records
+        if record.error_code is not None
+    )
+    return {
+        "schema_version": "1.0",
+        "run_id": run_id,
+        "total_cases": len(grouped),
+        "planned_trials": planned_trials,
+        "total_trials": total,
+        "strict": {
+            "passed": strict_passed,
+            "failed": total - strict_passed,
+            "rate": _summary_rate(strict_passed, total),
+        },
+        "reliability": {
+            "k": planned_trials,
+            "cases_all_trials_passed": cases_all_trials_passed,
+            "case_count": len(grouped),
+            "pass_power_k": _summary_rate(
+                cases_all_trials_passed,
+                len(grouped),
+            ),
+        },
+        "security": {
+            "passed": security_passed,
+            "failed": total - security_passed,
+            "rate": _summary_rate(security_passed, total),
+            "all_trials_passed": security_passed == total,
+        },
+        "score_layers": score_layers,
+        "usage": {
+            "model_calls": model_call_count,
+            **{key: usage[key] for key in sorted(usage)},
+        },
+        "latency_ms": {
+            "case": _summary_distribution(
+                [record.duration_ms for record in records]
+            ),
+            "model_call": _summary_distribution(
+                model_call_latencies
+            ),
+        },
+        "business_state": {
+            "changed_trials": changed_trials,
+            "unknown_trials": unknown_trials,
+            "all_trials_unchanged": (
+                changed_trials == 0 and unknown_trials == 0
+            ),
+        },
+        "errors": dict(sorted(errors.items())),
+    }
 
 
 class FileIntegrity(StrictEvidenceModel):
@@ -723,6 +951,17 @@ class ReadonlyEvidenceBundle(StrictEvidenceModel):
             for item in (*self.cases, *self.trajectories)
         ):
             raise ValueError("Case split differs from manifest")
+        actual_summary = self.summary.model_dump(mode="json")
+        actual_summary.pop("budget")
+        expected_summary = _recompute_summary_without_budget(
+            run_id=self.manifest.run_id,
+            records=self.cases,
+            planned_trials=self.summary.planned_trials,
+        )
+        if actual_summary != expected_summary:
+            raise ValueError(
+                "Summary differs from the evidence records"
+            )
         if (
             self.manifest.purpose == "holdout_formal"
             and self.manifest.schema_version == "2.0"
@@ -754,6 +993,41 @@ class ReadonlyEvidenceBundle(StrictEvidenceModel):
                 raise ValueError(
                     "Formal v2 evidence requires exact pricing"
                 )
+            try:
+                canonical_price = require_canonical_paid_budget(
+                    price=summary_price,
+                    expected_model=(
+                        self.manifest.model.requested_model
+                    ),
+                    run_hard_limit_cny=(
+                        run_budget.hard_limit_cny
+                    ),
+                    run_execution_limit_cny=(
+                        run_budget.execution_limit_cny
+                    ),
+                    cumulative_hard_limit_cny=(
+                        cumulative_budget.hard_limit_cny
+                    ),
+                    cumulative_execution_limit_cny=(
+                        cumulative_budget.execution_limit_cny
+                    ),
+                )
+            except CanonicalPricingError as exc:
+                raise ValueError(
+                    "Formal v2 pricing is not canonical"
+                ) from exc
+            if (
+                self.manifest.harness
+                .canonical_price_snapshot_sha256
+                != canonical_price_file_sha256()
+                or self.manifest.created_at
+                < canonical_price.captured_at
+                or self.manifest.completed_at
+                > canonical_price.valid_until
+            ):
+                raise ValueError(
+                    "Formal v2 run is outside its canonical pricing contract"
+                )
             if any(
                 call.status != "success"
                 or call.usage is None
@@ -766,9 +1040,9 @@ class ReadonlyEvidenceBundle(StrictEvidenceModel):
             try:
                 recomputed_cost_units = sum(
                     calculate_usage_cost_from_rates(
-                        rates_cny=summary_price.rates_cny.model_dump(),
+                        rates_cny=canonical_price.rates_cny.model_dump(),
                         tokens_per_price_unit=(
-                            summary_price.tokens_per_price_unit
+                            canonical_price.tokens_per_price_unit
                         ),
                         usage=call.usage,
                     ).units
@@ -809,6 +1083,10 @@ class ReadonlyEvidenceBundle(StrictEvidenceModel):
                 or cny_to_units(Decimal(run_budget.settled_cny))
                 != recomputed_cost_units
                 or cumulative_committed < run_committed
+                or cumulative_committed
+                > Decimal(
+                    cumulative_budget.execution_limit_cny
+                )
                 or Decimal(cumulative_budget.remaining_execution_cny)
                 != expected_remaining
             ):
@@ -825,4 +1103,10 @@ def validate_readonly_payload(
 
 
 def validate_readonly_bundle(bundle_path: Path) -> ReadonlyEvidenceBundle:
-    return validate_readonly_payload(verify_eval_bundle(bundle_path))
+    bundle = validate_readonly_payload(verify_eval_bundle(bundle_path))
+    if (
+        bundle.manifest.purpose == "holdout_formal"
+        and bundle.manifest.schema_version == "2.0"
+    ):
+        verify_private_eval_bundle_permissions(bundle_path)
+    return bundle

@@ -61,7 +61,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             if args.failed_attempt
             else validate_readonly_bundle(args.bundle_path)
         )
-        if all(path is not None for path in chain_paths):
+        complete_chain = all(path is not None for path in chain_paths)
+        is_formal = args.failed_attempt or (
+            readonly_bundle is not None
+            and readonly_bundle.manifest.purpose == "holdout_formal"
+        )
+        if is_formal and not complete_chain:
+            print(
+                "INVALID: formal v2 requires a complete formal receipt chain"
+            )
+            return 1
+        if complete_chain:
             assert args.holdout_manifest is not None
             assert args.holdout_start is not None
             assert args.holdout_terminal is not None
@@ -91,7 +101,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     chain_suffix = (
         " with complete formal receipt chain"
-        if all(path is not None for path in chain_paths)
+        if complete_chain
         else ""
     )
     if args.failed_attempt:

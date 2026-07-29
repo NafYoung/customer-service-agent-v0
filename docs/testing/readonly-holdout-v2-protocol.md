@@ -78,10 +78,17 @@ artifact 目录都不能获得第二次机会。`holdout` split 只能与
 `holdout_formal` purpose 配对；模型名、官方 endpoint、temperature、
 thinking、tool choice、token/重试/超时、Agent 限额以及对应实现源码任一
 漂移都会失败关闭。预算摘要必须绑定 SQLite 中持久化的 run ID、purpose、
-model、价格快照和完成状态；累计金额、余额和逐调用重算必须一致。
+model、仓库 canonical 价格快照和完成状态；价格文件进入 frozen harness，
+formal/calibration 固定使用 ¥20/¥18，累计金额、余额和逐调用重算必须一致。
+价格原始文件哈希由代码固定；同一次安全读取的解析对象直接进入预算守卫，
+不能在冻结指纹后另行重读并换成低费率。
+成功 summary 必须从 case records 全量重算。失败证据若捕获预算，只接受
+SQLite 持久身份，并显式记录未匹配 attempt 数与是否突破执行上限。
 
 正式成功路径只允许写入固定的 `artifacts/private/eval-runs/`，所有输入也必须
-位于固定私有根下，拒绝符号链接、越界路径、宽松目录和 `0644` 文件。最终
+位于固定私有根下。formal bundle 的每层目录必须恰为 `0700`，所有普通文件
+必须恰为 `0600`；manifest、start、terminal 及其父目录遵守同一约束，任何
+符号链接、越界路径或宽松权限都会失败关闭。最终
 干净源码复查发生在 completed bundle 落盘前。start receipt、最终 Eval
 manifest、完整性索引和 terminal receipt 形成可重新验证的哈希链；组合
 校验器会重新遍历每个索引文件并交叉比较案例集、校准、源码、runtime 和
@@ -101,8 +108,9 @@ python evals/run_readonly_agent_evals.py \
   --calibration-review <private-schema-v1-review.json>
 ```
 
-正式运行的控制台只输出聚合结果，不输出私有 case ID 或带预期短语的逐例失败
-信息。完整轨迹保留在 Git 忽略、目录权限 700、文件权限 600 的私有证据包。
+正式运行的控制台只输出聚合结果，不输出私有 case ID、带预期短语的逐例失败
+信息或私有证据包路径。完整轨迹保留在 Git 忽略、目录权限 700、文件权限
+600 的私有证据包。
 
 成功后离线重验完整链：
 
@@ -114,13 +122,21 @@ python evals/verify_eval_bundle.py \
   --holdout-terminal <readonly-holdout-v2.terminal.json>
 ```
 
+start receipt 的 SHA-256 直接来自独占写入并 `fsync` 的确切字节，不在创建后
+另开读取窗口。独占写入若遇到 `KeyboardInterrupt`/`SystemExit` 等
+`BaseException`，会移除半写文件；一旦有效 start 已存在，后续任意 Python
+异常都会进入 failed terminal 路径。terminal 写入遭遇一次异步中断时会清理
+半写文件并重试，终态落盘后再向调用者重新抛出中断。
+
 任何可捕获的 Python 异常都会先尝试关闭模型和预算，再把已完成 trial 写入
 独立的 `formal_holdout_failed_attempt` 私有 bundle。该 Schema 与成功
 `ReadonlyManifest` 隔离，不能冒充 completed 结果；failed terminal 只绑定
 `attempt_bundle_integrity_sha256`。若磁盘或权限故障使失败包也无法保存，
 terminal 会明确记录 evidence unavailable，不虚构零费用或空成功证据。
-失败链使用同一校验命令并追加 `--failed-attempt`。`SIGKILL`、断电或文件系统
-整体失效不属于可捕获异常，协议不声称能在这些情况下保证 terminal 落盘。
+失败链使用同一校验命令并追加 `--failed-attempt`。公开校验器拒绝缺少任一
+manifest/start/terminal 参数的 formal v2 成功包或失败包。`SIGKILL`、断电、
+进程整体崩溃或持续文件系统失效不属于可恢复边界，协议不声称能在这些情况下
+保证 terminal 落盘。
 
 ## v2 验收
 

@@ -212,6 +212,115 @@ def test_formal_holdout_console_output_withholds_private_case_details(
     assert "0/1 read-only Agent trials passed" in output
     assert "private-case-canary" not in output
     assert "private expected phrase canary" not in output
+    assert str(tmp_path) not in output
+
+
+def test_public_verifier_rejects_formal_bundle_without_complete_chain(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    class FakeManifest:
+        purpose = "holdout_formal"
+        run_id = "eval-20260729-formal-no-chain"
+
+    class FakeStrict:
+        passed = 80
+
+    class FakeSummary:
+        strict = FakeStrict()
+        total_trials = 80
+
+    class FakeBundle:
+        manifest = FakeManifest()
+        summary = FakeSummary()
+
+    monkeypatch.setattr(
+        verify_eval_bundle_cli,
+        "validate_readonly_bundle",
+        lambda path: FakeBundle(),
+    )
+
+    assert verify_eval_bundle_cli.main([str(tmp_path / "formal")]) == 1
+    output = capsys.readouterr().out
+    assert "INVALID" in output
+    assert "complete formal receipt chain" in output
+
+    monkeypatch.setattr(
+        verify_eval_bundle_cli,
+        "validate_formal_failure_bundle",
+        lambda path: object(),
+    )
+    assert (
+        verify_eval_bundle_cli.main(
+            [str(tmp_path / "failed-formal"), "--failed-attempt"]
+        )
+        == 1
+    )
+    failed_output = capsys.readouterr().out
+    assert "INVALID" in failed_output
+    assert "complete formal receipt chain" in failed_output
+
+
+def test_formal_case_precheck_error_does_not_disclose_private_path(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    private_case_path = tmp_path / "PRIVATE-CASE-PATH-CANARY"
+    monkeypatch.setattr(
+        run_readonly_agent_evals,
+        "prepare_fixed_private_output_root",
+        lambda requested, **kwargs: requested,
+    )
+    monkeypatch.setattr(
+        run_readonly_agent_evals,
+        "require_private_case_directory",
+        lambda path, **kwargs: path,
+    )
+    monkeypatch.setattr(
+        run_readonly_agent_evals,
+        "require_private_input_file",
+        lambda path, **kwargs: path,
+    )
+    monkeypatch.setattr(
+        run_readonly_agent_evals,
+        "load_cases",
+        lambda path: (_ for _ in ()).throw(
+            ValueError(f"invalid private case at {private_case_path}")
+        ),
+    )
+
+    exit_code = run_readonly_agent_evals.main(
+        [
+            "--case-dir",
+            str(private_case_path),
+            "--output-root",
+            str(tmp_path / "private-output"),
+            "--run-id",
+            "eval-20260729-formal-private-error",
+            "--purpose",
+            "holdout_formal",
+            "--split",
+            "holdout",
+            "--case-set-name",
+            "readonly-holdout-v2",
+            "--trials",
+            "4",
+            "--holdout-manifest",
+            str(tmp_path / "manifest.json"),
+            "--calibration-report",
+            str(tmp_path / "calibration.json"),
+            "--calibration-review",
+            str(tmp_path / "review.json"),
+        ]
+    )
+
+    output = capsys.readouterr().out
+    assert exit_code == 2
+    assert "FORMAL PRECHECK ERROR" in output
+    assert "PRIVATE-CASE-PATH-CANARY" not in output
+    assert str(tmp_path) not in output
 
 
 def test_cli_writes_verified_machine_readable_bundle_without_paid_api(
@@ -747,10 +856,15 @@ def test_formal_cli_rejects_dirty_source_before_attestation_or_budget(
     assert reached == ["clean"]
 
 
+@pytest.mark.parametrize(
+    "interrupt_stage",
+    [None, "terminal_write", "formal_evidence"],
+)
 def test_formal_runtime_failure_keeps_partial_evidence_and_terminal(
     tmp_path,
     monkeypatch,
     capsys,
+    interrupt_stage,
 ):
     cases = [
         ReadonlyEvalCase.model_validate(
@@ -817,7 +931,12 @@ def test_formal_runtime_failure_keeps_partial_evidence_and_terminal(
         reviewed_count=5,
     )
     model = OfflineEvalModel()
-    budget_guard = OfflineBudgetGuard()
+
+    class UnavailableFailureBudgetGuard(OfflineBudgetGuard):
+        def snapshot(self):
+            raise RuntimeError("budget snapshot unavailable")
+
+    budget_guard = UnavailableFailureBudgetGuard()
     partial_result = ReadonlyEvalResult(
         case_id="private-runtime-case-00",
         trial=1,
@@ -827,7 +946,16 @@ def test_formal_runtime_failure_keeps_partial_evidence_and_terminal(
         started_at="2026-07-29T16:00:00+00:00",
         completed_at="2026-07-29T16:00:01+00:00",
         duration_ms=1000,
-        failures=["provider failed"],
+        failures=[
+            f"{category} check"
+            for category in (
+                "task_success",
+                "tool_selection",
+                "security",
+                "communication",
+                "efficiency",
+            )
+        ],
         score_checks=[
             ScoreCheck(category, f"{category} check", False)
             for category in (
@@ -920,6 +1048,32 @@ def test_formal_runtime_failure_keeps_partial_evidence_and_terminal(
         "verify_failed_holdout_receipt_chain",
         lambda **kwargs: None,
     )
+    if interrupt_stage == "terminal_write":
+        real_finalize = (
+            run_readonly_agent_evals.finalize_holdout_run_lock
+        )
+        interrupted = False
+
+        def interrupt_terminal_once(**kwargs):
+            nonlocal interrupted
+            if not interrupted:
+                interrupted = True
+                raise KeyboardInterrupt
+            return real_finalize(**kwargs)
+
+        monkeypatch.setattr(
+            run_readonly_agent_evals,
+            "finalize_holdout_run_lock",
+            interrupt_terminal_once,
+        )
+    elif interrupt_stage == "formal_evidence":
+        monkeypatch.setattr(
+            run_readonly_agent_evals,
+            "FormalHoldoutEvidence",
+            lambda **kwargs: (_ for _ in ()).throw(
+                KeyboardInterrupt
+            ),
+        )
 
     def fail_after_partial_results(*, partial_results, **kwargs):
         partial_results.append(partial_result)
@@ -933,47 +1087,53 @@ def test_formal_runtime_failure_keeps_partial_evidence_and_terminal(
         fail_after_partial_results,
     )
 
-    exit_code = run_readonly_agent_evals.main(
-        [
-            "--case-dir",
-            str(tmp_path / "private-cases"),
-            "--output-root",
-            str(output_root),
-            "--run-id",
-            "eval-20260729-runtime-failure",
-            "--purpose",
-            "holdout_formal",
-            "--split",
-            "holdout",
-            "--case-set-name",
-            "readonly-holdout-v2",
-            "--trials",
-            "4",
-            "--holdout-manifest",
-            str(tmp_path / "manifest.json"),
-            "--calibration-report",
-            str(tmp_path / "calibration.json"),
-            "--calibration-review",
-            str(tmp_path / "review.json"),
-        ]
-    )
-
-    assert exit_code == 3
+    argv = [
+        "--case-dir",
+        str(tmp_path / "private-cases"),
+        "--output-root",
+        str(output_root),
+        "--run-id",
+        "eval-20260729-runtime-failure",
+        "--purpose",
+        "holdout_formal",
+        "--split",
+        "holdout",
+        "--case-set-name",
+        "readonly-holdout-v2",
+        "--trials",
+        "4",
+        "--holdout-manifest",
+        str(tmp_path / "manifest.json"),
+        "--calibration-report",
+        str(tmp_path / "calibration.json"),
+        "--calibration-review",
+        str(tmp_path / "review.json"),
+    ]
+    if interrupt_stage is not None:
+        with pytest.raises(KeyboardInterrupt):
+            run_readonly_agent_evals.main(argv)
+    else:
+        assert run_readonly_agent_evals.main(argv) == 3
     failed_bundle = (
         output_root
         / "failed-attempts"
         / "eval-20260729-runtime-failure"
     )
-    assert failed_bundle.exists()
-    cases_payload = (
-        failed_bundle / "cases.jsonl"
-    ).read_text(encoding="utf-8")
-    assert "private-runtime-case-00" in cases_payload
     terminal = json.loads(
         (
             lock_root / "readonly-holdout-v2.terminal.json"
         ).read_text(encoding="utf-8")
     )
+    if interrupt_stage == "formal_evidence":
+        assert failed_bundle.exists() is False
+        assert terminal["status"] == "failed"
+        assert terminal["failure_evidence_status"] == "unavailable"
+        return
+    assert failed_bundle.exists()
+    cases_payload = (
+        failed_bundle / "cases.jsonl"
+    ).read_text(encoding="utf-8")
+    assert "private-runtime-case-00" in cases_payload
     assert terminal["status"] == "failed"
     assert terminal["failure_evidence_status"] == "captured"
     assert terminal["attempt_bundle_integrity_sha256"]
