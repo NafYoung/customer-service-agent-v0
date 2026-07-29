@@ -503,6 +503,34 @@ def test_holdout_start_receipt_persists_public_regression_identity(
     assert start["public_regression_run_id"] == gate.run_id
 
 
+def test_start_receipt_rejects_unknown_fields(
+    tmp_path: Path,
+) -> None:
+    declaration = validate_holdout_declaration(
+        manifest_path=_manifest(tmp_path / "manifest.json"),
+        case_set_name="readonly-holdout-v2",
+        cases=_cases(),
+        calibration_attestation=_attestation(),
+        calibration_review=_review(),
+        regression_gate=_regression_gate(),
+    )
+    start_path = acquire_holdout_run_lock(
+        lock_root=tmp_path / "private-locks",
+        declaration=declaration,
+        run_id="eval-20260729-start-extra-field",
+    )
+    payload = json.loads(start_path.read_text(encoding="utf-8"))
+    payload["unreviewed_escape_hatch"] = True
+    start_path.write_text(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True),
+        encoding="utf-8",
+    )
+    start_path.chmod(0o600)
+
+    with pytest.raises(HoldoutLockError, match="schema|receipt|invalid"):
+        holdout_lock_receipt_sha256(start_path)
+
+
 def test_holdout_finalize_rejects_a_replaced_start_receipt(
     tmp_path: Path,
 ) -> None:
@@ -818,6 +846,43 @@ def test_completed_holdout_chain_links_manifest_start_bundle_and_terminal(
         private_root=tmp_path,
     )
     assert validation_calls == 1
+
+    outside_private_root = tmp_path / "different-private-root"
+    outside_private_root.mkdir(mode=0o700)
+    with pytest.raises(HoldoutLockError, match="private|root|outside"):
+        holdout_protocol.verify_holdout_receipt_chain(
+            manifest_path=manifest_path,
+            start_path=start_path,
+            terminal_path=terminal_path,
+            bundle_path=bundle_path,
+            regression_bundle_path=tmp_path / "regression-bundle",
+            private_root=outside_private_root,
+        )
+
+    terminal_payload = json.loads(
+        terminal_path.read_text(encoding="utf-8")
+    )
+    terminal_payload["unreviewed_escape_hatch"] = True
+    terminal_path.write_text(
+        json.dumps(terminal_payload, ensure_ascii=False, sort_keys=True),
+        encoding="utf-8",
+    )
+    terminal_path.chmod(0o600)
+    with pytest.raises(HoldoutLockError, match="schema|receipt|terminal"):
+        holdout_protocol.verify_holdout_receipt_chain(
+            manifest_path=manifest_path,
+            start_path=start_path,
+            terminal_path=terminal_path,
+            bundle_path=bundle_path,
+            regression_bundle_path=tmp_path / "regression-bundle",
+            private_root=tmp_path,
+        )
+    terminal_payload.pop("unreviewed_escape_hatch")
+    terminal_path.write_text(
+        json.dumps(terminal_payload, ensure_ascii=False, sort_keys=True),
+        encoding="utf-8",
+    )
+    terminal_path.chmod(0o600)
 
     for private_path in (
         manifest_path,

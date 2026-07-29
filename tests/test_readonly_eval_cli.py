@@ -272,6 +272,49 @@ def test_public_verifier_rejects_formal_bundle_without_complete_chain(
     assert "complete formal receipt chain" in failed_output
 
 
+def test_public_verifier_rejects_chain_without_regression_explicitly(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    class FakeManifest:
+        purpose = "diagnostic"
+        run_id = "eval-20260729-nonformal-chain"
+
+    class FakeStrict:
+        passed = 1
+
+    class FakeSummary:
+        strict = FakeStrict()
+        total_trials = 1
+
+    class FakeBundle:
+        manifest = FakeManifest()
+        summary = FakeSummary()
+
+    monkeypatch.setattr(
+        verify_eval_bundle_cli,
+        "validate_readonly_bundle",
+        lambda path: FakeBundle(),
+    )
+
+    assert (
+        verify_eval_bundle_cli.main(
+            [
+                str(tmp_path / "bundle"),
+                "--holdout-manifest",
+                str(tmp_path / "manifest.json"),
+                "--holdout-start",
+                str(tmp_path / "start.json"),
+                "--holdout-terminal",
+                str(tmp_path / "terminal.json"),
+            ]
+        )
+        == 1
+    )
+    assert "INVALID" in capsys.readouterr().out
+
+
 def test_formal_case_precheck_error_does_not_disclose_private_path(
     tmp_path,
     monkeypatch,

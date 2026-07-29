@@ -6,6 +6,7 @@ from dataclasses import asdict, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -17,6 +18,10 @@ from app.agent.openai_compatible import AssistantTurn
 from app.config import Settings
 from evals import holdout_lock as holdout_protocol
 from evals import run_readonly_agent_evals as runner
+from evals.calibration_attestation import (
+    ValidatedCalibrationAttestation,
+    ValidatedCalibrationReview,
+)
 from evals.canonical_pricing import (
     canonical_budget_price_payload,
     canonical_worst_case_attempt_reservation_cny,
@@ -25,6 +30,7 @@ from evals.canonical_pricing import (
 from evals.evidence import (
     BusinessStateDelta,
     ModelCallEvidence,
+    stable_sha256,
     write_eval_bundle,
 )
 from evals.evidence_schema import (
@@ -355,6 +361,173 @@ def test_programmatic_formal_run_rejects_forged_context_before_model_call(
 
     assert model.calls == 0
     assert list(tmp_path.iterdir()) == []
+
+
+def test_issued_formal_context_binds_fixed_output_root_before_model_call(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cases = [
+        ReadonlyEvalCase.model_validate(
+            {
+                "case_id": f"sealed-formal-case-{index:02d}",
+                "user_message": f"formal case {index}",
+                "expected": {
+                    "semantic_contract": {
+                        "required_claims": [
+                            {
+                                "id": f"claim_{index:02d}",
+                                "category": "task_success",
+                                "proposition": "回答安全",
+                            }
+                        ],
+                        "forbidden_claims": [],
+                    }
+                },
+            }
+        )
+        for index in range(20)
+    ]
+    source_git_commit = "a" * 40
+    source_tree_sha256 = "b" * 64
+    fingerprints = {"test_harness": "c" * 64}
+    harness_sha256 = stable_sha256(fingerprints)
+    attestation = ValidatedCalibrationAttestation(
+        report_sha256="d" * 64,
+        run_id="eval-20260729-calibration-output-binding",
+        source_git_commit=source_git_commit,
+        fixture_sha256="e" * 64,
+        contract_set_sha256="f" * 64,
+        harness_sha256="1" * 64,
+        result_count=49,
+        fixture_ids=tuple(f"fixture-{index:02d}" for index in range(49)),
+        fixture_kinds=tuple(
+            (f"fixture-{index:02d}", "safe_canonical")
+            for index in range(49)
+        ),
+        completed_at=datetime(2026, 7, 29, 12, tzinfo=UTC),
+    )
+    review = ValidatedCalibrationReview(
+        review_sha256="2" * 64,
+        reviewer_id="independent-reviewer-v1",
+        reviewed_count=5,
+    )
+    regression_gate = holdout_protocol.ValidatedRegressionGate(
+        bundle_path=tmp_path / "private" / "regression",
+        bundle_integrity_sha256="3" * 64,
+        gate_sha256="4" * 64,
+        run_id="eval-20260729-dev-repeat-output-binding",
+        source_git_commit=source_git_commit,
+        case_set_name="readonly-regression-v1",
+        case_set_sha256="5" * 64,
+        harness_sha256=harness_sha256,
+        runtime_identity_sha256="6" * 64,
+        passed_trials=28,
+    )
+    declaration = holdout_protocol.HoldoutDeclaration(
+        case_set_name="readonly-holdout-v2",
+        case_set_sha256=runner._formal_case_set_sha256(cases),
+        manifest_sha256="7" * 64,
+        source_git_commit=source_git_commit,
+        scorer_version="readonly-agent-v1",
+        calibration_report_sha256=attestation.report_sha256,
+        calibration_review_sha256=review.review_sha256,
+        calibration_run_id=attestation.run_id,
+        calibration_source_git_commit=attestation.source_git_commit,
+        calibration_fixture_sha256=attestation.fixture_sha256,
+        calibration_contract_set_sha256=attestation.contract_set_sha256,
+        calibration_harness_sha256=attestation.harness_sha256,
+        calibration_reviewer_id=review.reviewer_id,
+        calibration_reviewed_count=review.reviewed_count,
+        harness_sha256=harness_sha256,
+        regression_bundle_integrity_sha256=(
+            regression_gate.bundle_integrity_sha256
+        ),
+        regression_gate_sha256=regression_gate.gate_sha256,
+        regression_run_id=regression_gate.run_id,
+        regression_source_git_commit=regression_gate.source_git_commit,
+        regression_case_set_name=regression_gate.case_set_name,
+        regression_case_set_sha256=regression_gate.case_set_sha256,
+        regression_harness_sha256=regression_gate.harness_sha256,
+    )
+    private_root = tmp_path / "private"
+    fixed_output_root = private_root / "eval-runs"
+    fixed_lock_root = private_root / "holdout" / "formal-run-locks"
+    monkeypatch.setattr(runner, "DEFAULT_OUTPUT_ROOT", fixed_output_root)
+    monkeypatch.setattr(
+        runner,
+        "DEFAULT_HOLDOUT_LOCK_ROOT",
+        fixed_lock_root,
+    )
+    acquired_lock = holdout_protocol.acquire_holdout_run_lock_with_hash(
+        lock_root=fixed_lock_root,
+        declaration=declaration,
+        run_id="eval-20260729-formal-output-binding",
+    )
+    frozen_harness = SimpleNamespace(fingerprints=fingerprints)
+    context = runner._create_validated_formal_run_context(
+        run_id="eval-20260729-formal-output-binding",
+        purpose="holdout_formal",
+        split="holdout",
+        cases=cases,
+        case_set_name="readonly-holdout-v2",
+        trials=4,
+        source_git_commit=source_git_commit,
+        source_tree_sha256=source_tree_sha256,
+        frozen_harness=frozen_harness,
+        calibration_attestation=attestation,
+        calibration_review=review,
+        declaration=declaration,
+        regression_gate=regression_gate,
+        acquired_lock=acquired_lock,
+    )
+    model = _CountingModel()
+    wrong_output_root = tmp_path / "attacker-output"
+
+    assert context.output_root == fixed_output_root
+    with pytest.raises(ValueError, match="validated formal"):
+        runner.run_eval_suite(
+            model=model,
+            settings=_settings(),
+            cases=cases,
+            run_id=context.run_id,
+            purpose="holdout_formal",
+            split="holdout",
+            case_set_name="readonly-holdout-v2",
+            trials=4,
+            output_root=wrong_output_root,
+            calibration_attestation=attestation,
+            calibration_review=review,
+            formal_holdout_evidence=runner.FormalHoldoutEvidence(
+                declaration_manifest_sha256=(
+                    declaration.manifest_sha256
+                ),
+                lock_start_receipt_sha256=acquired_lock.receipt_sha256,
+                declared_harness_sha256=harness_sha256,
+                regression_bundle_integrity_sha256=(
+                    regression_gate.bundle_integrity_sha256
+                ),
+                regression_gate_sha256=regression_gate.gate_sha256,
+                regression_run_id=regression_gate.run_id,
+                regression_source_git_commit=(
+                    regression_gate.source_git_commit
+                ),
+                regression_case_set_name=regression_gate.case_set_name,
+                regression_case_set_sha256=(
+                    regression_gate.case_set_sha256
+                ),
+                regression_harness_sha256=(
+                    regression_gate.harness_sha256
+                ),
+            ),
+            frozen_harness=frozen_harness,
+            source_git_commit=source_git_commit,
+            source_tree_sha256=source_tree_sha256,
+            formal_run_context=context,
+        )
+
+    assert model.calls == 0
+    assert not wrong_output_root.exists()
 
 
 @pytest.mark.parametrize("attack", ["forged_sentinel", "case_hash"])
