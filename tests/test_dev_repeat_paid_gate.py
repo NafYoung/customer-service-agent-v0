@@ -176,8 +176,9 @@ def _paid_budget(
     run_id: str,
     purpose: str,
     attempt_count: int,
+    settings: Settings | None = None,
 ) -> dict:
-    settings = _settings()
+    runtime_settings = settings or _settings()
     price = load_canonical_price_snapshot()
     usage_cost = calculate_usage_cost_from_rates(
         rates_cny=price.rates_cny.model_dump(),
@@ -203,7 +204,7 @@ def _paid_budget(
     }
     reservation = canonical_worst_case_attempt_reservation_cny(
         canonical_price=price,
-        max_output_tokens=settings.deepseek_max_tokens,
+        max_output_tokens=runtime_settings.deepseek_max_tokens,
     )
     bucket = {
         "status": (
@@ -240,13 +241,18 @@ def _paid_budget(
     }
 
 
-def _dev_repeat_payload() -> dict:
+def _dev_repeat_payload(
+    *,
+    settings: Settings | None = None,
+) -> dict:
+    runtime_settings = settings or _settings()
     cases, results = _dev_repeat_inputs()
     run_id = "eval-20260729-dev-repeat-public-binding"
     budget = _paid_budget(
         run_id=run_id,
         purpose="dev_repeat",
         attempt_count=_attempt_count(results),
+        settings=runtime_settings,
     )
     started = datetime(2026, 7, 29, 12, tzinfo=UTC)
     manifest = build_readonly_manifest(
@@ -256,7 +262,7 @@ def _dev_repeat_payload() -> dict:
         case_set_name="readonly-regression-v1",
         cases=cases,
         results=results,
-        settings=_settings(),
+        settings=runtime_settings,
         planned_trials=4,
         started_at=started,
         completed_at=started + timedelta(minutes=5),
@@ -688,6 +694,84 @@ def test_formal_regression_gate_accepts_only_verified_28_of_28_bundle(
     assert gate.source_git_commit == source_git_commit
     assert gate.case_set_name == "readonly-regression-v1"
     assert gate.passed_trials == 28
+
+
+@pytest.mark.parametrize(
+    "settings_kwargs",
+    [
+        {"deepseek_timeout_seconds": 600},
+        {"deepseek_max_tokens": 4096},
+        {"deepseek_max_retries": 99},
+        {"agent_max_tool_rounds": 99},
+        {"agent_max_tool_calls": 999},
+    ],
+)
+def test_formal_regression_gate_rejects_coordinated_noncanonical_runtime(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    settings_kwargs: dict[str, object],
+) -> None:
+    settings = replace(_settings(), **settings_kwargs)
+    payload = _dev_repeat_payload(settings=settings)
+    source_git_commit = payload["manifest"]["source"]["git_commit"]
+    assert isinstance(source_git_commit, str)
+    _trust_current_test_source(monkeypatch, source_git_commit)
+    payload["manifest"]["source"]["git_dirty"] = False
+    expected_harness = payload["manifest"]["harness"][
+        "runtime_harness_sha256"
+    ]
+    bundle_path = _write_dev_repeat_bundle(tmp_path, payload)
+
+    with pytest.raises(
+        holdout_protocol.HoldoutLockError,
+        match="canonical|runtime|regression",
+    ):
+        holdout_protocol.validate_regression_gate(
+            bundle_path=bundle_path,
+            private_root=tmp_path,
+            source_git_commit=source_git_commit,
+            harness_sha256=expected_harness,
+            settings=settings,
+        )
+
+
+def test_formal_regression_gate_rejects_mixed_source_snapshot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = _dev_repeat_payload()
+    source_git_commit = payload["manifest"]["source"]["git_commit"]
+    assert isinstance(source_git_commit, str)
+    _trust_current_test_source(monkeypatch, source_git_commit)
+    source_snapshot = deepcopy(payload["manifest"]["source"])
+    source_snapshot["git_dirty"] = False
+    source_snapshot["source_tree_sha256"] = "b" * 64
+    payload["manifest"]["source"] = deepcopy(source_snapshot)
+    monkeypatch.setattr(
+        holdout_protocol,
+        "current_source_tree_sha256",
+        lambda: "a" * 64,
+    )
+    monkeypatch.setattr(
+        holdout_protocol,
+        "current_readonly_source_snapshot",
+        lambda: deepcopy(source_snapshot),
+    )
+    expected_harness = payload["manifest"]["harness"][
+        "runtime_harness_sha256"
+    ]
+    bundle_path = _write_dev_repeat_bundle(tmp_path, payload)
+
+    with pytest.raises(
+        holdout_protocol.HoldoutLockError,
+        match="trusted runtime changed",
+    ):
+        holdout_protocol.validate_regression_gate(
+            bundle_path=bundle_path,
+            private_root=tmp_path,
+            source_git_commit=source_git_commit,
+            harness_sha256=expected_harness,
+        )
 
 
 @pytest.mark.parametrize(

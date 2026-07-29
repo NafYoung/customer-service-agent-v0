@@ -194,6 +194,25 @@ def test_paid_eval_accepts_only_official_deepseek_compatible_urls(
     )
 
 
+@pytest.mark.parametrize(
+    "settings_kwargs",
+    [
+        {"deepseek_timeout_seconds": 600},
+        {"deepseek_max_tokens": 4096},
+        {"deepseek_max_retries": 99},
+        {"agent_max_tool_rounds": 99},
+        {"agent_max_tool_calls": 999},
+    ],
+)
+def test_paid_eval_rejects_noncanonical_runtime_limits(
+    settings_kwargs: dict[str, object],
+) -> None:
+    with pytest.raises(ValueError, match="canonical|requires"):
+        run_readonly_agent_evals.validate_paid_eval_settings(
+            Settings(**settings_kwargs)
+        )
+
+
 def test_formal_holdout_console_output_withholds_private_case_details(
     tmp_path,
     capsys,

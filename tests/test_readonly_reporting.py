@@ -43,6 +43,29 @@ PRICE_SNAPSHOT_PATH = (
 )
 
 
+def test_source_snapshot_captures_runtime_dependency_closure() -> None:
+    package_versions = readonly_reporting.current_readonly_source_snapshot()[
+        "package_versions"
+    ]
+    assert isinstance(package_versions, dict)
+    assert {
+        "fastapi",
+        "starlette",
+        "pydantic",
+        "pydantic-core",
+        "httpx",
+        "httpcore",
+        "anyio",
+        "certifi",
+        "sqlalchemy",
+        "greenlet",
+        "uvicorn",
+        "httptools",
+        "watchfiles",
+        "websockets",
+    } <= package_versions.keys()
+
+
 def _canonical_price_summary() -> dict:
     snapshot = load_price_snapshot(PRICE_SNAPSHOT_PATH)
     payload = snapshot.model_dump(mode="json")

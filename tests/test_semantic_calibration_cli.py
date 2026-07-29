@@ -326,6 +326,11 @@ def test_holdout_eligible_calibration_rejects_custom_corpus_before_model(
             )
         },
         {"deepseek_model": "attacker-model"},
+        {"deepseek_timeout_seconds": 600},
+        {"deepseek_max_tokens": 4096},
+        {"deepseek_max_retries": 99},
+        {"agent_max_tool_rounds": 99},
+        {"agent_max_tool_calls": 999},
     ],
 )
 def test_calibration_rejects_runtime_drift_before_budget_or_model(
