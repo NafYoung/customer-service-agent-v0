@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import shutil
 from copy import deepcopy
-from dataclasses import replace
+from dataclasses import asdict, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -24,7 +24,7 @@ from evals.evidence import (
     BusinessStateDelta,
     ModelCallEvidence,
 )
-from evals.evidence_schema import BudgetSummary
+from evals.evidence_schema import BudgetSummary, ModelCallRecord
 from evals.readonly_eval import (
     DEFAULT_CASE_DIR,
     ReadonlyEvalResult,
@@ -456,3 +456,32 @@ def test_budget_summary_rejects_contradictory_attempt_evidence(
 
     with pytest.raises(ValueError, match="attempt|bucket|offline|budget"):
         BudgetSummary.model_validate(deepcopy(budget))
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("provider_attempts", True),
+        ("provider_attempts", "1"),
+        ("usage.prompt_tokens", "8"),
+        ("usage.completion_tokens", False),
+    ],
+)
+def test_model_call_evidence_rejects_coerced_usage_and_attempt_types(
+    field: str,
+    value: object,
+) -> None:
+    payload = asdict(
+        _model_call(
+            case_id="strict-paid-evidence",
+            trial=1,
+        )
+    )
+    if field == "provider_attempts":
+        payload[field] = value
+    else:
+        _, usage_field = field.split(".", maxsplit=1)
+        payload["usage"][usage_field] = value
+
+    with pytest.raises(ValueError, match="usage|provider|attempt|integer"):
+        ModelCallRecord.model_validate(payload)
