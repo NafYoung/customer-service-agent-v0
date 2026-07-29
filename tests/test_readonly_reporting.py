@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 
 from app.config import Settings
 from evals.calibration_attestation import (
@@ -10,11 +12,13 @@ from evals.calibration_attestation import (
 )
 from evals.evidence import BusinessStateDelta, ModelCallEvidence
 from evals.readonly_eval import (
+    ReadonlyEvalCase,
     ReadonlyEvalResult,
     ScoreCheck,
     load_cases,
 )
 from evals.readonly_reporting import (
+    FormalHoldoutEvidence,
     build_readonly_manifest,
     create_server_run_id,
     result_to_record,
@@ -22,21 +26,27 @@ from evals.readonly_reporting import (
 )
 
 
-def _budget_report() -> dict:
+def _budget_report(attempt_count: int = 4) -> dict:
+    settled = Decimal(attempt_count) * Decimal("0.000012")
+    settled_cny = format(settled, "f")
     amount = {
         "currency": "CNY",
         "hard_limit_cny": "20",
         "execution_limit_cny": "18",
-        "committed_cny": "0.0048",
-        "settled_cny": "0.0048",
-        "remaining_execution_cny": "17.9952",
-        "attempt_count": 4,
+        "committed_cny": settled_cny,
+        "settled_cny": settled_cny,
+        "remaining_execution_cny": format(
+            Decimal("18") - settled,
+            "f",
+        ),
+        "attempt_count": attempt_count,
         "reserved_count": 0,
         "uncertain_count": 0,
     }
     return {
         "schema_version": "1.0",
         "enforcement_mode": "persistent_sqlite",
+        "run_status": "completed",
         "price": {
             "provider": "deepseek",
             "model": "deepseek-v4-flash",
@@ -129,6 +139,7 @@ def _result(
                     "completion_tokens": 2,
                     "total_tokens": 10,
                 },
+                provider_attempts=1,
             ),
         ),
         business_state_delta=BusinessStateDelta(
@@ -137,6 +148,37 @@ def _result(
             before_sha256="a" * 64,
             after_sha256="a" * 64,
         ),
+    )
+
+
+def _formal_cases() -> list[ReadonlyEvalCase]:
+    return [
+        ReadonlyEvalCase.model_validate(
+            {
+                "case_id": f"formal-reporting-case-{index:02d}",
+                "user_message": f"检查第 {index} 个请求。",
+                "expected": {
+                    "semantic_contract": {
+                        "required_claims": [
+                            {
+                                "id": f"safe_claim_{index:02d}",
+                                "category": "security",
+                                "proposition": "回答保持安全",
+                            }
+                        ],
+                        "forbidden_claims": [],
+                    }
+                },
+            }
+        )
+        for index in range(20)
+    ]
+
+
+def _formal_holdout_evidence() -> FormalHoldoutEvidence:
+    return FormalHoldoutEvidence(
+        declaration_manifest_sha256="6" * 64,
+        lock_start_receipt_sha256="7" * 64,
     )
 
 
@@ -211,9 +253,10 @@ def test_manifest_fingerprints_harness_and_never_serializes_secret_or_holdout_id
         deepseek_base_url="https://api.deepseek.com/v1?private=query",
         deepseek_model="deepseek-v4-flash",
     )
-    cases = load_cases()[:2]
+    cases = _formal_cases()
     results = [
-        _result(case_id=case.case_id, trial=1, passed=True)
+        _result(case_id=case.case_id, trial=trial, passed=True)
+        for trial in range(1, 5)
         for case in cases
     ]
     started = datetime.now(UTC)
@@ -227,19 +270,21 @@ def test_manifest_fingerprints_harness_and_never_serializes_secret_or_holdout_id
         cases=cases,
         results=results,
         settings=settings,
-        planned_trials=1,
+        planned_trials=4,
         started_at=started,
         completed_at=completed,
-        budget_report=_budget_report(),
+        budget_report=_budget_report(len(results)),
         calibration_attestation=_attestation(),
         calibration_review=_review(),
+        formal_holdout_evidence=_formal_holdout_evidence(),
     )
     serialized = json.dumps(manifest, ensure_ascii=False)
 
     assert secret not in serialized
     assert "private=query" not in serialized
     assert manifest["model"]["base_url_host"] == "api.deepseek.com"
-    assert manifest["eval"]["case_count"] == 2
+    assert manifest["schema_version"] == "2.0"
+    assert manifest["eval"]["case_count"] == 20
     assert manifest["eval"]["case_set_sha256"]
     assert "case_ids" not in manifest["eval"]
     assert manifest["harness"]["prompt_sha256"]
@@ -252,7 +297,7 @@ def test_manifest_fingerprints_harness_and_never_serializes_secret_or_holdout_id
     assert manifest["harness"]["semantic_calibration_source_sha256"]
     assert manifest["harness"]["semantic_calibration_validator_sha256"]
     assert manifest["harness"]["semantic_calibration_runner_sha256"]
-    assert manifest["harness"]["semantic_calibration_fixture_sha256"]
+    assert manifest["harness"]["semantic_calibration_corpus_sha256"]
     assert manifest["eval"]["semantic_calibration"] == {
         "report_sha256": "a" * 64,
         "review_sha256": "b" * 64,
@@ -263,9 +308,13 @@ def test_manifest_fingerprints_harness_and_never_serializes_secret_or_holdout_id
         "reviewer_id": "independent-reviewer-v1",
         "reviewed_count": 5,
     }
+    assert manifest["eval"]["formal_holdout"] == {
+        "declaration_manifest_sha256": "6" * 64,
+        "lock_start_receipt_sha256": "7" * 64,
+    }
     assert manifest["source"]["source_tree_sha256"]
-    assert manifest["execution"]["planned_trials"] == 1
-    assert manifest["execution"]["completed_trials"] == 1
+    assert manifest["execution"]["planned_trials"] == 4
+    assert manifest["execution"]["completed_trials"] == 4
     assert manifest["model"]["observed_models"] == ["deepseek-v4-flash"]
     assert manifest["model"]["generation_config"]["temperature"] == 0.0
     assert manifest["model"]["semantic_judge"] == {
@@ -279,21 +328,26 @@ def test_manifest_fingerprints_harness_and_never_serializes_secret_or_holdout_id
     assert manifest["budget"]["price_snapshot_sha256"] == "f" * 64
     assert manifest["budget"]["hard_limit_cny"] == "20"
 
+    dev_cases = load_cases()[:2]
+    dev_results = [
+        _result(case_id=case.case_id, trial=1, passed=True)
+        for case in dev_cases
+    ]
     dev_manifest = build_readonly_manifest(
         run_id="eval-20260729-abcdef13",
         purpose="dev_repeat",
         split="dev",
         case_set_name="readonly-dev-v1",
-        cases=cases,
-        results=results,
+        cases=dev_cases,
+        results=dev_results,
         settings=settings,
         planned_trials=1,
         started_at=started,
         completed_at=completed,
-        budget_report=_budget_report(),
+        budget_report=_budget_report(len(dev_results)),
     )
     assert dev_manifest["eval"]["case_ids"] == [
-        case.case_id for case in cases
+        case.case_id for case in dev_cases
     ]
     assert "semantic_calibration" not in dev_manifest["eval"]
 
@@ -325,3 +379,54 @@ def test_formal_manifest_requires_bound_calibration_attestations():
         raise AssertionError(
             "formal manifest accepted missing calibration attestations"
         )
+
+
+def test_formal_manifest_rejects_unsettled_budget_and_model_drift():
+    settings = Settings(deepseek_model="deepseek-v4-flash")
+    cases = _formal_cases()
+    results = [
+        _result(case_id=case.case_id, trial=trial, passed=True)
+        for trial in range(1, 5)
+        for case in cases
+    ]
+    started = datetime.now(UTC)
+    common = {
+        "run_id": "eval-20260729-formal-gates",
+        "purpose": "holdout_formal",
+        "split": "holdout",
+        "case_set_name": "readonly-holdout-v2",
+        "cases": cases,
+        "settings": settings,
+        "planned_trials": 4,
+        "started_at": started,
+        "completed_at": started + timedelta(seconds=1),
+        "calibration_attestation": _attestation(),
+        "calibration_review": _review(),
+        "formal_holdout_evidence": _formal_holdout_evidence(),
+    }
+    unsettled = _budget_report(len(results))
+    unsettled["run"]["uncertain_count"] = 1
+
+    try:
+        build_readonly_manifest(
+            **common,
+            results=results,
+            budget_report=unsettled,
+        )
+    except ValueError as exc:
+        assert "budget" in str(exc)
+    else:
+        raise AssertionError("formal manifest accepted unsettled budget")
+
+    drifted = deepcopy(results)
+    drifted[0].model_calls[0].observed_model = "different-model"
+    try:
+        build_readonly_manifest(
+            **common,
+            results=drifted,
+            budget_report=_budget_report(len(results)),
+        )
+    except ValueError as exc:
+        assert "model" in str(exc)
+    else:
+        raise AssertionError("formal manifest accepted model drift")

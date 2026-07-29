@@ -4,9 +4,9 @@ import json
 from pathlib import Path
 
 from app.agent.openai_compatible import AssistantTurn
+from evals import run_semantic_judge_calibration as calibration_cli
 from evals.calibration_attestation import validate_calibration_attestation
 from evals.semantic_calibration import load_calibration_fixtures
-from evals import run_semantic_judge_calibration as calibration_cli
 
 
 class _ClosedBudgetGuard:

@@ -22,9 +22,8 @@ from evals.evidence_schema import (
     validate_readonly_bundle,
     validate_readonly_payload,
 )
-from evals.readonly_eval import ReadonlyEvalResult
-from evals.readonly_eval import ReadonlyEvalCase
 from evals.holdout_lock import HoldoutLockError
+from evals.readonly_eval import ReadonlyEvalCase, ReadonlyEvalResult
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -292,6 +291,19 @@ def test_cli_writes_verified_machine_readable_bundle_without_paid_api(
     invalid_payload["manifest"].pop("model")
     with pytest.raises(ValidationError):
         validate_readonly_payload(invalid_payload)
+
+    forged_formal = deepcopy(verified)
+    forged_formal["manifest"]["purpose"] = "holdout_formal"
+    forged_formal["manifest"]["eval"]["split"] = "holdout"
+    forged_formal["manifest"]["eval"].pop("case_ids")
+    forged_formal["manifest"]["execution"]["case_order"] = "withheld"
+    for record in (
+        *forged_formal["cases"],
+        *forged_formal["trajectories"],
+    ):
+        record["split"] = "holdout"
+    with pytest.raises(ValidationError):
+        validate_readonly_payload(forged_formal)
 
     assert verify_eval_bundle_cli.main([str(bundle_path)]) == 0
     verifier_output = capsys.readouterr().out

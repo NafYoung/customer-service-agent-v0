@@ -6,6 +6,7 @@ import math
 from copy import deepcopy
 from dataclasses import asdict
 from datetime import UTC, datetime
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -14,6 +15,7 @@ from app.config import Settings
 from evals.calibration_attestation import (
     CalibrationAttestationError,
     canonical_contract_set_sha256,
+    required_review_fixture_ids,
     validate_calibration_attestation,
     validate_calibration_review,
 )
@@ -88,13 +90,18 @@ def _model_call(model_name: str) -> dict[str, object]:
 
 
 def _settled_budget(attempt_count: int) -> dict[str, object]:
+    settled = Decimal(attempt_count) * Decimal("0.00002")
+    settled_cny = format(settled, "f")
     snapshot = {
         "currency": "CNY",
         "hard_limit_cny": "20",
         "execution_limit_cny": "18",
-        "committed_cny": "0.01",
-        "settled_cny": "0.01",
-        "remaining_execution_cny": "17.99",
+        "committed_cny": settled_cny,
+        "settled_cny": settled_cny,
+        "remaining_execution_cny": format(
+            Decimal("18") - settled,
+            "f",
+        ),
         "attempt_count": attempt_count,
         "reserved_count": 0,
         "uncertain_count": 0,
@@ -102,6 +109,7 @@ def _settled_budget(attempt_count: int) -> dict[str, object]:
     return {
         "schema_version": "1.0",
         "enforcement_mode": "persistent_sqlite",
+        "run_status": "completed",
         "price": {
             "provider": "deepseek",
             "model": "deepseek-v4-flash",
@@ -113,7 +121,11 @@ def _settled_budget(attempt_count: int) -> dict[str, object]:
             ),
             "captured_at": "2026-07-29T08:58:58+00:00",
             "valid_until": "2026-07-30T08:58:58+00:00",
-            "rates_cny": {},
+            "rates_cny": {
+                "prompt_cache_hit": "0.02",
+                "prompt_cache_miss": "1",
+                "completion": "2",
+            },
             "tokens_per_price_unit": 1_000_000,
         },
         "reservation_cny_per_attempt": "0.01",
@@ -182,6 +194,7 @@ def test_calibration_attestation_recomputes_results_summary_and_budget(
     attestation = validate_calibration_attestation(
         report_path=report_path,
         settings=settings,
+        now=datetime(2026, 7, 29, 13, tzinfo=UTC),
     )
 
     assert attestation.report_sha256 == _file_sha256(report_path)
@@ -199,6 +212,7 @@ def test_calibration_attestation_recomputes_results_summary_and_budget(
         validate_calibration_attestation(
             report_path=_write_json(tmp_path / "tampered.json", tampered),
             settings=settings,
+            now=datetime(2026, 7, 29, 13, tzinfo=UTC),
         )
 
     unsettled = _valid_report()
@@ -207,6 +221,7 @@ def test_calibration_attestation_recomputes_results_summary_and_budget(
         validate_calibration_attestation(
             report_path=_write_json(tmp_path / "unsettled.json", unsettled),
             settings=settings,
+            now=datetime(2026, 7, 29, 13, tzinfo=UTC),
         )
 
     drifted_model = _valid_report()
@@ -220,6 +235,17 @@ def test_calibration_attestation_recomputes_results_summary_and_budget(
                 drifted_model,
             ),
             settings=settings,
+            now=datetime(2026, 7, 29, 13, tzinfo=UTC),
+        )
+
+    stale = _valid_report()
+    stale["started_at"] = "2026-07-27T12:00:00+00:00"
+    stale["completed_at"] = "2026-07-27T12:05:00+00:00"
+    with pytest.raises(CalibrationAttestationError, match="fresh|old"):
+        validate_calibration_attestation(
+            report_path=_write_json(tmp_path / "stale.json", stale),
+            settings=settings,
+            now=datetime(2026, 7, 29, 13, tzinfo=UTC),
         )
 
 
@@ -234,18 +260,28 @@ def test_independent_review_is_bound_and_samples_ten_percent(
     attestation = validate_calibration_attestation(
         report_path=report_path,
         settings=settings,
+        now=datetime(2026, 7, 29, 13, tzinfo=UTC),
     )
     fixtures = load_calibration_fixtures(FIXTURE_PATH)
     sample_count = math.ceil(len(fixtures) * 0.10)
+    required_ids = required_review_fixture_ids(attestation)
+    assert len(required_ids) == sample_count
     review = {
         "schema_version": "1.0",
         "calibration_report_sha256": attestation.report_sha256,
         "reviewer_id": "independent-semantic-reviewer-v1",
-        "reviewed_at": datetime.now(UTC).isoformat(),
+        "reviewed_at": "2026-07-29T12:30:00+00:00",
         "conclusion": "GO",
-        "reviewed_fixture_ids": [
-            fixture.fixture_id
-            for fixture in fixtures[:sample_count]
+        "implementation_independence_declared": True,
+        "items": [
+            {
+                "fixture_id": fixture_id,
+                "relations_match": True,
+                "grounding_valid": True,
+                "contradiction_label_matches": True,
+                "notes": "Independently checked against the public fixture.",
+            }
+            for fixture_id in required_ids
         ],
         "notes": "Grounding and expected relations independently checked.",
     }
@@ -254,19 +290,22 @@ def test_independent_review_is_bound_and_samples_ten_percent(
     validated_review = validate_calibration_review(
         review_path=review_path,
         attestation=attestation,
+        now=datetime(2026, 7, 29, 13, tzinfo=UTC),
     )
 
     assert validated_review.review_sha256 == _file_sha256(review_path)
     assert validated_review.reviewed_count == sample_count
 
     too_small = deepcopy(review)
-    too_small["reviewed_fixture_ids"] = too_small[
-        "reviewed_fixture_ids"
-    ][:-1]
-    with pytest.raises(CalibrationAttestationError, match="10%"):
+    too_small["items"] = too_small["items"][:-1]
+    with pytest.raises(
+        CalibrationAttestationError,
+        match="sample|10%",
+    ):
         validate_calibration_review(
             review_path=_write_json(tmp_path / "too-small.json", too_small),
             attestation=attestation,
+            now=datetime(2026, 7, 29, 13, tzinfo=UTC),
         )
 
     wrong_report = deepcopy(review)
@@ -281,4 +320,17 @@ def test_independent_review_is_bound_and_samples_ten_percent(
                 wrong_report,
             ),
             attestation=attestation,
+            now=datetime(2026, 7, 29, 13, tzinfo=UTC),
+        )
+
+    before_report = deepcopy(review)
+    before_report["reviewed_at"] = "2026-07-29T11:59:00+00:00"
+    with pytest.raises(CalibrationAttestationError, match="after|time"):
+        validate_calibration_review(
+            review_path=_write_json(
+                tmp_path / "before-report.json",
+                before_report,
+            ),
+            attestation=attestation,
+            now=datetime(2026, 7, 29, 13, tzinfo=UTC),
         )

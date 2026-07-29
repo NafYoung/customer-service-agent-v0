@@ -18,6 +18,7 @@ from evals.holdout_lock import (
     HoldoutLockError,
     acquire_holdout_run_lock,
     finalize_holdout_run_lock,
+    holdout_lock_receipt_sha256,
     validate_holdout_declaration,
 )
 from evals.readonly_eval import ReadonlyEvalCase
@@ -81,7 +82,7 @@ def _write_manifest_for_cases(
     cases: list[ReadonlyEvalCase],
 ) -> Path:
     payload = {
-        "schema_version": "1.0",
+        "schema_version": "2.0",
         "case_set_name": "readonly-holdout-v2",
         "case_count": len(cases),
         "case_set_sha256": stable_sha256(
@@ -95,6 +96,9 @@ def _write_manifest_for_cases(
         "formal_runs_completed": 0,
         "lifecycle_status": "sealed",
         "rerun_policy": "prohibited",
+        "sealed_at": "2026-07-29T13:00:00+00:00",
+        "sealer_id": "independent-holdout-sealer-v2",
+        "implementation_independence_declared": True,
     }
     path.write_text(
         json.dumps(payload, ensure_ascii=False, indent=2),
@@ -114,7 +118,7 @@ def _manifest(
     cases = _cases()
     harness = current_readonly_harness_fingerprints(settings)
     payload = {
-        "schema_version": "1.0",
+        "schema_version": "2.0",
         "case_set_name": "readonly-holdout-v2",
         "case_count": len(cases),
         "case_set_sha256": stable_sha256(
@@ -139,6 +143,9 @@ def _manifest(
         "formal_runs_completed": formal_runs_completed,
         "lifecycle_status": "sealed",
         "rerun_policy": "prohibited",
+        "sealed_at": "2026-07-29T13:00:00+00:00",
+        "sealer_id": "independent-holdout-sealer-v2",
+        "implementation_independence_declared": True,
     }
     if scorer_sha256 is not None:
         payload["scorer_sha256"] = scorer_sha256
@@ -176,17 +183,31 @@ def test_holdout_lock_is_exclusive_and_final_status_is_persisted(
             run_id="eval-20260729-holdout-v2-second",
         )
 
-    finalize_holdout_run_lock(
+    start_receipt_sha256 = holdout_lock_receipt_sha256(lock_path)
+    terminal_path = finalize_holdout_run_lock(
         lock_path=lock_path,
         status="completed",
         run_id="eval-20260729-holdout-v2",
+        bundle_integrity_sha256="f" * 64,
         now=datetime(2026, 7, 29, 10, 5, tzinfo=UTC),
     )
     lock_payload = json.loads(lock_path.read_text(encoding="utf-8"))
-    assert lock_payload["status"] == "completed"
+    terminal_payload = json.loads(
+        terminal_path.read_text(encoding="utf-8")
+    )
+    assert holdout_lock_receipt_sha256(lock_path) == start_receipt_sha256
+    assert lock_payload["status"] == "started"
     assert lock_payload["run_id"] == "eval-20260729-holdout-v2"
     assert "case_set_sha256" in lock_payload
-    assert "user_message" not in json.dumps(lock_payload)
+    assert terminal_payload["status"] == "completed"
+    assert (
+        terminal_payload["lock_start_receipt_sha256"]
+        == start_receipt_sha256
+    )
+    assert terminal_payload["bundle_integrity_sha256"] == "f" * 64
+    assert "user_message" not in json.dumps(
+        {"start": lock_payload, "terminal": terminal_payload}
+    )
 
 
 def test_same_case_hash_cannot_get_a_second_lock_by_renaming(
@@ -215,6 +236,36 @@ def test_same_case_hash_cannot_get_a_second_lock_by_renaming(
             lock_root=tmp_path / "private-locks",
             declaration=renamed,
             run_id="eval-20260729-renamed-holdout-v2",
+        )
+
+
+def test_formal_v2_global_lock_rejects_a_different_case_set(
+    tmp_path: Path,
+) -> None:
+    declaration = validate_holdout_declaration(
+        manifest_path=_manifest(tmp_path / "manifest.json"),
+        case_set_name="readonly-holdout-v2",
+        cases=_cases(),
+        calibration_attestation=_attestation(),
+        calibration_review=_review(),
+    )
+    lock_root = tmp_path / "private-locks"
+    acquire_holdout_run_lock(
+        lock_root=lock_root,
+        declaration=declaration,
+        run_id="eval-20260729-holdout-v2",
+    )
+    different = replace(
+        declaration,
+        case_set_sha256="0" * 64,
+        manifest_sha256="1" * 64,
+    )
+
+    with pytest.raises(HoldoutLockError, match="already been consumed"):
+        acquire_holdout_run_lock(
+            lock_root=lock_root,
+            declaration=different,
+            run_id="eval-20260729-different-v2",
         )
 
 
@@ -247,6 +298,27 @@ def test_holdout_declaration_fails_closed_before_model_use(
                 formal_runs_completed=formal_runs_completed,
                 scorer_sha256=scorer_sha256,
             ),
+            case_set_name="readonly-holdout-v2",
+            cases=_cases(),
+            calibration_attestation=_attestation(),
+            calibration_review=_review(),
+        )
+
+
+def test_holdout_manifest_v2_rejects_unknown_fields(
+    tmp_path: Path,
+) -> None:
+    path = _manifest(tmp_path / "manifest.json")
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["unreviewed_escape_hatch"] = True
+    path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(HoldoutLockError, match="schema"):
+        validate_holdout_declaration(
+            manifest_path=path,
             case_set_name="readonly-holdout-v2",
             cases=_cases(),
             calibration_attestation=_attestation(),
