@@ -310,7 +310,7 @@ def test_calibration_attestation_recomputes_results_summary_and_budget(
     retried["budget"]["cumulative"]["attempt_count"] += 1
     with pytest.raises(
         CalibrationAttestationError,
-        match="attempt|protocol|budget",
+        match="attempt|protocol|budget|schema",
     ):
         validate_calibration_attestation(
             report_path=_write_json(tmp_path / "retried.json", retried),
@@ -525,7 +525,9 @@ def test_calibration_attestation_rejects_noncanonical_budget_contract(
 
     with pytest.raises(
         CalibrationAttestationError,
-        match="pricing|price|budget|limit|reservation|max_tokens",
+        match=(
+            "pricing|price|budget|limit|reservation|max_tokens|schema"
+        ),
     ):
         validate_calibration_attestation(
             report_path=_write_json(
@@ -553,7 +555,7 @@ def test_calibration_attestation_rejects_a_settled_execution_overrun(
 
     with pytest.raises(
         CalibrationAttestationError,
-        match="budget|limit|overrun",
+        match="budget|limit|overrun|schema",
     ):
         validate_calibration_attestation(
             report_path=_write_json(

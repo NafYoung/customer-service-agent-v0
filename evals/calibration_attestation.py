@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+from collections import Counter
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -172,17 +173,22 @@ def _usage_cost_units(
     usage: dict[str, int],
     rates_cny: BudgetRatesCny,
     tokens_per_price_unit: int,
-) -> int:
+) -> tuple[int, Literal["exact", "upper_bound"]]:
     try:
-        return calculate_usage_cost_from_rates(
+        usage_cost = calculate_usage_cost_from_rates(
             rates_cny=rates_cny.model_dump(),
             tokens_per_price_unit=tokens_per_price_unit,
             usage=usage,
-        ).units
+        )
     except BudgetUsageError as exc:
         raise CalibrationAttestationError(
             "A calibration call has invalid or inconsistent token usage."
         ) from exc
+    if usage_cost.mode not in {"exact", "upper_bound"}:
+        raise CalibrationAttestationError(
+            "A calibration call has an invalid settlement mode."
+        )
+    return usage_cost.units, usage_cost.mode
 
 
 def required_review_fixture_ids(
@@ -262,7 +268,7 @@ def _validate_result(
     settings: Settings,
     rates_cny: BudgetRatesCny,
     tokens_per_price_unit: int,
-) -> tuple[int, int]:
+) -> tuple[int, int, Literal["exact", "upper_bound"]]:
     if (
         record.fixture_id != fixture.fixture_id
         or record.case_id != fixture.case_id
@@ -339,13 +345,15 @@ def _validate_result(
         )
     assert call.usage is not None
     assert isinstance(call.provider_attempts, int)
+    usage_cost_units, settlement_mode = _usage_cost_units(
+        usage=call.usage,
+        rates_cny=rates_cny,
+        tokens_per_price_unit=tokens_per_price_unit,
+    )
     return (
         call.provider_attempts,
-        _usage_cost_units(
-            usage=call.usage,
-            rates_cny=rates_cny,
-            tokens_per_price_unit=tokens_per_price_unit,
-        ),
+        usage_cost_units,
+        settlement_mode,
     )
 
 
@@ -478,10 +486,14 @@ def validate_calibration_attestation(
     canonical_rates = BudgetRatesCny.model_validate(
         canonical_price.rates_cny.model_dump()
     )
+    attempt_evidence = budget.attempt_evidence
     if (
         budget.enforcement_mode != "persistent_sqlite"
         or budget.run_status != "completed"
         or budget.run_identity is None
+        or attempt_evidence is None
+        or not attempt_evidence.run
+        or not attempt_evidence.cumulative
         or budget.run_identity.run_id != report.run_id
         or budget.run_identity.purpose
         != "semantic_judge_calibration"
@@ -503,6 +515,7 @@ def validate_calibration_attestation(
         raise CalibrationAttestationError(
             "The calibration budget evidence is unsettled or inconsistent."
         )
+    assert attempt_evidence is not None
     validated_calls = [
         _validate_result(
             record=record,
@@ -518,6 +531,40 @@ def validate_calibration_attestation(
     ]
     provider_attempts = sum(item[0] for item in validated_calls)
     expected_settled_units = sum(item[1] for item in validated_calls)
+    expected_buckets: Counter[tuple[str, str, int]] = Counter()
+    for _, cost_units, settlement_mode in validated_calls:
+        expected_buckets[
+            (
+                (
+                    "settled_exact"
+                    if settlement_mode == "exact"
+                    else "settled_upper_bound"
+                ),
+                settlement_mode,
+                cost_units,
+            )
+        ] += 1
+    actual_buckets: Counter[tuple[str, str, int]] = Counter()
+    for bucket in attempt_evidence.run:
+        if (
+            bucket.status
+            not in {"settled_exact", "settled_upper_bound"}
+            or bucket.settlement_mode is None
+            or bucket.known_cost_cny is None
+            or bucket.reserved_cny
+            != budget.reservation_cny_per_attempt
+        ):
+            raise CalibrationAttestationError(
+                "The calibration current-run attempt evidence is unsettled "
+                "or has a noncanonical reservation."
+            )
+        actual_buckets[
+            (
+                bucket.status,
+                bucket.settlement_mode,
+                cny_to_units(Decimal(bucket.known_cost_cny)),
+            )
+        ] += bucket.count
     recomputed_summary: CalibrationSummary = summarize_calibration(
         [_as_result(record) for record in report.results]
     )
@@ -532,7 +579,8 @@ def validate_calibration_attestation(
             "The calibration summary did not recompute to a passing gate."
         )
     if (
-        budget.run.attempt_count != provider_attempts
+        actual_buckets != expected_buckets
+        or budget.run.attempt_count != provider_attempts
         or budget.cumulative.attempt_count < provider_attempts
         or cny_to_units(Decimal(budget.run.settled_cny))
         != expected_settled_units
