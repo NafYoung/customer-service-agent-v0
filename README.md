@@ -41,8 +41,11 @@
   缺参澄清和工具效率问题，不能把它改写成通过；
 - `readonly-scorer-v6` 原子命题语义门：被测回答冻结后才由隔离裁判逐项
   判断蕴含、否定、遗漏和矛盾，工具、权限、写入和业务状态仍由代码硬判；
-- 37 条公开人工标注语义校准夹具，以及 holdout split、唯一运行锁、完整
-  runtime 指纹和正式输出隐私控制；
+- 49 条固定公开人工标注语义校准夹具：覆盖标准答案、同义改写、空洞回答、
+  否定翻转、前后矛盾，以及安全/不安全裁判提示注入；
+- 严格校准报告与独立复核回执：完整 verdict、固定语料/合同/runtime
+  指纹、已结清预算证据，以及 report → review → holdout manifest → 唯一
+  运行锁 → 最终 Eval manifest 的哈希绑定；
 - `ruff`、`mypy`、分支覆盖率门、Schema freshness、`pip-audit` 和
   Gitleaks Git 历史扫描的 CI 配置。
 
@@ -239,7 +242,8 @@ make verify
 Reference Eval 验证的是环境、规则、工具轨迹和最终状态评分器。它读取结构化 `reference_plan`，因此**不能被宣传为 LLM Agent 8/8 成功率**。新的只读 Agent Eval 才会把自然语言 `user_message` 和 6 个工具 Schema 交给模型，期望结果只由评分器读取。
 
 真实只读 Agent Eval 需要把 `.env` 安全加载到当前进程。新语义评分器先运行
-公开校准；预期失败夹具必须 100% 判对，预期通过夹具至少 95%：
+固定公开校准。正式门要求 49/49 精确匹配；协议错误、未落地 evidence、
+模型漂移、语料漂移或预算未结清都会失败关闭：
 
 ```bash
 set -a
@@ -247,6 +251,12 @@ source .env
 set +a
 python evals/run_semantic_judge_calibration.py
 ```
+
+成功后，命令会生成权限为 `0600` 的 schema v2 私有报告。未参与实现的
+复核者须按确定性分层规则抽查 5 条固定夹具（49 条的 10% 向上取整），生成
+绑定报告 SHA-256 的 GO 回执；正式
+holdout manifest 必须同时冻结报告、回执、语料、合同集和 runtime 指纹。
+该回执记录的是程序性独立复核声明和内容绑定，不是密码学第三方身份证明。
 
 校准通过后才运行开发回归：
 

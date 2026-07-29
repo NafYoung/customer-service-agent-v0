@@ -7,7 +7,7 @@ These cases promote confirmed model or prompt failures from the retired
 - They must not be used to recalculate or replace the v1 formal score.
 - They contain public atomic `semantic_contract` claims for isolated language
   scoring; those claims never enter the tested Agent context.
-- They are used by the 37 public human-labelled calibration fixtures and future
+- They are used by the 49 fixed public human-labelled calibration fixtures and future
   four-trial development runs.
 - The retired v1 holdout must never be rerun.
 

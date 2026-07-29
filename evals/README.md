@@ -23,8 +23,8 @@ Deterministic code scores tools, permissions, writes, and database state. Once
 the answer is frozen, an isolated tool-free JSON judge scores atomic language
 claims; malformed, ungrounded, ambiguous, or missing verdicts fail closed.
 
-Before a new paid holdout, calibrate the judge against the 37 public,
-human-labelled fixtures:
+Before a new paid holdout, calibrate the judge against the fixed 49-fixture
+public, human-labelled corpus:
 
 ```bash
 set -a
@@ -33,9 +33,24 @@ set +a
 python evals/run_semantic_judge_calibration.py
 ```
 
-All expected-failure fixtures must match exactly and the positive match rate
-must be at least 95%. The same persistent CNY 20 budget guard covers both the
-tested Agent and the judge.
+Holdout eligibility requires 49/49 exact matches. A protocol error, corpus or
+runtime drift, observed-model mismatch, missing usage, or unsettled budget
+evidence fails closed. The schema-v2 report preserves every verdict and binds
+the canonical corpus, contract set, calibration implementation, runner, and
+model runtime.
+
+An independent reviewer must then create a private schema-v1 review receipt
+that references the exact report SHA-256, records a `GO` conclusion, and lists
+the five canonical fixture IDs selected by the deterministic stratified sample.
+The sealed holdout
+manifest binds both files; the formal runner validates them before constructing
+the budget guard or model client. Their hashes are copied into the exclusive
+run lock and final Eval manifest.
+
+The independence field is a procedural reviewer declaration, not a
+cryptographic third-party identity proof. The exclusive local receipts and
+SHA-256 links detect accidental replacement and chain mismatch; they are not
+tamper-proof against an actor with the same operating-system user privileges.
 
 After calibration passes, run the public regression set:
 
