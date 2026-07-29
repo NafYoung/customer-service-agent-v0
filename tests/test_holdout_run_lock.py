@@ -33,6 +33,57 @@ def _cases() -> list[ReadonlyEvalCase]:
     ]
 
 
+def _semantic_cases(count: int = 20) -> list[ReadonlyEvalCase]:
+    return [
+        ReadonlyEvalCase.model_validate(
+            {
+                "case_id": f"sealed-semantic-case-{index:02d}",
+                "user_message": f"请检查第 {index} 个订单请求。",
+                "expected": {
+                    "semantic_contract": {
+                        "required_claims": [
+                            {
+                                "id": f"safe_answer_{index:02d}",
+                                "category": "task_success",
+                                "proposition": "回答准确说明当前请求的结果",
+                            }
+                        ],
+                        "forbidden_claims": [],
+                    }
+                },
+            }
+        )
+        for index in range(1, count + 1)
+    ]
+
+
+def _write_manifest_for_cases(
+    path: Path,
+    cases: list[ReadonlyEvalCase],
+) -> Path:
+    payload = {
+        "schema_version": "1.0",
+        "case_set_name": "readonly-holdout-v2",
+        "case_count": len(cases),
+        "case_set_sha256": stable_sha256(
+            [
+                case.model_dump(mode="json")
+                for case in sorted(cases, key=lambda item: item.case_id)
+            ]
+        ),
+        **current_readonly_harness_fingerprints(),
+        "formal_runs_allowed": 1,
+        "formal_runs_completed": 0,
+        "lifecycle_status": "sealed",
+        "rerun_policy": "prohibited",
+    }
+    path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    return path
+
+
 def _manifest(
     path: Path,
     *,
@@ -203,6 +254,47 @@ def test_holdout_declaration_freezes_paid_model_runtime(
         )
 
 
+def test_formal_holdout_requires_twenty_semantically_scored_cases(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(HoldoutLockError, match="20 semantic"):
+        validate_holdout_declaration(
+            manifest_path=_write_manifest_for_cases(
+                tmp_path / "undersized.json",
+                _semantic_cases(19),
+            ),
+            case_set_name="readonly-holdout-v2",
+            cases=_semantic_cases(19),
+        )
+
+    cases = _semantic_cases()
+    cases[-1].expected.semantic_contract = None
+    with pytest.raises(HoldoutLockError, match="20 semantic"):
+        validate_holdout_declaration(
+            manifest_path=_write_manifest_for_cases(
+                tmp_path / "missing-contract.json",
+                cases,
+            ),
+            case_set_name="readonly-holdout-v2",
+            cases=cases,
+        )
+
+
+def test_formal_holdout_requires_bound_calibration_and_review_hashes(
+    tmp_path: Path,
+) -> None:
+    cases = _semantic_cases()
+    with pytest.raises(HoldoutLockError, match="calibration"):
+        validate_holdout_declaration(
+            manifest_path=_write_manifest_for_cases(
+                tmp_path / "missing-attestations.json",
+                cases,
+            ),
+            case_set_name="readonly-holdout-v2",
+            cases=cases,
+        )
+
+
 def test_holdout_cli_requires_a_declared_manifest() -> None:
     parser = _build_parser()
     args = parser.parse_args(
@@ -213,6 +305,29 @@ def test_holdout_cli_requires_a_declared_manifest() -> None:
             "holdout",
             "--case-dir",
             "private-holdout-cases",
+            "--case-set-name",
+            "readonly-holdout-v2",
+            "--trials",
+            "4",
+        ]
+    )
+
+    with pytest.raises(SystemExit):
+        _validate_args(parser, args)
+
+
+def test_holdout_cli_requires_calibration_and_review_attestations() -> None:
+    parser = _build_parser()
+    args = parser.parse_args(
+        [
+            "--purpose",
+            "holdout_formal",
+            "--split",
+            "holdout",
+            "--case-dir",
+            "private-holdout-cases",
+            "--holdout-manifest",
+            "private-holdout-manifest.json",
             "--case-set-name",
             "readonly-holdout-v2",
             "--trials",
