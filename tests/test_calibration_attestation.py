@@ -160,6 +160,26 @@ def _settled_budget(attempt_count: int) -> dict[str, object]:
         "reservation_cny_per_attempt": "1.002048",
         "run": dict(snapshot),
         "cumulative": dict(snapshot),
+        "attempt_evidence": {
+            "run": [
+                {
+                    "status": "settled_upper_bound",
+                    "settlement_mode": "upper_bound",
+                    "reserved_cny": "1.002048",
+                    "known_cost_cny": "0.00002",
+                    "count": attempt_count,
+                }
+            ],
+            "cumulative": [
+                {
+                    "status": "settled_upper_bound",
+                    "settlement_mode": "upper_bound",
+                    "reserved_cny": "1.002048",
+                    "known_cost_cny": "0.00002",
+                    "count": attempt_count,
+                }
+            ],
+        },
     }
 
 
@@ -346,6 +366,108 @@ def test_calibration_attestation_recomputes_results_summary_and_budget(
                 unbound_source,
             ),
             settings=settings,
+            now=datetime(2026, 7, 29, 13, tzinfo=UTC),
+        )
+
+
+@pytest.mark.parametrize(
+    "attack",
+    [
+        "missing_attempt_evidence",
+        "wrong_settlement_mode",
+    ],
+)
+def test_calibration_attestation_binds_attempt_buckets_to_model_calls(
+    tmp_path: Path,
+    attack: str,
+) -> None:
+    report = _valid_report()
+    budget = report["budget"]
+    if attack == "missing_attempt_evidence":
+        budget.pop("attempt_evidence")
+    else:
+        for scope in ("run", "cumulative"):
+            bucket = budget["attempt_evidence"][scope][0]
+            bucket["status"] = "settled_exact"
+            bucket["settlement_mode"] = "exact"
+
+    with pytest.raises(
+        CalibrationAttestationError,
+        match="attempt|budget|schema|cost",
+    ):
+        validate_calibration_attestation(
+            report_path=_write_json(
+                tmp_path / f"{attack}.json",
+                report,
+            ),
+            settings=Settings(
+                deepseek_model="deepseek-v4-flash",
+                deepseek_temperature=0,
+            ),
+            now=datetime(2026, 7, 29, 13, tzinfo=UTC),
+        )
+
+
+def test_calibration_attestation_rejects_contradictory_attempt_buckets(
+    tmp_path: Path,
+) -> None:
+    report = _valid_report()
+    budget = report["budget"]
+    budget["reservation_cny_per_attempt"] = "9.999999"
+    budget["run"].update(
+        {
+            "committed_cny": "9.999999",
+            "settled_cny": "0",
+            "remaining_execution_cny": "0",
+            "attempt_count": 1,
+            "reserved_count": 1,
+            "uncertain_count": 0,
+        }
+    )
+    budget["cumulative"].update(
+        {
+            "committed_cny": "38",
+            "settled_cny": "0",
+            "remaining_execution_cny": "0",
+            "attempt_count": 2,
+            "reserved_count": 0,
+            "uncertain_count": 2,
+        }
+    )
+    budget["attempt_evidence"] = {
+        "run": [
+            {
+                "status": "reserved",
+                "settlement_mode": None,
+                "reserved_cny": "9.999999",
+                "known_cost_cny": None,
+                "count": 1,
+            }
+        ],
+        "cumulative": [
+            {
+                "status": "uncertain",
+                "settlement_mode": "upper_bound",
+                "reserved_cny": "8",
+                "known_cost_cny": "19",
+                "count": 2,
+            }
+        ],
+    }
+
+    with pytest.raises(
+        CalibrationAttestationError,
+        match="attempt|budget|schema|reservation",
+    ):
+        validate_calibration_attestation(
+            report_path=_write_json(
+                tmp_path / "contradictory-attempts.json",
+                report,
+            ),
+            settings=Settings(
+                deepseek_model="deepseek-v4-flash",
+                deepseek_temperature=0,
+            ),
             now=datetime(2026, 7, 29, 13, tzinfo=UTC),
         )
 

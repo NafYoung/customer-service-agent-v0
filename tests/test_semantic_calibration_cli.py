@@ -55,6 +55,26 @@ class _ClosedBudgetGuard:
             "reservation_cny_per_attempt": "1.002048",
             "run": dict(amounts),
             "cumulative": dict(amounts),
+            "attempt_evidence": {
+                "run": [
+                    {
+                        "status": "settled_upper_bound",
+                        "settlement_mode": "upper_bound",
+                        "reserved_cny": "1.002048",
+                        "known_cost_cny": "0.00002",
+                        "count": self.attempt_count,
+                    }
+                ],
+                "cumulative": [
+                    {
+                        "status": "settled_upper_bound",
+                        "settlement_mode": "upper_bound",
+                        "reserved_cny": "1.002048",
+                        "known_cost_cny": "0.00002",
+                        "count": self.attempt_count,
+                    }
+                ],
+            },
         }
 
 
