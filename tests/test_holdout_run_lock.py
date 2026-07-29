@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import stat
+from copy import deepcopy
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -31,7 +32,11 @@ from evals.holdout_lock import (
     verify_failed_holdout_receipt_chain,
 )
 from evals.readonly_eval import ReadonlyEvalCase
-from evals.readonly_reporting import current_readonly_harness_fingerprints
+from evals.readonly_reporting import (
+    current_readonly_harness_fingerprints,
+    readonly_harness_snapshot,
+    readonly_model_snapshot,
+)
 from evals.run_readonly_agent_evals import _build_parser, _validate_args
 
 
@@ -76,6 +81,17 @@ def _regression_gate(**overrides: object) -> SimpleNamespace:
             "httpx": "test",
         },
     }
+    settings = Settings()
+    harness_fingerprints = current_readonly_harness_fingerprints(settings)
+    harness_sha256 = stable_sha256(harness_fingerprints)
+    harness_snapshot = readonly_harness_snapshot(
+        settings=settings,
+        fingerprints=harness_fingerprints,
+    )
+    model_snapshot = readonly_model_snapshot(
+        settings=settings,
+        observed_models=[settings.deepseek_model],
+    )
     values: dict[str, object] = {
         "bundle_path": Path("/private/regression/eval-public-regression"),
         "bundle_integrity_sha256": "6" * 64,
@@ -86,11 +102,19 @@ def _regression_gate(**overrides: object) -> SimpleNamespace:
         "case_set_sha256": (
             "6340394c8edd5d95c2756f3f4753d4e224682b7f84a445c76b3abb675bad2edb"
         ),
-        "harness_sha256": stable_sha256(current_readonly_harness_fingerprints()),
+        "harness_sha256": harness_sha256,
         "source_tree_sha256": source_snapshot["source_tree_sha256"],
         "source_identity_sha256": stable_sha256(source_snapshot),
         "source_snapshot": source_snapshot,
-        "runtime_identity_sha256": "5" * 64,
+        "harness_snapshot": harness_snapshot,
+        "model_snapshot": model_snapshot,
+        "runtime_identity_sha256": stable_sha256(
+            {
+                "source": source_snapshot,
+                "harness": harness_snapshot,
+                "model": model_snapshot,
+            }
+        ),
         "passed_trials": 28,
     }
     values.update(overrides)
@@ -116,6 +140,13 @@ def _manifest_with_regression(
             "public_regression_case_set_name": (regression.case_set_name),
             "public_regression_case_set_sha256": (regression.case_set_sha256),
             "public_regression_harness_sha256": (regression.harness_sha256),
+            "public_regression_source_tree_sha256": (regression.source_tree_sha256),
+            "public_regression_source_identity_sha256": (
+                regression.source_identity_sha256
+            ),
+            "public_regression_runtime_identity_sha256": (
+                regression.runtime_identity_sha256
+            ),
         }
     )
     manifest_path.write_text(
@@ -225,6 +256,13 @@ def _manifest(
         "public_regression_case_set_name": (_regression_gate().case_set_name),
         "public_regression_case_set_sha256": (_regression_gate().case_set_sha256),
         "public_regression_harness_sha256": (_regression_gate().harness_sha256),
+        "public_regression_source_tree_sha256": (_regression_gate().source_tree_sha256),
+        "public_regression_source_identity_sha256": (
+            _regression_gate().source_identity_sha256
+        ),
+        "public_regression_runtime_identity_sha256": (
+            _regression_gate().runtime_identity_sha256
+        ),
         "formal_runs_allowed": formal_runs_allowed,
         "formal_runs_completed": formal_runs_completed,
         "lifecycle_status": "sealed",
@@ -593,11 +631,14 @@ def test_failed_terminal_binds_only_failed_attempt_evidence(
         )
 
 
-@pytest.mark.parametrize("source_tree_attack", [False, True])
+@pytest.mark.parametrize(
+    "identity_attack",
+    ["none", "source_tree", "runtime_model"],
+)
 def test_failed_holdout_chain_binds_private_attempt_bundle(
     tmp_path: Path,
     monkeypatch,
-    source_tree_attack: bool,
+    identity_attack: str,
 ) -> None:
     regression_gate = _regression_gate()
     manifest_path = _manifest(tmp_path / "manifest.json")
@@ -616,6 +657,19 @@ def test_failed_holdout_chain_binds_private_attempt_bundle(
         run_id=run_id,
     )
     start_sha256 = holdout_lock_receipt_sha256(start_path)
+    failure_source = deepcopy(regression_gate.source_snapshot)
+    failure_runtime_model = deepcopy(regression_gate.model_snapshot)
+    if identity_attack == "source_tree":
+        failure_source["source_tree_sha256"] = "9" * 64
+    elif identity_attack == "runtime_model":
+        failure_runtime_model["timeout_seconds"] = 999.0
+    failure_runtime_identity_sha256 = stable_sha256(
+        {
+            "source": failure_source,
+            "harness": regression_gate.harness_snapshot,
+            "model": failure_runtime_model,
+        }
+    )
     failure_bundle = write_formal_failure_bundle(
         output_root=tmp_path / "failed-attempts",
         context=FormalFailureContext.model_validate(
@@ -626,15 +680,9 @@ def test_failed_holdout_chain_binds_private_attempt_bundle(
                 "failure_stage": "suite_execution",
                 "failure_code": "MODEL_HTTP_ERROR",
                 "max_output_tokens": 1024,
-                "source": {
-                    "git_commit": declaration.source_git_commit,
-                    "git_dirty": False,
-                    "source_tree_sha256": (
-                        "9" * 64
-                        if source_tree_attack
-                        else regression_gate.source_tree_sha256
-                    ),
-                },
+                "source": failure_source,
+                "runtime_harness": regression_gate.harness_snapshot,
+                "runtime_model": failure_runtime_model,
                 "case_set": {
                     "name": declaration.case_set_name,
                     "sha256": declaration.case_set_sha256,
@@ -661,6 +709,15 @@ def test_failed_holdout_chain_binds_private_attempt_bundle(
                     "regression_harness_sha256": (
                         declaration.regression_harness_sha256
                     ),
+                    "regression_source_tree_sha256": (
+                        failure_source["source_tree_sha256"]
+                    ),
+                    "regression_source_identity_sha256": (
+                        stable_sha256(failure_source)
+                    ),
+                    "regression_runtime_identity_sha256": (
+                        failure_runtime_identity_sha256
+                    ),
                 },
             }
         ),
@@ -684,7 +741,7 @@ def test_failed_holdout_chain_binds_private_attempt_bundle(
         lambda **kwargs: _regression_gate(),
     )
 
-    if source_tree_attack:
+    if identity_attack != "none":
         with pytest.raises(
             HoldoutLockError,
             match="source|runtime|chain|match",
@@ -738,9 +795,8 @@ def test_completed_holdout_chain_links_manifest_start_bundle_and_terminal(
     bundle_manifest = {
         "run_id": run_id,
         "source": source_snapshot,
-        "harness": {
-            "runtime_harness_sha256": declaration.harness_sha256,
-        },
+        "harness": regression_gate.harness_snapshot,
+        "model": regression_gate.model_snapshot,
         "eval": {
             "formal_holdout": {
                 "declaration_manifest_sha256": (declaration.manifest_sha256),
@@ -757,6 +813,15 @@ def test_completed_holdout_chain_links_manifest_start_bundle_and_terminal(
                 "regression_case_set_name": (declaration.regression_case_set_name),
                 "regression_case_set_sha256": (declaration.regression_case_set_sha256),
                 "regression_harness_sha256": (declaration.regression_harness_sha256),
+                "regression_source_tree_sha256": (
+                    declaration.regression_source_tree_sha256
+                ),
+                "regression_source_identity_sha256": (
+                    declaration.regression_source_identity_sha256
+                ),
+                "regression_runtime_identity_sha256": (
+                    declaration.regression_runtime_identity_sha256
+                ),
             },
             "semantic_calibration": {
                 "report_sha256": declaration.calibration_report_sha256,
@@ -961,6 +1026,7 @@ def test_completed_chain_cross_checks_every_declared_evidence_field(
     field_name: str,
     forged_value: object,
 ) -> None:
+    regression_gate = _regression_gate()
     manifest_path = _manifest(tmp_path / "manifest.json")
     declaration = validate_holdout_declaration(
         manifest_path=manifest_path,
@@ -968,7 +1034,7 @@ def test_completed_chain_cross_checks_every_declared_evidence_field(
         cases=_cases(),
         calibration_attestation=_attestation(),
         calibration_review=_review(),
-        regression_gate=_regression_gate(),
+        regression_gate=regression_gate,
     )
     run_id = "eval-20260729-forged-chain"
     start_path = acquire_holdout_run_lock(
@@ -1002,6 +1068,15 @@ def test_completed_chain_cross_checks_every_declared_evidence_field(
             "regression_case_set_name": (declaration.regression_case_set_name),
             "regression_case_set_sha256": (declaration.regression_case_set_sha256),
             "regression_harness_sha256": (declaration.regression_harness_sha256),
+            "regression_source_tree_sha256": (
+                declaration.regression_source_tree_sha256
+            ),
+            "regression_source_identity_sha256": (
+                declaration.regression_source_identity_sha256
+            ),
+            "regression_runtime_identity_sha256": (
+                declaration.regression_runtime_identity_sha256
+            ),
         },
         "semantic_calibration": calibration,
         "case_set_name": declaration.case_set_name,
@@ -1017,12 +1092,9 @@ def test_completed_chain_cross_checks_every_declared_evidence_field(
         run_id=run_id,
         manifest={
             "run_id": run_id,
-            "source": {
-                "git_commit": declaration.source_git_commit,
-            },
-            "harness": {
-                "runtime_harness_sha256": (declaration.harness_sha256),
-            },
+            "source": regression_gate.source_snapshot,
+            "harness": regression_gate.harness_snapshot,
+            "model": regression_gate.model_snapshot,
             "eval": bundle_eval,
         },
         case_records=[{"case_id": "chain-case", "trial": 1}],
@@ -1036,7 +1108,7 @@ def test_completed_chain_cross_checks_every_declared_evidence_field(
     monkeypatch.setattr(
         holdout_protocol,
         "validate_regression_gate",
-        lambda **kwargs: _regression_gate(),
+        lambda **kwargs: regression_gate,
     )
     terminal_path = finalize_holdout_run_lock(
         lock_path=start_path,

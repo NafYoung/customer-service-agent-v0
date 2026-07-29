@@ -32,6 +32,7 @@ from evals.diagnostic_evidence import (
     require_completed_diagnostic_evidence,
 )
 from evals.evidence import (
+    stable_sha256,
     verify_eval_bundle,
     verify_private_eval_bundle_permissions,
 )
@@ -88,6 +89,9 @@ class FormalHoldoutSnapshot(StrictEvidenceModel):
     regression_case_set_name: Literal["readonly-regression-v1"]
     regression_case_set_sha256: Sha256 = Field(pattern=r"^[0-9a-f]{64}$")
     regression_harness_sha256: Sha256 = Field(pattern=r"^[0-9a-f]{64}$")
+    regression_source_tree_sha256: Sha256 = Field(pattern=r"^[0-9a-f]{64}$")
+    regression_source_identity_sha256: Sha256 = Field(pattern=r"^[0-9a-f]{64}$")
+    regression_runtime_identity_sha256: Sha256 = Field(pattern=r"^[0-9a-f]{64}$")
 
 
 class EvalSnapshot(StrictEvidenceModel):
@@ -360,6 +364,18 @@ class ReadonlyManifest(StrictEvidenceModel):
                     != self.source.git_commit
                     or self.eval.formal_holdout.regression_harness_sha256
                     != self.harness.runtime_harness_sha256
+                    or self.eval.formal_holdout.regression_source_tree_sha256
+                    != self.source.source_tree_sha256
+                    or self.eval.formal_holdout.regression_source_identity_sha256
+                    != stable_sha256(self.source.model_dump(mode="json"))
+                    or self.eval.formal_holdout.regression_runtime_identity_sha256
+                    != stable_sha256(
+                        {
+                            "source": self.source.model_dump(mode="json"),
+                            "harness": self.harness.model_dump(mode="json"),
+                            "model": self.model.model_dump(mode="json"),
+                        }
+                    )
                 )
             )
         ):
@@ -648,6 +664,8 @@ class BudgetSummary(StrictEvidenceModel):
                 self.run_status != self.run_identity.status
                 or self.run_identity.model != self.price.model
                 or self.run_identity.price_sha256 != self.price.snapshot_sha256
+                or self.run_identity.started_at < self.price.captured_at
+                or self.run_identity.started_at >= self.price.valid_until
             ):
                 raise ValueError(
                     "Persistent budget run identity does not match pricing"
@@ -1082,10 +1100,18 @@ def _require_completed_paid_bundle_records(
     except CanonicalPricingError as exc:
         raise ValueError(f"{label} pricing or reservation is not canonical") from exc
     if (
-        manifest.harness.canonical_price_snapshot_sha256
+        budget.run_identity is None
+        or budget.run_identity.completed_at is None
+        or manifest.harness.canonical_price_snapshot_sha256
         != canonical_price_file_sha256()
-        or manifest.created_at < canonical_price.captured_at
-        or manifest.completed_at > canonical_price.valid_until
+        or not (
+            canonical_price.captured_at
+            <= budget.run_identity.started_at
+            <= manifest.created_at
+            <= budget.run_identity.completed_at
+            <= manifest.completed_at
+            <= canonical_price.valid_until
+        )
     ):
         raise ValueError(f"{label} run is outside canonical pricing")
     observed_models: set[str] = set()

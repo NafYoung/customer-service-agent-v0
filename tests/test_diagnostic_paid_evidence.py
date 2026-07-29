@@ -101,6 +101,7 @@ def _error_call(
     *,
     sequence: int = 1,
     provider_attempts: int | None = 1,
+    error_code: str = "MODEL_TRANSPORT_ERROR",
 ) -> ModelCallEvidence:
     return ModelCallEvidence(
         sequence=sequence,
@@ -110,7 +111,7 @@ def _error_call(
         message_count=2,
         tool_contract_count=6,
         phase="agent",
-        error_code="MODEL_TRANSPORT_ERROR",
+        error_code=error_code,
         http_status=None,
         provider_request_id=None,
         provider_attempts=provider_attempts,
@@ -254,10 +255,85 @@ def test_paid_budget_identity_cannot_start_before_price_window() -> None:
         _build_manifest(results=results, budget=budget)
 
 
+@pytest.mark.parametrize(
+    ("identity_started_at", "identity_completed_at"),
+    [
+        (
+            "2026-07-29T09:00:00+00:00",
+            "2026-07-29T11:59:59+00:00",
+        ),
+        (
+            "2026-07-29T12:00:00+00:00",
+            "2026-07-29T12:05:01+00:00",
+        ),
+    ],
+)
+def test_paid_diagnostic_binds_budget_identity_to_eval_timeline(
+    identity_started_at: str,
+    identity_completed_at: str,
+) -> None:
+    _, results = _diagnostic_inputs()
+    budget = _paid_budget(results)
+    budget["run_identity"]["started_at"] = identity_started_at
+    budget["run_identity"]["completed_at"] = identity_completed_at
+
+    with pytest.raises(
+        ValueError,
+        match="price|window|identity|budget",
+    ):
+        _build_manifest(results=results, budget=budget)
+
+
+def test_budget_summary_preserves_cross_window_failure_timeline() -> None:
+    _, results = _diagnostic_inputs()
+    results[0] = _result(
+        case_id=results[0].case_id,
+        model_calls=(_error_call(),),
+        failed=True,
+        error_code="MODEL_TRANSPORT_ERROR",
+    )
+    budget = _paid_budget(results)
+    budget["run_identity"]["completed_at"] = "2026-07-30T08:58:59+00:00"
+
+    validated = BudgetSummary.model_validate(budget)
+
+    assert validated.run.uncertain_count == 1
+    assert validated.run_identity is not None
+    assert validated.price is not None
+    assert validated.run_identity.completed_at > validated.price.valid_until
+
+
+def test_full_diagnostic_preserves_price_expiry_failure_timeline() -> None:
+    _, results = _diagnostic_inputs()
+    results[0] = _result(
+        case_id=results[0].case_id,
+        model_calls=(_error_call(error_code="MODEL_PRICE_EXPIRED"),),
+        failed=True,
+        error_code="MODEL_PRICE_EXPIRED",
+    )
+    budget = _paid_budget(results)
+    price = load_canonical_price_snapshot()
+    identity_completed = price.valid_until + timedelta(seconds=1)
+    eval_completed = identity_completed + timedelta(seconds=1)
+    budget["run_identity"]["completed_at"] = identity_completed.isoformat()
+
+    payload = _payload(
+        results=results,
+        budget=budget,
+        completed_at=eval_completed,
+    )
+
+    validated = validate_readonly_payload(payload)
+    assert validated.manifest.completed_at == eval_completed
+    assert validated.summary.budget.run.uncertain_count == 1
+
+
 def _build_manifest(
     *,
     results: list[ReadonlyEvalResult],
     budget: dict,
+    started_at: datetime = STARTED,
+    completed_at: datetime = COMPLETED,
 ) -> dict:
     cases = load_cases(DEFAULT_CASE_DIR)
     manifest = build_readonly_manifest(
@@ -269,8 +345,8 @@ def _build_manifest(
         results=results,
         settings=_settings(),
         planned_trials=1,
-        started_at=STARTED,
-        completed_at=COMPLETED,
+        started_at=started_at,
+        completed_at=completed_at,
         budget_report=budget,
     )
     manifest["artifacts"] = {
@@ -286,10 +362,17 @@ def _payload(
     *,
     results: list[ReadonlyEvalResult],
     budget: dict,
+    started_at: datetime = STARTED,
+    completed_at: datetime = COMPLETED,
 ) -> dict:
     records = [result_to_record(result, split="dev") for result in results]
     return {
-        "manifest": _build_manifest(results=results, budget=budget),
+        "manifest": _build_manifest(
+            results=results,
+            budget=budget,
+            started_at=started_at,
+            completed_at=completed_at,
+        ),
         "cases": records,
         "summary": summarize_results(
             run_id=RUN_ID,

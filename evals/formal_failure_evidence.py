@@ -19,11 +19,13 @@ from evals.canonical_pricing import (
     require_canonical_attempt_reservation,
     require_canonical_paid_budget,
 )
-from evals.evidence import verify_eval_bundle, write_eval_bundle
+from evals.evidence import stable_sha256, verify_eval_bundle, write_eval_bundle
 from evals.evidence_schema import (
     ArtifactPaths,
     BudgetSummary,
+    HarnessSnapshot,
     IntegrityIndex,
+    ModelSnapshot,
     ReadonlyCaseRecord,
 )
 
@@ -52,6 +54,9 @@ class FormalFailureSource(StrictFailureModel):
     git_commit: GitCommit
     git_dirty: Literal[False]
     source_tree_sha256: Sha256
+    python_version: str = Field(min_length=1)
+    platform: str = Field(min_length=1)
+    package_versions: dict[str, str]
 
 
 class FormalFailureCaseSet(StrictFailureModel):
@@ -73,6 +78,9 @@ class FormalFailureHoldoutBindings(StrictFailureModel):
     regression_case_set_name: Literal["readonly-regression-v1"]
     regression_case_set_sha256: Sha256
     regression_harness_sha256: Sha256
+    regression_source_tree_sha256: Sha256
+    regression_source_identity_sha256: Sha256
+    regression_runtime_identity_sha256: Sha256
 
     @model_validator(mode="after")
     def require_declared_runtime_harness(self) -> FormalFailureHoldoutBindings:
@@ -93,6 +101,8 @@ class FormalFailureContext(StrictFailureModel):
     failure_code: FailureCode
     max_output_tokens: int = Field(ge=1)
     source: FormalFailureSource
+    runtime_harness: HarnessSnapshot
+    runtime_model: ModelSnapshot
     case_set: FormalFailureCaseSet
     formal_holdout: FormalFailureHoldoutBindings
 
@@ -118,6 +128,8 @@ class FormalFailureManifest(StrictFailureModel):
     failure_code: FailureCode
     max_output_tokens: int = Field(ge=1)
     source: FormalFailureSource
+    runtime_harness: HarnessSnapshot
+    runtime_model: ModelSnapshot
     case_set: FormalFailureCaseSet
     formal_holdout: FormalFailureHoldoutBindings
     completed_record_count: int = Field(ge=0, le=80)
@@ -326,8 +338,25 @@ class FormalFailureEvidenceBundle(StrictFailureModel):
         if (
             manifest.formal_holdout.regression_source_git_commit
             != manifest.source.git_commit
+            or manifest.formal_holdout.regression_source_tree_sha256
+            != manifest.source.source_tree_sha256
+            or manifest.formal_holdout.regression_source_identity_sha256
+            != stable_sha256(manifest.source.model_dump(mode="json"))
         ):
             raise ValueError("Failed-attempt regression source differs from the run")
+        if (
+            manifest.runtime_harness.runtime_harness_sha256
+            != manifest.formal_holdout.runtime_harness_sha256
+            or stable_sha256(
+                {
+                    "source": manifest.source.model_dump(mode="json"),
+                    "harness": manifest.runtime_harness.model_dump(mode="json"),
+                    "model": manifest.runtime_model.model_dump(mode="json"),
+                }
+            )
+            != manifest.formal_holdout.regression_runtime_identity_sha256
+        ):
+            raise ValueError("Failed-attempt runtime identity differs from the run")
         if summary.budget is not None:
             budget_identity = summary.budget.run_identity
             budget_price = summary.budget.price
@@ -336,6 +365,7 @@ class FormalFailureEvidenceBundle(StrictFailureModel):
                 or budget_price is None
                 or budget_identity.run_id != manifest.run_id
                 or budget_identity.purpose != "holdout_formal"
+                or budget_identity.model != manifest.runtime_model.requested_model
             ):
                 raise ValueError("Failed-attempt budget identity differs from the run")
             try:
@@ -355,6 +385,22 @@ class FormalFailureEvidenceBundle(StrictFailureModel):
                 raise ValueError(
                     "Failed-attempt budget pricing is not canonical"
                 ) from exc
+            if (
+                budget_identity.started_at > manifest.created_at
+                or (
+                    budget_identity.status == "active"
+                    and budget_identity.completed_at is not None
+                )
+                or (
+                    budget_identity.status == "completed"
+                    and (
+                        budget_identity.completed_at is None
+                        or budget_identity.completed_at < manifest.created_at
+                        or budget_identity.completed_at > manifest.failed_at
+                    )
+                )
+            ):
+                raise ValueError("Failed-attempt budget timeline differs from the run")
             try:
                 require_canonical_attempt_reservation(
                     canonical_price=canonical_price,

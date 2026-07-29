@@ -298,12 +298,20 @@ def _require_paid_diagnostic(
         identity["completed_at"],
         label=f"{label} budget identity",
     )
+    crossed_price_window = completed_at > canonical_price.valid_until
+    has_price_expiry_failure = any(
+        call["error_code"] == "MODEL_PRICE_EXPIRED" for call in error_calls
+    )
     if (
         canonical_price_snapshot_sha256 != canonical_price_file_sha256()
-        or started_at < canonical_price.captured_at
-        or completed_at > canonical_price.valid_until
-        or identity_started > started_at
-        or identity_completed > completed_at
+        or not (
+            canonical_price.captured_at
+            <= identity_started
+            <= started_at
+            < canonical_price.valid_until
+        )
+        or not (started_at <= identity_completed <= completed_at)
+        or (crossed_price_window and not has_price_expiry_failure)
     ):
         raise ValueError(f"{label} run is outside its canonical paid window")
     expected_settled: Counter[tuple[str, str, str, str]] = Counter()

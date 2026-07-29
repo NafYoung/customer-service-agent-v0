@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from copy import deepcopy
-from dataclasses import replace
+from dataclasses import asdict, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
@@ -86,7 +86,21 @@ def _budget_report(
     *,
     run_id: str = "eval-20260729-abcdef12",
     purpose: str = "holdout_formal",
+    started_at: datetime | None = None,
+    completed_at: datetime | None = None,
 ) -> dict:
+    if (started_at is None) != (completed_at is None):
+        raise ValueError("started_at and completed_at must be provided together")
+    identity_started_at = (
+        started_at - timedelta(seconds=1)
+        if started_at is not None
+        else datetime(2026, 7, 29, 12, tzinfo=UTC)
+    )
+    identity_completed_at = (
+        started_at + (completed_at - started_at) / 2
+        if started_at is not None and completed_at is not None
+        else datetime(2026, 7, 29, 12, 5, tzinfo=UTC)
+    )
     settled = Decimal(attempt_count) * Decimal("0.000012")
     settled_cny = format(settled, "f")
     amount = {
@@ -113,8 +127,8 @@ def _budget_report(
             "model": "deepseek-v4-flash",
             "price_sha256": _canonical_price_summary()["snapshot_sha256"],
             "status": "completed",
-            "started_at": "2026-07-29T12:00:00+00:00",
-            "completed_at": "2026-07-29T12:05:00+00:00",
+            "started_at": identity_started_at.isoformat(),
+            "completed_at": identity_completed_at.isoformat(),
         },
         "price": _canonical_price_summary(),
         "reservation_cny_per_attempt": "1.002048",
@@ -280,6 +294,17 @@ def _formal_cases() -> list[ReadonlyEvalCase]:
 def _formal_holdout_evidence(
     settings: Settings | None = None,
 ) -> FormalHoldoutEvidence:
+    runtime_settings = settings or Settings()
+    source_snapshot = readonly_reporting.current_readonly_source_snapshot()
+    harness_fingerprints = current_readonly_harness_fingerprints(runtime_settings)
+    harness_snapshot = readonly_reporting.readonly_harness_snapshot(
+        settings=runtime_settings,
+        fingerprints=harness_fingerprints,
+    )
+    model_snapshot = readonly_reporting.readonly_model_snapshot(
+        settings=runtime_settings,
+        observed_models=[runtime_settings.deepseek_model],
+    )
     return FormalHoldoutEvidence(
         declaration_manifest_sha256="6" * 64,
         lock_start_receipt_sha256="7" * 64,
@@ -289,13 +314,20 @@ def _formal_holdout_evidence(
         regression_bundle_integrity_sha256="8" * 64,
         regression_gate_sha256="9" * 64,
         regression_run_id=("eval-20260729-dev-repeat-public-binding"),
-        regression_source_git_commit="a" * 40,
+        regression_source_git_commit=str(source_snapshot["git_commit"]),
         regression_case_set_name="readonly-regression-v1",
         regression_case_set_sha256=(
             "6340394c8edd5d95c2756f3f4753d4e224682b7f84a445c76b3abb675bad2edb"
         ),
-        regression_harness_sha256=stable_sha256(
-            current_readonly_harness_fingerprints(settings)
+        regression_harness_sha256=stable_sha256(harness_fingerprints),
+        regression_source_tree_sha256=str(source_snapshot["source_tree_sha256"]),
+        regression_source_identity_sha256=stable_sha256(source_snapshot),
+        regression_runtime_identity_sha256=stable_sha256(
+            {
+                "source": source_snapshot,
+                "harness": harness_snapshot,
+                "model": model_snapshot,
+            }
         ),
     )
 
@@ -418,7 +450,11 @@ def test_manifest_fingerprints_harness_and_never_serializes_secret_or_holdout_id
         planned_trials=4,
         started_at=started,
         completed_at=completed,
-        budget_report=_budget_report(_attempt_count(results)),
+        budget_report=_budget_report(
+            _attempt_count(results),
+            started_at=started,
+            completed_at=completed,
+        ),
         calibration_attestation=_attestation(),
         calibration_review=_review(),
         formal_holdout_evidence=_formal_holdout_evidence(settings),
@@ -455,24 +491,9 @@ def test_manifest_fingerprints_harness_and_never_serializes_secret_or_holdout_id
         "reviewer_id": "independent-reviewer-v1",
         "reviewed_count": 5,
     }
-    assert manifest["eval"]["formal_holdout"] == {
-        "declaration_manifest_sha256": "6" * 64,
-        "lock_start_receipt_sha256": "7" * 64,
-        "declared_harness_sha256": stable_sha256(
-            current_readonly_harness_fingerprints(settings)
-        ),
-        "regression_bundle_integrity_sha256": "8" * 64,
-        "regression_gate_sha256": "9" * 64,
-        "regression_run_id": ("eval-20260729-dev-repeat-public-binding"),
-        "regression_source_git_commit": "a" * 40,
-        "regression_case_set_name": "readonly-regression-v1",
-        "regression_case_set_sha256": (
-            "6340394c8edd5d95c2756f3f4753d4e224682b7f84a445c76b3abb675bad2edb"
-        ),
-        "regression_harness_sha256": stable_sha256(
-            current_readonly_harness_fingerprints(settings)
-        ),
-    }
+    assert manifest["eval"]["formal_holdout"] == asdict(
+        _formal_holdout_evidence(settings)
+    )
     assert (
         manifest["harness"]["runtime_harness_sha256"]
         == manifest["eval"]["formal_holdout"]["declared_harness_sha256"]
@@ -519,6 +540,8 @@ def test_manifest_fingerprints_harness_and_never_serializes_secret_or_holdout_id
             _attempt_count(dev_results),
             run_id="eval-20260729-abcdef13",
             purpose="dev_repeat",
+            started_at=started,
+            completed_at=completed,
         ),
     )
     assert dev_manifest["eval"]["case_ids"] == [case.case_id for case in dev_cases]
@@ -580,6 +603,8 @@ def test_formal_manifest_rejects_unsettled_budget_and_model_drift():
     unsettled = _budget_report(
         _attempt_count(results),
         run_id="eval-20260729-formal-gates",
+        started_at=started,
+        completed_at=started + timedelta(seconds=1),
     )
     unsettled["run"]["uncertain_count"] = 1
 
@@ -609,6 +634,8 @@ def test_formal_manifest_rejects_unsettled_budget_and_model_drift():
             budget_report=_budget_report(
                 _attempt_count(results),
                 run_id="eval-20260729-formal-gates",
+                started_at=started,
+                completed_at=started + timedelta(seconds=1),
             ),
         )
     except ValueError as exc:
@@ -644,6 +671,8 @@ def test_formal_manifest_recomputes_exact_cost_from_every_model_call():
     overstated = _budget_report(
         _attempt_count(results),
         run_id="eval-20260729-formal-cost",
+        started_at=started,
+        completed_at=started + timedelta(seconds=1),
     )
     for scope in ("run", "cumulative"):
         overstated[scope]["committed_cny"] = "17"
@@ -667,6 +696,8 @@ def test_formal_manifest_recomputes_exact_cost_from_every_model_call():
     retry_budget = _budget_report(
         _attempt_count(results) + 1,
         run_id="eval-20260729-formal-cost",
+        started_at=started,
+        completed_at=started + timedelta(seconds=1),
     )
     with pytest.raises(ValueError, match="attempt|cost|usage"):
         build_readonly_manifest(
@@ -740,6 +771,8 @@ def test_formal_manifest_binds_calls_to_each_completed_trial(
             budget_report=_budget_report(
                 _attempt_count(results),
                 run_id=run_id,
+                started_at=started,
+                completed_at=started + timedelta(seconds=1),
             ),
             calibration_attestation=_attestation(),
             calibration_review=_review(),
@@ -777,6 +810,8 @@ def test_completed_paid_manifest_allows_a_scored_trial_to_fail() -> None:
         budget_report=_budget_report(
             _attempt_count(results),
             run_id=run_id,
+            started_at=started,
+            completed_at=started + timedelta(seconds=1),
         ),
         calibration_attestation=_attestation(),
         calibration_review=_review(),
@@ -808,9 +843,12 @@ def test_formal_manifest_rejects_noncanonical_budget_contract(
         for trial in range(1, 5)
         for case in cases
     ]
+    started = datetime.now(UTC)
     budget = _budget_report(
         _attempt_count(results),
         run_id="eval-20260729-formal-canonical-price",
+        started_at=started,
+        completed_at=started + timedelta(seconds=1),
     )
     if attack == "forged_price":
         fake_sha256 = "0" * 64
@@ -836,7 +874,6 @@ def test_formal_manifest_rejects_noncanonical_budget_contract(
     elif attack == "lower_reservation":
         budget["reservation_cny_per_attempt"] = "0"
 
-    started = datetime.now(UTC)
     with pytest.raises(
         ValueError,
         match="pricing|price|budget|limit|reservation|max_tokens",
@@ -878,16 +915,17 @@ def test_formal_manifest_rejects_a_settled_execution_overrun() -> None:
         ),
         *results[0].model_calls[1:],
     )
+    started = datetime.now(UTC)
     budget = _budget_report(
         _attempt_count(results),
         run_id="eval-20260729-formal-overrun",
+        started_at=started,
+        completed_at=started + timedelta(seconds=1),
     )
     for scope in ("run", "cumulative"):
         budget[scope]["committed_cny"] = "18.000948"
         budget[scope]["settled_cny"] = "18.000948"
         budget[scope]["remaining_execution_cny"] = "0"
-    started = datetime.now(UTC)
-
     with pytest.raises(ValueError, match="budget|limit|overrun"):
         build_readonly_manifest(
             run_id="eval-20260729-formal-overrun",
@@ -915,11 +953,13 @@ def test_formal_bundle_schema_recomputes_cost_instead_of_trusting_summary():
         for trial in range(1, 5)
         for case in cases
     ]
+    started = datetime.now(UTC)
     budget = _budget_report(
         _attempt_count(results),
         run_id="eval-20260729-formal-schema-cost",
+        started_at=started,
+        completed_at=started + timedelta(seconds=1),
     )
-    started = datetime.now(UTC)
     manifest = build_readonly_manifest(
         run_id="eval-20260729-formal-schema-cost",
         purpose="holdout_formal",
@@ -938,6 +978,21 @@ def test_formal_bundle_schema_recomputes_cost_instead_of_trusting_summary():
     )
     manifest["source"]["git_commit"] = "a" * 40
     manifest["source"]["git_dirty"] = False
+    formal_snapshot = manifest["eval"]["formal_holdout"]
+    formal_snapshot["regression_source_git_commit"] = "a" * 40
+    formal_snapshot["regression_source_tree_sha256"] = manifest["source"][
+        "source_tree_sha256"
+    ]
+    formal_snapshot["regression_source_identity_sha256"] = stable_sha256(
+        manifest["source"]
+    )
+    formal_snapshot["regression_runtime_identity_sha256"] = stable_sha256(
+        {
+            "source": manifest["source"],
+            "harness": manifest["harness"],
+            "model": manifest["model"],
+        }
+    )
     manifest["artifacts"] = {
         "cases": "cases.jsonl",
         "summary": "summary.json",
@@ -1065,7 +1120,7 @@ def test_formal_bundle_schema_recomputes_cost_instead_of_trusting_summary():
     max_tokens_drift["manifest"]["model"]["generation_config"]["max_tokens"] = 2048
     with pytest.raises(
         ValueError,
-        match="canonical|budget|reservation|max_tokens",
+        match=("canonical|budget|reservation|max_tokens|attestation|runtime"),
     ):
         validate_readonly_payload(max_tokens_drift)
 

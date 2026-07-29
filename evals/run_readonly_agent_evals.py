@@ -86,8 +86,11 @@ from evals.readonly_reporting import (
     FrozenReadonlyHarness,
     build_readonly_manifest,
     create_server_run_id,
+    current_readonly_source_snapshot,
     current_source_tree_sha256,
     freeze_readonly_harness,
+    readonly_harness_snapshot,
+    readonly_model_snapshot,
     require_clean_git_worktree,
     result_to_record,
     summarize_results,
@@ -127,6 +130,9 @@ class ValidatedFormalRunContext:
     regression_case_set_name: str
     regression_case_set_sha256: str
     regression_harness_sha256: str
+    regression_source_tree_sha256: str
+    regression_source_identity_sha256: str
+    regression_runtime_identity_sha256: str
     declaration_manifest_sha256: str
     lock_start_path: Path
     lock_start_receipt_sha256: str
@@ -195,9 +201,16 @@ def _create_validated_formal_run_context(
         or regression_gate.gate_sha256 != declaration.regression_gate_sha256
         or regression_gate.run_id != declaration.regression_run_id
         or regression_gate.source_git_commit != source_git_commit
+        or regression_gate.source_tree_sha256 != source_tree_sha256
         or regression_gate.case_set_name != declaration.regression_case_set_name
         or regression_gate.case_set_sha256 != declaration.regression_case_set_sha256
         or regression_gate.harness_sha256 != harness_sha256
+        or regression_gate.source_tree_sha256
+        != declaration.regression_source_tree_sha256
+        or regression_gate.source_identity_sha256
+        != declaration.regression_source_identity_sha256
+        or regression_gate.runtime_identity_sha256
+        != declaration.regression_runtime_identity_sha256
         or acquired_lock.path.name != "readonly-holdout-v2.start.json"
     ):
         raise ValueError("The validated formal run context inputs do not match.")
@@ -221,6 +234,9 @@ def _create_validated_formal_run_context(
         regression_case_set_name=regression_gate.case_set_name,
         regression_case_set_sha256=regression_gate.case_set_sha256,
         regression_harness_sha256=regression_gate.harness_sha256,
+        regression_source_tree_sha256=(regression_gate.source_tree_sha256),
+        regression_source_identity_sha256=(regression_gate.source_identity_sha256),
+        regression_runtime_identity_sha256=(regression_gate.runtime_identity_sha256),
         declaration_manifest_sha256=declaration.manifest_sha256,
         lock_start_path=acquired_lock.path,
         lock_start_receipt_sha256=acquired_lock.receipt_sha256,
@@ -235,6 +251,8 @@ def _consume_validated_formal_run_context(
     context: ValidatedFormalRunContext,
     *,
     output_root: Path,
+    settings: Settings,
+    frozen_harness: FrozenReadonlyHarness | None,
 ) -> None:
     """Validate and consume one issued capability before any model call."""
 
@@ -292,6 +310,13 @@ def _consume_validated_formal_run_context(
         "public_regression_case_set_name": (context.regression_case_set_name),
         "public_regression_case_set_sha256": (context.regression_case_set_sha256),
         "public_regression_harness_sha256": (context.regression_harness_sha256),
+        "public_regression_source_tree_sha256": (context.regression_source_tree_sha256),
+        "public_regression_source_identity_sha256": (
+            context.regression_source_identity_sha256
+        ),
+        "public_regression_runtime_identity_sha256": (
+            context.regression_runtime_identity_sha256
+        ),
     }
     if (
         stat.S_ISLNK(file_mode)
@@ -307,6 +332,39 @@ def _consume_validated_formal_run_context(
         )
     ):
         raise ValueError("holdout_formal requires a validated formal run context")
+    current_source = current_readonly_source_snapshot()
+    if (
+        current_source["git_commit"] != context.source_git_commit
+        or current_source["git_dirty"] is not False
+        or current_source["source_tree_sha256"] != context.regression_source_tree_sha256
+        or stable_sha256(current_source) != context.regression_source_identity_sha256
+    ):
+        raise ValueError("holdout_formal source identity changed before execution")
+    if frozen_harness is None:
+        raise ValueError("holdout_formal runtime identity is unavailable")
+    try:
+        require_canonical_calibration_runtime(settings)
+        runtime_harness = readonly_harness_snapshot(
+            settings=settings,
+            fingerprints=dict(frozen_harness.fingerprints),
+        )
+        runtime_model = readonly_model_snapshot(
+            settings=settings,
+            observed_models=[settings.deepseek_model],
+        )
+    except (CalibrationAttestationError, KeyError, ValueError) as exc:
+        raise ValueError("holdout_formal runtime identity is not canonical") from exc
+    if (
+        stable_sha256(
+            {
+                "source": current_source,
+                "harness": runtime_harness,
+                "model": runtime_model,
+            }
+        )
+        != context.regression_runtime_identity_sha256
+    ):
+        raise ValueError("holdout_formal runtime identity changed before execution")
 
 
 class ClosableChatModel(ChatModel, Protocol):
@@ -627,6 +685,8 @@ def run_eval_suite(
         _consume_validated_formal_run_context(
             formal_run_context,
             output_root=output_root,
+            settings=settings,
+            frozen_harness=frozen_harness,
         )
         case_set_sha256 = _formal_case_set_sha256(cases)
         if (
@@ -669,6 +729,12 @@ def run_eval_suite(
             != formal_run_context.regression_case_set_sha256
             or formal_holdout_evidence.regression_harness_sha256
             != formal_run_context.regression_harness_sha256
+            or formal_holdout_evidence.regression_source_tree_sha256
+            != formal_run_context.regression_source_tree_sha256
+            or formal_holdout_evidence.regression_source_identity_sha256
+            != formal_run_context.regression_source_identity_sha256
+            or formal_holdout_evidence.regression_runtime_identity_sha256
+            != formal_run_context.regression_runtime_identity_sha256
         ):
             raise ValueError("holdout_formal requires a validated formal run context")
     elif formal_run_context is not None:
@@ -1009,6 +1075,15 @@ def main(argv: Sequence[str] | None = None) -> int:
                 regression_case_set_name=(declaration.regression_case_set_name),
                 regression_case_set_sha256=(declaration.regression_case_set_sha256),
                 regression_harness_sha256=(declaration.regression_harness_sha256),
+                regression_source_tree_sha256=(
+                    declaration.regression_source_tree_sha256
+                ),
+                regression_source_identity_sha256=(
+                    declaration.regression_source_identity_sha256
+                ),
+                regression_runtime_identity_sha256=(
+                    declaration.regression_runtime_identity_sha256
+                ),
             )
             formal_run_context = _create_validated_formal_run_context(
                 run_id=run_id,
@@ -1081,6 +1156,16 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         def check_source_before_write() -> None:
             require_clean_git_worktree(expected_commit=source_git_commit)
+            if formal_run_context is None:
+                raise ValueError("formal source identity is unavailable before write")
+            current_source = current_readonly_source_snapshot()
+            if (
+                current_source["source_tree_sha256"]
+                != formal_run_context.regression_source_tree_sha256
+                or stable_sha256(current_source)
+                != formal_run_context.regression_source_identity_sha256
+            ):
+                raise ValueError("formal source identity changed before write")
 
         pre_write_check = check_source_before_write
     try:
@@ -1144,6 +1229,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             failure_records = [
                 result_to_record(result, split="holdout") for result in partial_results
             ]
+            failure_source = current_readonly_source_snapshot()
+            if (
+                failure_source["git_commit"] != source_git_commit
+                or failure_source["git_dirty"] is not False
+                or failure_source["source_tree_sha256"]
+                != formal_holdout_evidence.regression_source_tree_sha256
+                or stable_sha256(failure_source)
+                != formal_holdout_evidence.regression_source_identity_sha256
+            ):
+                raise ValueError("formal failed-attempt source identity changed")
             failed_attempt_bundle = write_formal_failure_bundle(
                 output_root=failure_root,
                 context=FormalFailureContext.model_validate(
@@ -1156,11 +1251,15 @@ def main(argv: Sequence[str] | None = None) -> int:
                             run_error or RuntimeError("formal attempt failed")
                         ),
                         "max_output_tokens": (settings.deepseek_max_tokens),
-                        "source": {
-                            "git_commit": source_git_commit,
-                            "git_dirty": False,
-                            "source_tree_sha256": (formal_source_tree_sha256),
-                        },
+                        "source": failure_source,
+                        "runtime_harness": readonly_harness_snapshot(
+                            settings=settings,
+                            fingerprints=dict(frozen_harness.fingerprints),
+                        ),
+                        "runtime_model": readonly_model_snapshot(
+                            settings=settings,
+                            observed_models=[settings.deepseek_model],
+                        ),
                         "case_set": {
                             "name": declaration.case_set_name,
                             "sha256": declaration.case_set_sha256,
@@ -1198,6 +1297,15 @@ def main(argv: Sequence[str] | None = None) -> int:
                             ),
                             "regression_harness_sha256": (
                                 formal_holdout_evidence.regression_harness_sha256
+                            ),
+                            "regression_source_tree_sha256": (
+                                formal_holdout_evidence.regression_source_tree_sha256
+                            ),
+                            "regression_source_identity_sha256": (
+                                formal_holdout_evidence.regression_source_identity_sha256
+                            ),
+                            "regression_runtime_identity_sha256": (
+                                formal_holdout_evidence.regression_runtime_identity_sha256
                             ),
                         },
                     }

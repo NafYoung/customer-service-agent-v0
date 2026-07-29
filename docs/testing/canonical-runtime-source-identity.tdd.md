@@ -39,6 +39,10 @@ The implementation now:
   HTTPX, SQLAlchemy, and Uvicorn dependency closure;
 - requires the source-tree SHA-256 before collection, inside the source
   snapshot, and after collection to be equal.
+- carries source-tree, source-snapshot, and runtime identities through the
+  formal declaration/start/completed-or-failed receipt chain;
+- recomputes the full source+harness+model identity before the first formal
+  provider call and from both completed and failed evidence.
 
 ## Verification
 

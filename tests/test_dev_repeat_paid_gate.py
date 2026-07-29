@@ -6,7 +6,6 @@ from dataclasses import asdict, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -366,9 +365,14 @@ def test_programmatic_formal_run_rejects_forged_context_before_model_call(
 
 @pytest.mark.parametrize(
     "output_attack",
-    ["alternate_root", "symlink_escape"],
+    [
+        "alternate_root",
+        "symlink_escape",
+        "source_drift",
+        "runtime_drift",
+    ],
 )
-def test_issued_formal_context_binds_fixed_output_root_before_model_call(
+def test_issued_formal_context_binds_output_and_source_before_model_call(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     output_attack: str,
@@ -396,8 +400,32 @@ def test_issued_formal_context_binds_fixed_output_root_before_model_call(
     ]
     source_git_commit = "a" * 40
     source_tree_sha256 = "b" * 64
-    fingerprints = {"test_harness": "c" * 64}
+    source_snapshot = {
+        "git_commit": source_git_commit,
+        "git_dirty": False,
+        "source_tree_sha256": source_tree_sha256,
+        "python_version": "3.11-test",
+        "platform": "test-platform",
+        "package_versions": {"httpx": "test"},
+    }
+    source_identity_sha256 = stable_sha256(source_snapshot)
+    canonical_settings = _settings()
+    frozen_harness = runner.freeze_readonly_harness(canonical_settings)
+    fingerprints = dict(frozen_harness.fingerprints)
     harness_sha256 = stable_sha256(fingerprints)
+    runtime_identity_sha256 = stable_sha256(
+        {
+            "source": source_snapshot,
+            "harness": runner.readonly_harness_snapshot(
+                settings=canonical_settings,
+                fingerprints=fingerprints,
+            ),
+            "model": runner.readonly_model_snapshot(
+                settings=canonical_settings,
+                observed_models=[canonical_settings.deepseek_model],
+            ),
+        }
+    )
     attestation = ValidatedCalibrationAttestation(
         report_sha256="d" * 64,
         run_id="eval-20260729-calibration-output-binding",
@@ -426,7 +454,9 @@ def test_issued_formal_context_binds_fixed_output_root_before_model_call(
         case_set_name="readonly-regression-v1",
         case_set_sha256="5" * 64,
         harness_sha256=harness_sha256,
-        runtime_identity_sha256="6" * 64,
+        source_tree_sha256=source_tree_sha256,
+        source_identity_sha256=source_identity_sha256,
+        runtime_identity_sha256=runtime_identity_sha256,
         passed_trials=28,
     )
     declaration = holdout_protocol.HoldoutDeclaration(
@@ -452,6 +482,9 @@ def test_issued_formal_context_binds_fixed_output_root_before_model_call(
         regression_case_set_name=regression_gate.case_set_name,
         regression_case_set_sha256=regression_gate.case_set_sha256,
         regression_harness_sha256=regression_gate.harness_sha256,
+        regression_source_tree_sha256=(regression_gate.source_tree_sha256),
+        regression_source_identity_sha256=(regression_gate.source_identity_sha256),
+        regression_runtime_identity_sha256=(regression_gate.runtime_identity_sha256),
     )
     private_root = tmp_path / "private"
     fixed_output_root = private_root / "eval-runs"
@@ -476,7 +509,6 @@ def test_issued_formal_context_binds_fixed_output_root_before_model_call(
         declaration=declaration,
         run_id="eval-20260729-formal-output-binding",
     )
-    frozen_harness = SimpleNamespace(fingerprints=fingerprints)
     context = runner._create_validated_formal_run_context(
         run_id="eval-20260729-formal-output-binding",
         purpose="holdout_formal",
@@ -496,15 +528,45 @@ def test_issued_formal_context_binds_fixed_output_root_before_model_call(
     model = _CountingModel()
     requested_output_root = (
         fixed_output_root
-        if output_attack == "symlink_escape"
+        if output_attack in {"symlink_escape", "source_drift", "runtime_drift"}
         else tmp_path / "attacker-output"
+    )
+    if output_attack == "source_drift":
+        monkeypatch.setattr(
+            runner,
+            "current_readonly_source_snapshot",
+            lambda: {
+                "git_commit": source_git_commit,
+                "git_dirty": False,
+                "source_tree_sha256": source_tree_sha256,
+                "python_version": "forged",
+                "platform": "forged",
+                "package_versions": {"httpx": "forged"},
+            },
+        )
+    elif output_attack == "runtime_drift":
+        monkeypatch.setattr(
+            runner,
+            "current_readonly_source_snapshot",
+            lambda: deepcopy(source_snapshot),
+        )
+    runtime_settings = (
+        replace(
+            canonical_settings,
+            deepseek_timeout_seconds=600,
+        )
+        if output_attack == "runtime_drift"
+        else canonical_settings
     )
 
     assert context.output_root == fixed_output_root
-    with pytest.raises(ValueError, match="validated formal"):
+    with pytest.raises(
+        ValueError,
+        match="validated formal|source identity|runtime identity",
+    ):
         runner.run_eval_suite(
             model=model,
-            settings=_settings(),
+            settings=runtime_settings,
             cases=cases,
             run_id=context.run_id,
             purpose="holdout_formal",
@@ -527,6 +589,13 @@ def test_issued_formal_context_binds_fixed_output_root_before_model_call(
                 regression_case_set_name=regression_gate.case_set_name,
                 regression_case_set_sha256=(regression_gate.case_set_sha256),
                 regression_harness_sha256=(regression_gate.harness_sha256),
+                regression_source_tree_sha256=(regression_gate.source_tree_sha256),
+                regression_source_identity_sha256=(
+                    regression_gate.source_identity_sha256
+                ),
+                regression_runtime_identity_sha256=(
+                    regression_gate.runtime_identity_sha256
+                ),
             ),
             frozen_harness=frozen_harness,
             source_git_commit=source_git_commit,
@@ -537,6 +606,8 @@ def test_issued_formal_context_binds_fixed_output_root_before_model_call(
     assert model.calls == 0
     if output_attack == "symlink_escape":
         assert list(outside_output_root.iterdir()) == []
+    elif output_attack in {"source_drift", "runtime_drift"}:
+        assert list(requested_output_root.iterdir()) == []
     else:
         assert not requested_output_root.exists()
 
@@ -570,6 +641,9 @@ def test_programmatic_formal_context_rejects_internal_binding_attacks(
         regression_case_set_name="readonly-regression-v1",
         regression_case_set_sha256="3" * 64,
         regression_harness_sha256="c" * 64,
+        regression_source_tree_sha256="b" * 64,
+        regression_source_identity_sha256="6" * 64,
+        regression_runtime_identity_sha256="7" * 64,
         declaration_manifest_sha256="4" * 64,
         lock_start_path=tmp_path / "readonly-holdout-v2.start.json",
         lock_start_receipt_sha256="5" * 64,

@@ -156,6 +156,19 @@ schema v2 报告保存完整 verdict，并由严格 validator 重算。未参与
 追加说明，不能事后覆盖自动分数。报告与回执必须同时进入 holdout manifest、
 唯一运行锁和最终 Eval manifest。
 
+Holdout v2 的公开回归门还会冻结三层身份：源码树 SHA-256、包含
+Python/platform/运行依赖版本的完整 source snapshot SHA-256，以及
+`source + harness + model` 的 runtime SHA-256。三者必须逐项进入封存
+manifest、排他 start receipt、成功或失败 artifact 和 terminal verifier。
+正式运行在第一次 provider 调用前重算完整 runtime；成功证据写入前再次
+重算，失败证据则保存严格的 source、harness 和 model snapshot 并由校验器
+独立重算。只匹配 Git commit、或只复制自报 hash，均不构成有效证明。
+
+付费时间线同样属于证据合同：预算身份必须在 canonical price 生效后启动。
+成功证据必须在价格窗内完成；若响应跨越价格边界，只有明确记录
+`MODEL_PRICE_EXPIRED`、对应 uncertain attempt 和已知费用上界的失败证据，
+才允许在价格窗外完成清理并保持可验证。
+
 Agent 轨迹与宿主控制流必须分开评分：模型没有认证、present、confirm 或 execute 工具；宿主是否正确记录确认和执行，应通过数据库状态和宿主事件验证。
 
 该分层参考了

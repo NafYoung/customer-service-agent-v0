@@ -550,7 +550,8 @@ def validate_calibration_attestation(
         )
     except (FileSnapshotError, ValidationError) as exc:
         raise CalibrationAttestationError(
-            "The calibration report failed its strict schema."
+            "The calibration report failed its strict schema or budget "
+            "lifecycle validation."
         ) from exc
     if report.source_git_commit != trusted_context.source_git_commit:
         raise CalibrationAttestationError(

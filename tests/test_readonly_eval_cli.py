@@ -911,8 +911,38 @@ def test_formal_runtime_failure_keeps_partial_evidence_and_terminal(
         )
         for index in range(20)
     ]
-    frozen = run_readonly_agent_evals.freeze_readonly_harness(Settings())
+    runtime_settings = Settings()
+    frozen = run_readonly_agent_evals.freeze_readonly_harness(runtime_settings)
     harness_sha256 = stable_sha256(dict(frozen.fingerprints))
+    source_snapshot = {
+        "git_commit": "1" * 40,
+        "git_dirty": False,
+        "source_tree_sha256": "9" * 64,
+        "python_version": "3.11-test",
+        "platform": "test-platform",
+        "package_versions": {
+            "fastapi": "test",
+            "httpx": "test",
+        },
+    }
+    source_identity_sha256 = stable_sha256(source_snapshot)
+    runtime_identity_sha256 = stable_sha256(
+        {
+            "source": source_snapshot,
+            "harness": (
+                run_readonly_agent_evals.readonly_harness_snapshot(
+                    settings=runtime_settings,
+                    fingerprints=dict(frozen.fingerprints),
+                )
+            ),
+            "model": (
+                run_readonly_agent_evals.readonly_model_snapshot(
+                    settings=runtime_settings,
+                    observed_models=[runtime_settings.deepseek_model],
+                )
+            ),
+        }
+    )
     declaration = HoldoutDeclaration(
         case_set_name="readonly-holdout-v2",
         case_set_sha256=stable_sha256(
@@ -946,6 +976,9 @@ def test_formal_runtime_failure_keeps_partial_evidence_and_terminal(
             "6340394c8edd5d95c2756f3f4753d4e224682b7f84a445c76b3abb675bad2edb"
         ),
         regression_harness_sha256=harness_sha256,
+        regression_source_tree_sha256="9" * 64,
+        regression_source_identity_sha256=source_identity_sha256,
+        regression_runtime_identity_sha256=runtime_identity_sha256,
     )
     regression_gate = ValidatedRegressionGate(
         bundle_path=tmp_path / "regression-bundle",
@@ -958,7 +991,9 @@ def test_formal_runtime_failure_keeps_partial_evidence_and_terminal(
             "6340394c8edd5d95c2756f3f4753d4e224682b7f84a445c76b3abb675bad2edb"
         ),
         harness_sha256=harness_sha256,
-        runtime_identity_sha256="8" * 64,
+        source_tree_sha256="9" * 64,
+        source_identity_sha256=source_identity_sha256,
+        runtime_identity_sha256=runtime_identity_sha256,
         passed_trials=28,
     )
     attestation = ValidatedCalibrationAttestation(
@@ -1062,6 +1097,11 @@ def test_formal_runtime_failure_keeps_partial_evidence_and_terminal(
         run_readonly_agent_evals,
         "current_source_tree_sha256",
         lambda: "9" * 64,
+    )
+    monkeypatch.setattr(
+        run_readonly_agent_evals,
+        "current_readonly_source_snapshot",
+        lambda: dict(source_snapshot),
     )
     monkeypatch.setattr(
         run_readonly_agent_evals,

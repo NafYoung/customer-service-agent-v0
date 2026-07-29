@@ -110,6 +110,9 @@ class FormalHoldoutEvidence:
     regression_case_set_name: str
     regression_case_set_sha256: str
     regression_harness_sha256: str
+    regression_source_tree_sha256: str
+    regression_source_identity_sha256: str
+    regression_runtime_identity_sha256: str
 
 
 @dataclass(frozen=True)
@@ -694,8 +697,16 @@ def _require_completed_paid_evidence(
     except CanonicalPricingError as exc:
         raise ValueError(f"{label} pricing or reservation is not canonical") from exc
     if (
-        started_at < canonical_price.captured_at
-        or completed_at > canonical_price.valid_until
+        validated_budget.run_identity is None
+        or validated_budget.run_identity.completed_at is None
+        or not (
+            canonical_price.captured_at
+            <= validated_budget.run_identity.started_at
+            <= started_at
+            <= validated_budget.run_identity.completed_at
+            <= completed_at
+            <= canonical_price.valid_until
+        )
     ):
         raise ValueError(f"{label} run is outside the canonical price window")
     _require_completed_paid_trial_calls(
@@ -752,6 +763,80 @@ def _require_completed_paid_evidence(
         or cny_to_units(Decimal(run_budget.settled_cny)) != recomputed_cost_units
     ):
         raise ValueError(f"{label} budget attempts or usage costs differ from records")
+
+
+def readonly_harness_snapshot(
+    *,
+    settings: Settings,
+    fingerprints: Mapping[str, str],
+) -> dict[str, object]:
+    """Build the canonical public harness section from frozen inputs."""
+
+    return {
+        "runtime_harness_sha256": stable_sha256(fingerprints),
+        "prompt_sha256": fingerprints["prompt_sha256"],
+        "tool_contracts_sha256": fingerprints["tool_contracts_sha256"],
+        "policies_sha256": fingerprints["policies_sha256"],
+        "seed_data_sha256": fingerprints["seed_sha256"],
+        "agent_loop_sha256": fingerprints["agent_loop_sha256"],
+        "model_runtime_sha256": fingerprints["model_runtime_sha256"],
+        "semantic_judge_version": fingerprints["semantic_judge_version"],
+        "semantic_judge_prompt_sha256": fingerprints["semantic_judge_prompt_sha256"],
+        "semantic_judge_source_sha256": fingerprints["semantic_judge_source_sha256"],
+        "semantic_calibration_source_sha256": fingerprints[
+            "semantic_calibration_source_sha256"
+        ],
+        "semantic_calibration_validator_sha256": fingerprints[
+            "semantic_calibration_validator_sha256"
+        ],
+        "semantic_calibration_runner_sha256": fingerprints[
+            "semantic_calibration_runner_sha256"
+        ],
+        "semantic_calibration_corpus_sha256": fingerprints[
+            "semantic_calibration_corpus_sha256"
+        ],
+        "evidence_protocol_sha256": fingerprints["evidence_protocol_sha256"],
+        "canonical_price_snapshot_sha256": fingerprints[
+            "canonical_price_snapshot_sha256"
+        ],
+        "max_tool_rounds": settings.agent_max_tool_rounds,
+        "max_tool_calls": settings.agent_max_tool_calls,
+    }
+
+
+def readonly_model_snapshot(
+    *,
+    settings: Settings,
+    observed_models: Sequence[str],
+) -> dict[str, object]:
+    """Build the canonical public model section from runtime settings."""
+
+    endpoint = urlparse(settings.deepseek_base_url)
+    return {
+        "provider": "deepseek",
+        "requested_model": settings.deepseek_model,
+        "observed_models": list(observed_models),
+        "base_url_host": endpoint.hostname,
+        "generation_config": {
+            "stream": False,
+            "thinking": "disabled",
+            "temperature": settings.deepseek_temperature,
+            "seed": None,
+            "max_tokens": settings.deepseek_max_tokens,
+        },
+        "timeout_seconds": settings.deepseek_timeout_seconds,
+        "retry_policy": {
+            "max_retries": settings.deepseek_max_retries,
+            "backoff": "bounded_exponential_with_jitter",
+        },
+        "semantic_judge": {
+            "version": SEMANTIC_JUDGE_VERSION,
+            "response_format": "json_object",
+            "tools_enabled": False,
+            "temperature": settings.deepseek_temperature,
+            "thinking": "disabled",
+        },
+    }
 
 
 def build_readonly_manifest(
@@ -972,14 +1057,14 @@ def build_readonly_manifest(
     ):
         raise ValueError("formal attestations are only valid for holdout_formal")
 
-    commit, dirty = _git_snapshot()
+    source_snapshot = current_readonly_source_snapshot()
+    commit = source_snapshot["git_commit"]
+    dirty = source_snapshot["git_dirty"]
     if source_git_commit is not None:
         if commit != source_git_commit or dirty is not False:
             raise ValueError(
                 "formal source commit changed or became dirty during the run"
             )
-        commit = source_git_commit
-    source_fingerprints = _source_fingerprints()
     case_payloads = [
         case.model_dump(mode="json")
         for case in sorted(cases, key=lambda item: item.case_id)
@@ -1041,85 +1126,24 @@ def build_readonly_manifest(
     if formal_holdout_evidence is not None:
         eval_metadata["formal_holdout"] = asdict(formal_holdout_evidence)
 
-    endpoint = urlparse(settings.deepseek_base_url)
     status = "completed" if len(results) == len(cases) * planned_trials else "partial"
-    return {
+    manifest: dict[str, Any] = {
         "schema_version": "2.0",
         "run_id": run_id,
         "purpose": purpose,
         "status": status,
         "created_at": started_at.astimezone(UTC).isoformat(),
         "completed_at": completed_at.astimezone(UTC).isoformat(),
-        "source": {
-            "git_commit": commit,
-            "git_dirty": dirty,
-            "source_tree_sha256": stable_sha256(source_fingerprints),
-            "python_version": platform.python_version(),
-            "platform": platform.platform(),
-            "package_versions": _package_versions(),
-        },
+        "source": source_snapshot,
         "eval": eval_metadata,
-        "harness": {
-            "runtime_harness_sha256": stable_sha256(harness_fingerprints),
-            "prompt_sha256": harness_fingerprints["prompt_sha256"],
-            "tool_contracts_sha256": harness_fingerprints["tool_contracts_sha256"],
-            "policies_sha256": harness_fingerprints["policies_sha256"],
-            "seed_data_sha256": harness_fingerprints["seed_sha256"],
-            "agent_loop_sha256": harness_fingerprints["agent_loop_sha256"],
-            "model_runtime_sha256": harness_fingerprints["model_runtime_sha256"],
-            "semantic_judge_version": harness_fingerprints["semantic_judge_version"],
-            "semantic_judge_prompt_sha256": harness_fingerprints[
-                "semantic_judge_prompt_sha256"
-            ],
-            "semantic_judge_source_sha256": harness_fingerprints[
-                "semantic_judge_source_sha256"
-            ],
-            "semantic_calibration_source_sha256": harness_fingerprints[
-                "semantic_calibration_source_sha256"
-            ],
-            "semantic_calibration_validator_sha256": harness_fingerprints[
-                "semantic_calibration_validator_sha256"
-            ],
-            "semantic_calibration_runner_sha256": harness_fingerprints[
-                "semantic_calibration_runner_sha256"
-            ],
-            "semantic_calibration_corpus_sha256": harness_fingerprints[
-                "semantic_calibration_corpus_sha256"
-            ],
-            "evidence_protocol_sha256": harness_fingerprints[
-                "evidence_protocol_sha256"
-            ],
-            "canonical_price_snapshot_sha256": (
-                harness_fingerprints["canonical_price_snapshot_sha256"]
-            ),
-            "max_tool_rounds": settings.agent_max_tool_rounds,
-            "max_tool_calls": settings.agent_max_tool_calls,
-        },
-        "model": {
-            "provider": "deepseek",
-            "requested_model": settings.deepseek_model,
-            "observed_models": observed_models,
-            "base_url_host": endpoint.hostname,
-            "generation_config": {
-                "stream": False,
-                "thinking": "disabled",
-                "temperature": settings.deepseek_temperature,
-                "seed": None,
-                "max_tokens": settings.deepseek_max_tokens,
-            },
-            "timeout_seconds": settings.deepseek_timeout_seconds,
-            "retry_policy": {
-                "max_retries": settings.deepseek_max_retries,
-                "backoff": "bounded_exponential_with_jitter",
-            },
-            "semantic_judge": {
-                "version": SEMANTIC_JUDGE_VERSION,
-                "response_format": "json_object",
-                "tools_enabled": False,
-                "temperature": settings.deepseek_temperature,
-                "thinking": "disabled",
-            },
-        },
+        "harness": readonly_harness_snapshot(
+            settings=settings,
+            fingerprints=harness_fingerprints,
+        ),
+        "model": readonly_model_snapshot(
+            settings=settings,
+            observed_models=observed_models,
+        ),
         "execution": {
             "planned_trials": planned_trials,
             "completed_trials": completed_trials,
@@ -1131,3 +1155,20 @@ def build_readonly_manifest(
         },
         "budget": _budget_manifest(effective_budget_report),
     }
+    if formal_holdout_evidence is not None:
+        if (
+            source_snapshot["source_tree_sha256"]
+            != formal_holdout_evidence.regression_source_tree_sha256
+            or stable_sha256(source_snapshot)
+            != formal_holdout_evidence.regression_source_identity_sha256
+            or stable_sha256(
+                {
+                    "source": manifest["source"],
+                    "harness": manifest["harness"],
+                    "model": manifest["model"],
+                }
+            )
+            != formal_holdout_evidence.regression_runtime_identity_sha256
+        ):
+            raise ValueError("formal holdout source or runtime identity changed")
+    return manifest

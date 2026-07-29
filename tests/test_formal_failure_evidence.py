@@ -10,8 +10,9 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from app.config import Settings
 from evals.canonical_pricing import canonical_budget_price_payload
-from evals.evidence import ArtifactIntegrityError
+from evals.evidence import ArtifactIntegrityError, stable_sha256
 from evals.evidence_schema import validate_readonly_bundle
 from evals.formal_failure_evidence import (
     FormalFailureContext,
@@ -20,10 +21,44 @@ from evals.formal_failure_evidence import (
     write_formal_failure_bundle,
 )
 from evals.readonly_eval import SCORE_CATEGORIES
-from evals.readonly_reporting import offline_budget_report
+from evals.readonly_reporting import (
+    current_readonly_harness_fingerprints,
+    offline_budget_report,
+    readonly_harness_snapshot,
+    readonly_model_snapshot,
+)
 
 
 def _context(*, run_id: str = "formal-failed-20260729-a1") -> FormalFailureContext:
+    settings = Settings()
+    source = {
+        "git_commit": "1" * 40,
+        "git_dirty": False,
+        "source_tree_sha256": "2" * 64,
+        "python_version": "3.11-test",
+        "platform": "test-platform",
+        "package_versions": {
+            "fastapi": "test",
+            "httpx": "test",
+        },
+    }
+    harness_fingerprints = current_readonly_harness_fingerprints(settings)
+    harness = readonly_harness_snapshot(
+        settings=settings,
+        fingerprints=harness_fingerprints,
+    )
+    model = readonly_model_snapshot(
+        settings=settings,
+        observed_models=[settings.deepseek_model],
+    )
+    runtime_identity_sha256 = stable_sha256(
+        {
+            "source": source,
+            "harness": harness,
+            "model": model,
+        }
+    )
+    harness_sha256 = str(harness["runtime_harness_sha256"])
     return FormalFailureContext.model_validate(
         {
             "run_id": run_id,
@@ -32,11 +67,9 @@ def _context(*, run_id: str = "formal-failed-20260729-a1") -> FormalFailureConte
             "failure_stage": "suite_execution",
             "failure_code": "MODEL_HTTP_ERROR",
             "max_output_tokens": 1024,
-            "source": {
-                "git_commit": "1" * 40,
-                "git_dirty": False,
-                "source_tree_sha256": "2" * 64,
-            },
+            "source": source,
+            "runtime_harness": harness,
+            "runtime_model": model,
             "case_set": {
                 "name": "readonly-holdout-v2",
                 "sha256": "3" * 64,
@@ -46,15 +79,18 @@ def _context(*, run_id: str = "formal-failed-20260729-a1") -> FormalFailureConte
             "formal_holdout": {
                 "declaration_manifest_sha256": "4" * 64,
                 "lock_start_receipt_sha256": "5" * 64,
-                "declared_harness_sha256": "6" * 64,
-                "runtime_harness_sha256": "6" * 64,
+                "declared_harness_sha256": harness_sha256,
+                "runtime_harness_sha256": harness_sha256,
                 "regression_bundle_integrity_sha256": "7" * 64,
                 "regression_gate_sha256": "8" * 64,
                 "regression_run_id": ("eval-20260729-dev-repeat-public-binding"),
                 "regression_source_git_commit": "1" * 40,
                 "regression_case_set_name": "readonly-regression-v1",
                 "regression_case_set_sha256": "9" * 64,
-                "regression_harness_sha256": "6" * 64,
+                "regression_harness_sha256": harness_sha256,
+                "regression_source_tree_sha256": "2" * 64,
+                "regression_source_identity_sha256": stable_sha256(source),
+                "regression_runtime_identity_sha256": (runtime_identity_sha256),
             },
         }
     )
@@ -183,7 +219,7 @@ def _persistent_budget_report(
             "price_sha256": price["snapshot_sha256"],
             "status": "completed",
             "started_at": "2026-07-29T15:59:00+00:00",
-            "completed_at": "2026-07-29T16:01:00+00:00",
+            "completed_at": "2026-07-29T16:00:02+00:00",
         },
         "price": price,
         "reservation_cny_per_attempt": "1.002048",
@@ -248,6 +284,41 @@ def _budget_report_with_attempt_buckets(
         "cumulative": list(buckets),
     }
     return report
+
+
+@pytest.mark.parametrize("run_status", ["active", "completed"])
+def test_failed_attempt_preserves_cross_window_budget_lifecycle(
+    tmp_path: Path,
+    run_status: str,
+) -> None:
+    price = canonical_budget_price_payload()
+    valid_until = datetime.fromisoformat(str(price["valid_until"]))
+    context = _context().model_dump(mode="json")
+    context["created_at"] = (valid_until - timedelta(seconds=1)).isoformat()
+    context["failed_at"] = (valid_until + timedelta(seconds=2)).isoformat()
+    budget = _persistent_budget_report(
+        run_id=str(context["run_id"]),
+        attempt_count=0,
+    )
+    budget["run_status"] = run_status
+    budget["run_identity"]["status"] = run_status
+    budget["run_identity"]["completed_at"] = (
+        (valid_until + timedelta(seconds=1)).isoformat()
+        if run_status == "completed"
+        else None
+    )
+
+    bundle = write_formal_failure_bundle(
+        output_root=tmp_path,
+        context=context,
+        case_records=[],
+        records_captured=True,
+        budget_summary=budget,
+    )
+
+    validated = validate_formal_failure_bundle(bundle)
+    assert validated.summary.budget is not None
+    assert validated.summary.budget.run_status == run_status
 
 
 def _model_error_with_attempts(attempts: int) -> dict[str, object]:
