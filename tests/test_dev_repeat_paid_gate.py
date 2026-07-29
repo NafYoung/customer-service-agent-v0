@@ -428,6 +428,7 @@ def _budget_with_attempt_evidence() -> dict:
         "totals",
         "reservation",
         "run_not_in_cumulative",
+        "duplicate_run_not_in_cumulative",
     ],
 )
 def test_budget_summary_rejects_contradictory_attempt_evidence(
@@ -479,6 +480,26 @@ def test_budget_summary_rejects_contradictory_attempt_evidence(
         budget["cumulative"]["settled_cny"] = "0.000013"
         budget["cumulative"]["remaining_execution_cny"] = "17.999987"
         budget["run"]["remaining_execution_cny"] = "17.999987"
+    elif attack == "duplicate_run_not_in_cumulative":
+        canonical_bucket = deepcopy(
+            budget["attempt_evidence"]["run"][0]
+        )
+        canonical_bucket["count"] = 1
+        historical_bucket = deepcopy(canonical_bucket)
+        historical_bucket["reserved_cny"] = "1.5"
+        budget["attempt_evidence"]["run"] = [
+            deepcopy(canonical_bucket),
+            deepcopy(canonical_bucket),
+        ]
+        budget["attempt_evidence"]["cumulative"] = [
+            deepcopy(canonical_bucket),
+            historical_bucket,
+        ]
+        for scope in ("run", "cumulative"):
+            budget[scope]["committed_cny"] = "0.000024"
+            budget[scope]["settled_cny"] = "0.000024"
+            budget[scope]["remaining_execution_cny"] = "17.999976"
+            budget[scope]["attempt_count"] = 2
 
     with pytest.raises(ValueError, match="attempt|bucket|offline|budget"):
         BudgetSummary.model_validate(deepcopy(budget))
