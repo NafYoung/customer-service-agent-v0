@@ -9,6 +9,10 @@ from pathlib import Path
 import pytest
 
 from app.config import Settings
+from evals.calibration_attestation import (
+    ValidatedCalibrationAttestation,
+    ValidatedCalibrationReview,
+)
 from evals.evidence import stable_sha256
 from evals.holdout_lock import (
     HoldoutLockError,
@@ -21,16 +25,31 @@ from evals.readonly_reporting import current_readonly_harness_fingerprints
 from evals.run_readonly_agent_evals import _build_parser, _validate_args
 
 
+def _attestation() -> ValidatedCalibrationAttestation:
+    return ValidatedCalibrationAttestation(
+        report_sha256="a" * 64,
+        run_id="eval-20260729-calibration-v2",
+        fixture_sha256="c" * 64,
+        contract_set_sha256="d" * 64,
+        harness_sha256="e" * 64,
+        result_count=44,
+        fixture_ids=tuple(
+            f"canonical-fixture-{index:02d}"
+            for index in range(44)
+        ),
+    )
+
+
+def _review() -> ValidatedCalibrationReview:
+    return ValidatedCalibrationReview(
+        review_sha256="b" * 64,
+        reviewer_id="independent-reviewer-v1",
+        reviewed_count=5,
+    )
+
+
 def _cases() -> list[ReadonlyEvalCase]:
-    return [
-        ReadonlyEvalCase.model_validate(
-            {
-                "case_id": "sealed-case-one",
-                "user_message": "请查我的订单。",
-                "expected": {},
-            }
-        )
-    ]
+    return _semantic_cases()
 
 
 def _semantic_cases(count: int = 20) -> list[ReadonlyEvalCase]:
@@ -102,6 +121,20 @@ def _manifest(
             [case.model_dump(mode="json") for case in cases]
         ),
         **harness,
+        "semantic_calibration_report_sha256": "a" * 64,
+        "semantic_calibration_review_sha256": "b" * 64,
+        "semantic_calibration_run_id": _attestation().run_id,
+        "semantic_calibration_fixture_sha256": (
+            _attestation().fixture_sha256
+        ),
+        "semantic_calibration_contract_set_sha256": (
+            _attestation().contract_set_sha256
+        ),
+        "semantic_calibration_harness_sha256": (
+            _attestation().harness_sha256
+        ),
+        "semantic_calibration_reviewer_id": _review().reviewer_id,
+        "semantic_calibration_reviewed_count": _review().reviewed_count,
         "formal_runs_allowed": formal_runs_allowed,
         "formal_runs_completed": formal_runs_completed,
         "lifecycle_status": "sealed",
@@ -123,6 +156,8 @@ def test_holdout_lock_is_exclusive_and_final_status_is_persisted(
         manifest_path=_manifest(tmp_path / "manifest.json"),
         case_set_name="readonly-holdout-v2",
         cases=_cases(),
+        calibration_attestation=_attestation(),
+        calibration_review=_review(),
     )
     lock_root = tmp_path / "private-locks"
     lock_path = acquire_holdout_run_lock(
@@ -161,6 +196,8 @@ def test_same_case_hash_cannot_get_a_second_lock_by_renaming(
         manifest_path=_manifest(tmp_path / "manifest.json"),
         case_set_name="readonly-holdout-v2",
         cases=_cases(),
+        calibration_attestation=_attestation(),
+        calibration_review=_review(),
     )
     acquire_holdout_run_lock(
         lock_root=tmp_path / "private-locks",
@@ -212,6 +249,8 @@ def test_holdout_declaration_fails_closed_before_model_use(
             ),
             case_set_name="readonly-holdout-v2",
             cases=_cases(),
+            calibration_attestation=_attestation(),
+            calibration_review=_review(),
         )
 
 
@@ -251,6 +290,8 @@ def test_holdout_declaration_freezes_paid_model_runtime(
             case_set_name="readonly-holdout-v2",
             cases=_cases(),
             settings=changed_settings,
+            calibration_attestation=_attestation(),
+            calibration_review=_review(),
         )
 
 
