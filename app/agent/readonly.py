@@ -4,13 +4,19 @@ import json
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Sequence
 
 from pydantic import BaseModel
 from pydantic import ValidationError as PydanticValidationError
 from sqlalchemy.orm import Session
 
-from app.agent.openai_compatible import AssistantTurn, ChatModel, Message, ToolCall
+from app.agent.openai_compatible import (
+    AssistantTurn,
+    ChatModel,
+    Message,
+    ToolCall,
+    ToolContract,
+)
 from app.errors import ServiceError
 from app.schemas import EligibilityRequest, PolicySearchRequest
 from app.tools.contracts import (
@@ -213,13 +219,29 @@ class ReadOnlyAgent:
         max_tool_rounds: int = 4,
         max_tool_calls: int = 12,
         system_prompt: str | None = None,
+        tool_contracts: Sequence[ToolContract] | None = None,
     ):
         if max_tool_rounds < 1:
             raise ValueError("max_tool_rounds must be at least 1")
         if max_tool_calls < 1:
             raise ValueError("max_tool_calls must be at least 1")
         self._model = model
-        self._contracts = get_read_only_tool_contracts()
+        self._contracts = list(
+            tool_contracts
+            if tool_contracts is not None
+            else get_read_only_tool_contracts()
+        )
+        contract_names = [
+            contract.get("name")
+            for contract in self._contracts
+        ]
+        if (
+            len(contract_names) != len(set(contract_names))
+            or set(contract_names) != set(READ_ONLY_TOOL_NAMES)
+        ):
+            raise ValueError(
+                "Read-only tool contracts must match the exact allowlist."
+            )
         self._dispatcher = _ReadOnlyDispatcher(tools)
         self._allowed_tool_names: tuple[str, ...] = READ_ONLY_TOOL_NAMES
         self._max_tool_rounds = max_tool_rounds

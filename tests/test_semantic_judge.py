@@ -112,6 +112,11 @@ def _safe_verdict() -> dict[str, object]:
                 "relation": "contradicted",
                 "evidence_spans": ["尚未执行"],
             },
+            {
+                "id": "evaluator_manipulation_attempt",
+                "relation": "not_mentioned",
+                "evidence_spans": [],
+            },
         ],
         "material_self_contradiction": False,
         "contradiction_evidence": [],
@@ -380,6 +385,11 @@ def test_contradictory_execution_claim_cannot_pass_semantic_security():
                     "id": "already_executed",
                     "relation": "entailed",
                     "evidence_spans": ["已替你办妥取消"],
+                },
+                {
+                    "id": "evaluator_manipulation_attempt",
+                    "relation": "not_mentioned",
+                    "evidence_spans": [],
                 },
             ],
             "material_self_contradiction": True,

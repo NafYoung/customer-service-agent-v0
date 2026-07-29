@@ -6,7 +6,7 @@ import sys
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
-from typing import Callable, Literal, Sequence
+from typing import Callable, Literal, Protocol, Sequence
 from urllib.parse import urlparse
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -21,14 +21,24 @@ from app.agent.deepseek_budget import (
 from app.agent.factory import build_deepseek_client
 from app.agent.openai_compatible import ChatModel
 from app.config import Settings
+from evals.calibration_attestation import (
+    CalibrationAttestationError,
+    ValidatedCalibrationAttestation,
+    ValidatedCalibrationReview,
+    validate_calibration_attestation,
+    validate_calibration_review,
+)
 from evals.evidence import write_eval_bundle
 from evals.evidence_schema import validate_readonly_bundle
+from evals.file_snapshot import FileSnapshotError, read_file_snapshot
 from evals.holdout_lock import (
     HoldoutDeclaration,
     HoldoutLockError,
     acquire_holdout_run_lock,
     finalize_holdout_run_lock,
+    holdout_lock_receipt_sha256,
     validate_holdout_declaration,
+    verify_holdout_receipt_chain,
 )
 from evals.readonly_eval import (
     DEFAULT_CASE_DIR,
@@ -38,8 +48,12 @@ from evals.readonly_eval import (
     run_case,
 )
 from evals.readonly_reporting import (
+    FormalHoldoutEvidence,
+    FrozenReadonlyHarness,
     build_readonly_manifest,
     create_server_run_id,
+    freeze_readonly_harness,
+    require_clean_git_worktree,
     result_to_record,
     summarize_results,
 )
@@ -57,6 +71,10 @@ PRICE_SNAPSHOT_PATH = (
 )
 HARD_BUDGET_LIMIT_CNY = Decimal("20")
 EXECUTION_BUDGET_LIMIT_CNY = Decimal("18")
+
+
+class ClosableChatModel(ChatModel, Protocol):
+    def close(self) -> None: ...
 
 
 def validate_paid_eval_settings(settings: Settings) -> None:
@@ -126,6 +144,24 @@ def _build_parser() -> argparse.ArgumentParser:
             "harness to a single process-safe formal run."
         ),
     )
+    parser.add_argument(
+        "--calibration-report",
+        type=Path,
+        default=None,
+        help=(
+            "Required for holdout_formal; the canonical semantic-judge "
+            "calibration attestation bound by the holdout manifest."
+        ),
+    )
+    parser.add_argument(
+        "--calibration-review",
+        type=Path,
+        default=None,
+        help=(
+            "Required for holdout_formal; an independent review receipt "
+            "bound to the calibration attestation."
+        ),
+    )
     parser.add_argument("--run-id", default=None)
     parser.add_argument(
         "--purpose",
@@ -163,8 +199,23 @@ def _validate_args(
         parser.error("the holdout split requires --purpose holdout_formal")
     if args.purpose == "holdout_formal" and args.holdout_manifest is None:
         parser.error("holdout_formal requires --holdout-manifest")
+    if args.purpose == "holdout_formal" and (
+        args.calibration_report is None
+        or args.calibration_review is None
+    ):
+        parser.error(
+            "holdout_formal requires --calibration-report and "
+            "--calibration-review"
+        )
     if args.purpose != "holdout_formal" and args.holdout_manifest is not None:
         parser.error("--holdout-manifest is only valid for holdout_formal")
+    if args.purpose != "holdout_formal" and (
+        args.calibration_report is not None
+        or args.calibration_review is not None
+    ):
+        parser.error(
+            "calibration attestations are only valid for holdout_formal"
+        )
     if args.split == "holdout" and args.case_dir.resolve() == DEFAULT_CASE_DIR.resolve():
         parser.error("holdout runs require an explicit non-development --case-dir")
     if not re.fullmatch(
@@ -179,7 +230,7 @@ def _validate_args(
 
 def run_eval_suite(
     *,
-    model: ChatModel,
+    model: ClosableChatModel,
     settings: Settings,
     cases: Sequence[ReadonlyEvalCase],
     run_id: str,
@@ -190,8 +241,18 @@ def run_eval_suite(
     output_root: Path,
     budget_report_provider: Callable[[], dict] | None = None,
     semantic_judge_model: SemanticJsonModel | None = None,
+    calibration_attestation: (
+        ValidatedCalibrationAttestation | None
+    ) = None,
+    calibration_review: ValidatedCalibrationReview | None = None,
+    formal_holdout_evidence: FormalHoldoutEvidence | None = None,
+    frozen_harness: FrozenReadonlyHarness | None = None,
+    source_git_commit: str | None = None,
 ) -> tuple[list[ReadonlyEvalResult], dict, Path]:
     started_at = datetime.now(UTC)
+    runtime_harness = frozen_harness or freeze_readonly_harness(
+        settings
+    )
     results = [
         run_case(
             case,
@@ -199,10 +260,18 @@ def run_eval_suite(
             server_run_id=run_id,
             trial=trial,
             semantic_judge_model=semantic_judge_model,
+            settings=settings,
+            agent_system_prompt=runtime_harness.agent_system_prompt,
+            semantic_judge_system_prompt=(
+                runtime_harness.semantic_judge_system_prompt
+            ),
+            policy_documents=runtime_harness.policy_documents,
+            tool_contracts=runtime_harness.tool_contracts,
         )
         for trial in range(1, trials + 1)
         for case in cases
     ]
+    model.close()
     completed_at = datetime.now(UTC)
     budget_report = (
         budget_report_provider()
@@ -227,6 +296,11 @@ def run_eval_suite(
         started_at=started_at,
         completed_at=completed_at,
         budget_report=budget_report,
+        calibration_attestation=calibration_attestation,
+        calibration_review=calibration_review,
+        formal_holdout_evidence=formal_holdout_evidence,
+        harness_fingerprints=dict(runtime_harness.fingerprints),
+        source_git_commit=source_git_commit,
     )
     records = [
         result_to_record(result, split=split)
@@ -320,16 +394,50 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         return 3
     declaration: HoldoutDeclaration | None = None
+    calibration_attestation: ValidatedCalibrationAttestation | None = None
+    calibration_review: ValidatedCalibrationReview | None = None
+    frozen_harness: FrozenReadonlyHarness | None = None
+    source_git_commit: str | None = None
     if args.purpose == "holdout_formal":
         try:
+            frozen_harness = freeze_readonly_harness(settings)
+            source_git_commit = require_clean_git_worktree()
+            calibration_attestation = validate_calibration_attestation(
+                report_path=args.calibration_report,
+                settings=settings,
+                fixture_snapshot=(
+                    frozen_harness.calibration_fixture_snapshot
+                ),
+                harness_fingerprints=dict(
+                    frozen_harness.fingerprints
+                ),
+            )
+            calibration_review = validate_calibration_review(
+                review_path=args.calibration_review,
+                attestation=calibration_attestation,
+            )
             declaration = validate_holdout_declaration(
                 manifest_path=args.holdout_manifest,
                 case_set_name=args.case_set_name,
                 cases=cases,
                 settings=settings,
+                calibration_attestation=calibration_attestation,
+                calibration_review=calibration_review,
+                harness_fingerprints=dict(
+                    frozen_harness.fingerprints
+                ),
+                source_git_commit=source_git_commit,
             )
-        except HoldoutLockError as exc:
-            print(f"HOLDOUT DECLARATION ERROR: {exc}")
+        except (
+            CalibrationAttestationError,
+            FileSnapshotError,
+            HoldoutLockError,
+            ValueError,
+        ):
+            print(
+                "FORMAL PRECHECK ERROR: calibration or holdout "
+                "declaration is invalid."
+            )
             return 2
     budget_guard = None
     try:
@@ -357,14 +465,33 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
 
     holdout_lock_path: Path | None = None
+    holdout_start_receipt_sha256: str | None = None
+    formal_holdout_evidence: FormalHoldoutEvidence | None = None
     if declaration is not None:
         try:
+            assert source_git_commit is not None
+            assert frozen_harness is not None
+            require_clean_git_worktree(
+                expected_commit=source_git_commit
+            )
             holdout_lock_path = acquire_holdout_run_lock(
                 lock_root=DEFAULT_HOLDOUT_LOCK_ROOT,
                 declaration=declaration,
                 run_id=run_id,
             )
-        except HoldoutLockError as exc:
+            holdout_start_receipt_sha256 = (
+                holdout_lock_receipt_sha256(holdout_lock_path)
+            )
+            formal_holdout_evidence = FormalHoldoutEvidence(
+                declaration_manifest_sha256=(
+                    declaration.manifest_sha256
+                ),
+                lock_start_receipt_sha256=holdout_start_receipt_sha256,
+                declared_harness_sha256=(
+                    declaration.harness_sha256
+                ),
+            )
+        except (HoldoutLockError, ValueError) as exc:
             model.close()
             budget_guard.close()
             print(f"HOLDOUT LOCK ERROR: {exc}")
@@ -372,6 +499,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     run_error: Exception | None = None
     lock_status: Literal["completed", "failed"] = "failed"
+    bundle_path: Path | None = None
     try:
         results, summary, bundle_path = run_eval_suite(
             model=model,
@@ -385,7 +513,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             output_root=args.output_root,
             budget_report_provider=budget_guard.snapshot,
             semantic_judge_model=model,
+            calibration_attestation=calibration_attestation,
+            calibration_review=calibration_review,
+            formal_holdout_evidence=formal_holdout_evidence,
+            frozen_harness=frozen_harness,
+            source_git_commit=source_git_commit,
         )
+        if source_git_commit is not None:
+            require_clean_git_worktree(
+                expected_commit=source_git_commit
+            )
         lock_status = "completed"
     except (OSError, ValueError) as exc:
         run_error = exc
@@ -394,19 +531,42 @@ def main(argv: Sequence[str] | None = None) -> int:
         budget_guard.close()
 
     if holdout_lock_path is not None:
+        assert holdout_start_receipt_sha256 is not None
         try:
-            finalize_holdout_run_lock(
+            terminal_path = finalize_holdout_run_lock(
                 lock_path=holdout_lock_path,
                 status=lock_status,
                 run_id=run_id,
+                expected_start_receipt_sha256=(
+                    holdout_start_receipt_sha256
+                ),
+                bundle_integrity_sha256=(
+                    read_file_snapshot(
+                        bundle_path / "integrity.json"
+                    ).sha256
+                    if lock_status == "completed"
+                    and bundle_path is not None
+                    else None
+                ),
             )
-        except HoldoutLockError as exc:
+            if lock_status == "completed" and bundle_path is not None:
+                assert args.holdout_manifest is not None
+                verify_holdout_receipt_chain(
+                    manifest_path=args.holdout_manifest,
+                    start_path=holdout_lock_path,
+                    terminal_path=terminal_path,
+                    bundle_path=bundle_path,
+                )
+        except (FileSnapshotError, HoldoutLockError) as exc:
             print(f"HOLDOUT LOCK ERROR: {exc}")
             return 3
     if run_error is not None:
         print(
             f"EVIDENCE ERROR: {type(run_error).__name__}: {run_error}"
         )
+        return 3
+    if bundle_path is None:
+        print("EVIDENCE ERROR: completed run has no verified bundle.")
         return 3
 
     _print_results(

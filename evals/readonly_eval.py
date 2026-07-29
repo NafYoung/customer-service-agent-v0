@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import time
-from dataclasses import dataclass, field
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -10,7 +11,11 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import func, select
 
-from app.agent.openai_compatible import ChatModel, ModelAdapterError
+from app.agent.openai_compatible import (
+    ChatModel,
+    ModelAdapterError,
+    ToolContract,
+)
 from app.agent.readonly import AgentRunError, ReadOnlyAgent, ToolTrace
 from app.config import Settings
 from app.database import Database
@@ -217,6 +222,11 @@ def run_case(
     server_run_id: str = "eval-local-dev",
     trial: int = 1,
     semantic_judge_model: SemanticJsonModel | None = None,
+    settings: Settings | None = None,
+    agent_system_prompt: str | None = None,
+    semantic_judge_system_prompt: str | None = None,
+    policy_documents: Mapping[str, str] | None = None,
+    tool_contracts: Sequence[ToolContract] | None = None,
 ) -> ReadonlyEvalResult:
     """Run one case while keeping all expected/grader fields out of the model."""
 
@@ -237,20 +247,26 @@ def run_case(
         ).hexdigest(),
         started_at=started_at.isoformat(),
     )
-    settings = Settings(
+    runtime_settings = settings or Settings()
+    eval_settings = replace(
+        runtime_settings,
         database_url="sqlite:///:memory:",
         host_confirmation_token="readonly-eval-host-token",
     )
-    database = Database(settings.database_url)
+    database = Database(eval_settings.database_url)
     database.create_all()
-    seed_demo_data(database, settings)
-    tools = build_tools(settings, policy_dir=ROOT / "policies")
+    seed_demo_data(database, eval_settings)
+    tools = build_tools(
+        eval_settings,
+        policy_dir=ROOT / "policies",
+        policy_documents=policy_documents,
+    )
 
     with database.session() as session:
         auth = tools.auth_service.authenticate(
             session=session,
             email="linfan@example.com",
-            verification_code=settings.demo_verification_code,
+            verification_code=eval_settings.demo_verification_code,
         )
     with database.session() as session:
         before_state = capture_business_state(session)
@@ -263,8 +279,10 @@ def run_case(
     agent = ReadOnlyAgent(
         model=observed_model,
         tools=tools,
-        max_tool_rounds=settings.agent_max_tool_rounds,
-        max_tool_calls=settings.agent_max_tool_calls,
+        max_tool_rounds=runtime_settings.agent_max_tool_rounds,
+        max_tool_calls=runtime_settings.agent_max_tool_calls,
+        system_prompt=agent_system_prompt,
+        tool_contracts=tool_contracts,
     )
 
     captured_trace: list[ToolTrace] = []
@@ -421,6 +439,7 @@ def run_case(
                     user_message=case.user_message,
                     assistant_answer=result.final_text,
                     contract=semantic_contract,
+                    system_prompt=semantic_judge_system_prompt,
                 )
             except SemanticJudgeError as exc:
                 result.model_calls = (

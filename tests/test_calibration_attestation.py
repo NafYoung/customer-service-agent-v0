@@ -247,7 +247,7 @@ def test_calibration_attestation_recomputes_results_summary_and_budget(
     drifted_price_unit["budget"]["price"]["tokens_per_price_unit"] = 1
     with pytest.raises(
         CalibrationAttestationError,
-        match="budget|cost|usage",
+        match="schema|budget|cost|usage",
     ):
         validate_calibration_attestation(
             report_path=_write_json(

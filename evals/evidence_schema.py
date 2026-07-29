@@ -7,6 +7,11 @@ from typing import Annotated, Any, Literal, Mapping
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.agent.deepseek_budget import (
+    BudgetUsageError,
+    calculate_usage_cost_from_rates,
+    cny_to_units,
+)
 from evals.evidence import verify_eval_bundle
 from evals.readonly_eval import SCORE_CATEGORIES
 
@@ -37,6 +42,30 @@ class SourceSnapshot(StrictEvidenceModel):
     package_versions: dict[str, str]
 
 
+class SemanticCalibrationSnapshot(StrictEvidenceModel):
+    report_sha256: Sha256 = Field(pattern=r"^[0-9a-f]{64}$")
+    review_sha256: Sha256 = Field(pattern=r"^[0-9a-f]{64}$")
+    run_id: str = Field(pattern=r"^[a-z0-9][a-z0-9._-]{7,79}$")
+    source_git_commit: str = Field(pattern=r"^[0-9a-f]{40,64}$")
+    fixture_sha256: Sha256 = Field(pattern=r"^[0-9a-f]{64}$")
+    contract_set_sha256: Sha256 = Field(pattern=r"^[0-9a-f]{64}$")
+    harness_sha256: Sha256 = Field(pattern=r"^[0-9a-f]{64}$")
+    reviewer_id: str = Field(min_length=8, max_length=120)
+    reviewed_count: int = Field(ge=1)
+
+
+class FormalHoldoutSnapshot(StrictEvidenceModel):
+    declaration_manifest_sha256: Sha256 = Field(
+        pattern=r"^[0-9a-f]{64}$"
+    )
+    lock_start_receipt_sha256: Sha256 = Field(
+        pattern=r"^[0-9a-f]{64}$"
+    )
+    declared_harness_sha256: Sha256 = Field(
+        pattern=r"^[0-9a-f]{64}$"
+    )
+
+
 class EvalSnapshot(StrictEvidenceModel):
     suite_name: Literal["readonly-agent"]
     suite_version: str
@@ -47,6 +76,8 @@ class EvalSnapshot(StrictEvidenceModel):
     scorer_version: str
     scorer_sha256: Sha256 = Field(pattern=r"^[0-9a-f]{64}$")
     case_ids: list[str] | None = None
+    semantic_calibration: SemanticCalibrationSnapshot | None = None
+    formal_holdout: FormalHoldoutSnapshot | None = None
 
     @model_validator(mode="after")
     def keep_holdout_ids_withheld(self) -> EvalSnapshot:
@@ -54,10 +85,22 @@ class EvalSnapshot(StrictEvidenceModel):
             raise ValueError("Holdout manifest must not expose case_ids")
         if self.split == "dev" and self.case_ids is None:
             raise ValueError("Development manifest must include case_ids")
+        if self.split == "dev" and self.semantic_calibration is not None:
+            raise ValueError(
+                "Development manifest cannot claim formal calibration"
+            )
+        if self.split == "dev" and self.formal_holdout is not None:
+            raise ValueError(
+                "Development manifest cannot claim a formal holdout"
+            )
         return self
 
 
 class HarnessSnapshot(StrictEvidenceModel):
+    runtime_harness_sha256: Sha256 | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{64}$",
+    )
     prompt_sha256: Sha256 = Field(pattern=r"^[0-9a-f]{64}$")
     tool_contracts_sha256: Sha256 = Field(pattern=r"^[0-9a-f]{64}$")
     policies_sha256: Sha256 = Field(pattern=r"^[0-9a-f]{64}$")
@@ -73,6 +116,26 @@ class HarnessSnapshot(StrictEvidenceModel):
         pattern=r"^[0-9a-f]{64}$",
     )
     semantic_judge_source_sha256: Sha256 | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{64}$",
+    )
+    semantic_calibration_source_sha256: Sha256 | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{64}$",
+    )
+    semantic_calibration_validator_sha256: Sha256 | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{64}$",
+    )
+    semantic_calibration_runner_sha256: Sha256 | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{64}$",
+    )
+    semantic_calibration_corpus_sha256: Sha256 | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{64}$",
+    )
+    evidence_protocol_sha256: Sha256 | None = Field(
         default=None,
         pattern=r"^[0-9a-f]{64}$",
     )
@@ -126,6 +189,7 @@ class BudgetManifest(StrictEvidenceModel):
         "persistent_sqlite",
         "offline_no_paid_provider",
     ]
+    run_status: Literal["active", "completed"] | None = None
     currency: Literal["CNY"]
     hard_limit_cny: MoneyCny
     execution_limit_cny: MoneyCny
@@ -165,7 +229,7 @@ class BudgetManifest(StrictEvidenceModel):
 
 
 class ReadonlyManifest(StrictEvidenceModel):
-    schema_version: Literal["1.0"]
+    schema_version: Literal["1.0", "2.0"]
     run_id: str = Field(pattern=r"^[a-z0-9][a-z0-9._-]{7,79}$")
     purpose: Literal["diagnostic", "dev_repeat", "holdout_formal"]
     status: Literal["completed", "partial"]
@@ -178,6 +242,75 @@ class ReadonlyManifest(StrictEvidenceModel):
     execution: ExecutionSnapshot
     budget: BudgetManifest
     artifacts: ArtifactPaths
+
+    @model_validator(mode="after")
+    def validate_formal_contract(self) -> ReadonlyManifest:
+        if self.purpose != "holdout_formal":
+            if self.eval.split != "dev":
+                raise ValueError(
+                    "Only holdout_formal can use the holdout split"
+                )
+            if (
+                self.eval.semantic_calibration is not None
+                or self.eval.formal_holdout is not None
+            ):
+                raise ValueError(
+                    "Non-formal evidence cannot claim formal attestations"
+                )
+            return self
+        if self.eval.split != "holdout":
+            raise ValueError("holdout_formal requires the holdout split")
+        if self.schema_version == "1.0":
+            if (
+                self.eval.case_set_name != "readonly-holdout-v1"
+                or self.eval.case_count != 20
+                or self.eval.scorer_version != "readonly-scorer-v2"
+                or self.execution.planned_trials != 4
+                or self.execution.completed_trials != 4
+                or self.budget.enforcement_mode
+                != "persistent_sqlite"
+            ):
+                raise ValueError(
+                    "Legacy formal evidence is restricted to retired v1"
+                )
+            return self
+        required_harness_hashes = (
+            self.harness.runtime_harness_sha256,
+            self.harness.model_runtime_sha256,
+            self.harness.semantic_judge_prompt_sha256,
+            self.harness.semantic_judge_source_sha256,
+            self.harness.semantic_calibration_source_sha256,
+            self.harness.semantic_calibration_validator_sha256,
+            self.harness.semantic_calibration_runner_sha256,
+            self.harness.semantic_calibration_corpus_sha256,
+            self.harness.evidence_protocol_sha256,
+        )
+        if (
+            self.status != "completed"
+            or self.eval.case_set_name != "readonly-holdout-v2"
+            or self.eval.case_count != 20
+            or self.eval.semantic_calibration is None
+            or self.eval.formal_holdout is None
+            or self.execution.planned_trials != 4
+            or self.execution.completed_trials != 4
+            or self.execution.case_order != "withheld"
+            or self.budget.enforcement_mode != "persistent_sqlite"
+            or self.budget.run_status != "completed"
+            or any(value is None for value in required_harness_hashes)
+            or self.source.git_commit is None
+            or self.source.git_dirty is not False
+            or self.model.observed_models
+            != [self.model.requested_model]
+            or (
+                self.eval.formal_holdout is not None
+                and self.eval.formal_holdout.declared_harness_sha256
+                != self.harness.runtime_harness_sha256
+            )
+        ):
+            raise ValueError(
+                "Formal v2 evidence is missing mandatory attestations"
+            )
+        return self
 
 
 class CountRate(StrictEvidenceModel):
@@ -242,6 +375,12 @@ class BudgetAmountSummary(StrictEvidenceModel):
         return self
 
 
+class BudgetRatesCny(StrictEvidenceModel):
+    prompt_cache_hit: MoneyCny
+    prompt_cache_miss: MoneyCny
+    completion: MoneyCny
+
+
 class BudgetPriceSummary(StrictEvidenceModel):
     provider: Literal["deepseek"]
     model: str
@@ -251,8 +390,18 @@ class BudgetPriceSummary(StrictEvidenceModel):
     usage_source_url: str
     captured_at: datetime
     valid_until: datetime
-    rates_cny: dict[str, MoneyCny]
+    rates_cny: BudgetRatesCny
     tokens_per_price_unit: Literal[1_000_000]
+
+    @model_validator(mode="after")
+    def validate_price_window(self) -> BudgetPriceSummary:
+        if (
+            self.captured_at.tzinfo is None
+            or self.valid_until.tzinfo is None
+            or self.valid_until <= self.captured_at
+        ):
+            raise ValueError("Budget price window is invalid")
+        return self
 
 
 class BudgetSummary(StrictEvidenceModel):
@@ -261,6 +410,7 @@ class BudgetSummary(StrictEvidenceModel):
         "persistent_sqlite",
         "offline_no_paid_provider",
     ]
+    run_status: Literal["active", "completed"] | None = None
     price: BudgetPriceSummary | None
     reservation_cny_per_attempt: MoneyCny
     run: BudgetAmountSummary
@@ -273,8 +423,15 @@ class BudgetSummary(StrictEvidenceModel):
                 raise ValueError("Persistent paid mode requires pricing")
         elif self.price is not None:
             raise ValueError("Offline mode cannot contain paid pricing")
-        if self.run.hard_limit_cny != self.cumulative.hard_limit_cny:
-            raise ValueError("Run and cumulative hard limits differ")
+        if (
+            self.run.hard_limit_cny
+            != self.cumulative.hard_limit_cny
+            or self.run.execution_limit_cny
+            != self.cumulative.execution_limit_cny
+            or self.run.remaining_execution_cny
+            != self.cumulative.remaining_execution_cny
+        ):
+            raise ValueError("Run and cumulative budget limits differ")
         return self
 
 
@@ -420,8 +577,42 @@ class ReadonlyEvidenceBundle(StrictEvidenceModel):
         if (
             self.manifest.budget.hard_limit_cny
             != self.summary.budget.cumulative.hard_limit_cny
+            or self.manifest.budget.execution_limit_cny
+            != self.summary.budget.cumulative.execution_limit_cny
         ):
-            raise ValueError("Manifest and summary hard budgets differ")
+            raise ValueError("Manifest and summary budget limits differ")
+        if (
+            self.manifest.budget.reservation_cny_per_attempt
+            != self.summary.budget.reservation_cny_per_attempt
+        ):
+            raise ValueError(
+                "Manifest and summary budget reservations differ"
+            )
+        if (
+            self.manifest.budget.run_status
+            != self.summary.budget.run_status
+        ):
+            raise ValueError("Manifest and summary budget status differ")
+        summary_price = self.summary.budget.price
+        if self.manifest.budget.enforcement_mode == "persistent_sqlite":
+            if (
+                summary_price is None
+                or self.manifest.budget.price_snapshot_sha256
+                != summary_price.snapshot_sha256
+                or self.manifest.budget.price_source_url
+                != summary_price.source_url
+                or self.manifest.budget.usage_source_url
+                != summary_price.usage_source_url
+                or self.manifest.budget.price_captured_at
+                != summary_price.captured_at
+                or self.manifest.budget.price_valid_until
+                != summary_price.valid_until
+                or summary_price.model
+                != self.manifest.model.requested_model
+            ):
+                raise ValueError(
+                    "Manifest and summary pricing evidence differ"
+                )
         case_keys = [(item.case_id, item.trial) for item in self.cases]
         trajectory_keys = [
             (item.case_id, item.trial)
@@ -435,6 +626,103 @@ class ReadonlyEvidenceBundle(StrictEvidenceModel):
             raise ValueError("Summary trial count differs from cases")
         if self.manifest.eval.case_count != len({item.case_id for item in self.cases}):
             raise ValueError("Manifest case count differs from cases")
+        if any(
+            item.split != self.manifest.eval.split
+            for item in (*self.cases, *self.trajectories)
+        ):
+            raise ValueError("Case split differs from manifest")
+        if (
+            self.manifest.purpose == "holdout_formal"
+            and self.manifest.schema_version == "2.0"
+        ):
+            trials_by_case: dict[str, set[int]] = {}
+            for item in self.cases:
+                trials_by_case.setdefault(item.case_id, set()).add(
+                    item.trial
+                )
+            observed_models = {
+                call.observed_model
+                for item in self.cases
+                for call in item.model_calls
+                if call.observed_model is not None
+            }
+            provider_attempts = sum(
+                call.provider_attempts or 0
+                for item in self.cases
+                for call in item.model_calls
+            )
+            model_calls = [
+                call
+                for item in self.cases
+                for call in item.model_calls
+            ]
+            run_budget = self.summary.budget.run
+            cumulative_budget = self.summary.budget.cumulative
+            if summary_price is None:
+                raise ValueError(
+                    "Formal v2 evidence requires exact pricing"
+                )
+            if any(
+                call.status != "success"
+                or call.usage is None
+                or call.provider_attempts != 1
+                for call in model_calls
+            ):
+                raise ValueError(
+                    "Formal v2 evidence requires exact call usage"
+                )
+            try:
+                recomputed_cost_units = sum(
+                    calculate_usage_cost_from_rates(
+                        rates_cny=summary_price.rates_cny.model_dump(),
+                        tokens_per_price_unit=(
+                            summary_price.tokens_per_price_unit
+                        ),
+                        usage=call.usage,
+                    ).units
+                    for call in model_calls
+                    if call.usage is not None
+                )
+            except BudgetUsageError as exc:
+                raise ValueError(
+                    "Formal v2 model-call usage could not be priced"
+                ) from exc
+            cumulative_committed = Decimal(
+                cumulative_budget.committed_cny
+            )
+            run_committed = Decimal(run_budget.committed_cny)
+            expected_remaining = Decimal(
+                cumulative_budget.execution_limit_cny
+            ) - cumulative_committed
+            if (
+                len(self.cases) != 80
+                or len(trials_by_case) != 20
+                or any(
+                    trials != {1, 2, 3, 4}
+                    for trials in trials_by_case.values()
+                )
+                or self.summary.planned_trials != 4
+                or self.summary.total_trials != 80
+                or observed_models
+                != {self.manifest.model.requested_model}
+                or run_budget.attempt_count != provider_attempts
+                or run_budget.reserved_count != 0
+                or run_budget.uncertain_count != 0
+                or cumulative_budget.reserved_count != 0
+                or cumulative_budget.uncertain_count != 0
+                or run_budget.committed_cny
+                != run_budget.settled_cny
+                or cumulative_budget.committed_cny
+                != cumulative_budget.settled_cny
+                or cny_to_units(Decimal(run_budget.settled_cny))
+                != recomputed_cost_units
+                or cumulative_committed < run_committed
+                or Decimal(cumulative_budget.remaining_execution_cny)
+                != expected_remaining
+            ):
+                raise ValueError(
+                    "Formal v2 evidence failed cross-validation"
+                )
         return self
 
 

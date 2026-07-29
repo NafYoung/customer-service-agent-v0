@@ -198,6 +198,53 @@ def calculate_usage_cost(
     snapshot: DeepSeekPriceSnapshot,
     usage: Mapping[str, Any],
 ) -> UsageCost:
+    return calculate_usage_cost_from_rates(
+        rates_cny=snapshot.rates_cny.model_dump(),
+        tokens_per_price_unit=snapshot.tokens_per_price_unit,
+        usage=usage,
+    )
+
+
+def calculate_usage_cost_from_rates(
+    *,
+    rates_cny: Mapping[str, Any],
+    tokens_per_price_unit: int,
+    usage: Mapping[str, Any],
+) -> UsageCost:
+    """Recompute one recorded provider call without trusting a ledger total."""
+
+    if (
+        isinstance(tokens_per_price_unit, bool)
+        or not isinstance(tokens_per_price_unit, int)
+        or tokens_per_price_unit < 1
+    ):
+        raise BudgetUsageError(
+            "Pricing token unit must be a positive integer."
+        )
+    required_rates = (
+        "prompt_cache_hit",
+        "prompt_cache_miss",
+        "completion",
+    )
+    if set(rates_cny) != set(required_rates):
+        raise BudgetUsageError(
+            "Pricing rates must contain the exact required fields."
+        )
+    try:
+        parsed_rates = {
+            field: _parse_decimal(
+                rates_cny[field],
+                field_name=field,
+            )
+            for field in required_rates
+        }
+    except ValueError as exc:
+        raise BudgetUsageError(
+            "Pricing rates contain an invalid decimal."
+        ) from exc
+    if any(rate < 0 for rate in parsed_rates.values()):
+        raise BudgetUsageError("Pricing rates cannot be negative.")
+
     prompt_tokens = _usage_token(usage, "prompt_tokens")
     completion_tokens = _usage_token(usage, "completion_tokens")
     total_tokens = _usage_token(usage, "total_tokens")
@@ -237,10 +284,10 @@ def calculate_usage_cost(
         mode = "exact"
 
     cost_cny = (
-        Decimal(cache_hit) * _rate(snapshot, "prompt_cache_hit")
-        + Decimal(cache_miss) * _rate(snapshot, "prompt_cache_miss")
-        + Decimal(completion_tokens) * _rate(snapshot, "completion")
-    ) / snapshot.tokens_per_price_unit
+        Decimal(cache_hit) * parsed_rates["prompt_cache_hit"]
+        + Decimal(cache_miss) * parsed_rates["prompt_cache_miss"]
+        + Decimal(completion_tokens) * parsed_rates["completion"]
+    ) / tokens_per_price_unit
     return UsageCost(
         units=cny_to_units(cost_cny),
         cny=cost_cny,
