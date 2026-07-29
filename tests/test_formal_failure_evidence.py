@@ -31,6 +31,7 @@ def _context(*, run_id: str = "formal-failed-20260729-a1") -> FormalFailureConte
             "failed_at": "2026-07-29T16:00:03+00:00",
             "failure_stage": "suite_execution",
             "failure_code": "MODEL_HTTP_ERROR",
+            "max_output_tokens": 1024,
             "source": {
                 "git_commit": "1" * 40,
                 "git_dirty": False,
@@ -114,19 +115,61 @@ def _persistent_budget_report(
     committed_cny: str = "0",
 ) -> dict[str, object]:
     committed = Decimal(committed_cny)
+    reservation = Decimal("1.002048")
+    attempt_buckets: list[dict[str, object]] = []
+    settled_cny = committed_cny
+    if attempt_count > 0 and committed >= reservation * attempt_count:
+        if committed == reservation * attempt_count:
+            attempt_buckets.append(
+                {
+                    "status": "uncertain",
+                    "settlement_mode": None,
+                    "reserved_cny": format(reservation, "f"),
+                    "known_cost_cny": None,
+                    "count": attempt_count,
+                }
+            )
+            settled_cny = "0"
+        else:
+            if attempt_count > 1:
+                attempt_buckets.append(
+                    {
+                        "status": "uncertain",
+                        "settlement_mode": None,
+                        "reserved_cny": format(reservation, "f"),
+                        "known_cost_cny": None,
+                        "count": attempt_count - 1,
+                    }
+                )
+            attempt_buckets.append(
+                {
+                    "status": "uncertain",
+                    "settlement_mode": "exact",
+                    "reserved_cny": format(reservation, "f"),
+                    "known_cost_cny": format(
+                        committed
+                        - reservation * (attempt_count - 1),
+                        "f",
+                    ),
+                    "count": 1,
+                }
+            )
+            settled_cny = "0"
     amount = {
         "currency": "CNY",
         "hard_limit_cny": "20",
         "execution_limit_cny": "18",
         "committed_cny": committed_cny,
-        "settled_cny": committed_cny,
+        "settled_cny": settled_cny,
         "remaining_execution_cny": format(
             max(Decimal("0"), Decimal("18") - committed),
             "f",
         ),
         "attempt_count": attempt_count,
         "reserved_count": 0,
-        "uncertain_count": 0,
+        "uncertain_count": (
+            attempt_count if attempt_buckets else 0
+        ),
     }
     price = canonical_budget_price_payload()
     return {
@@ -146,7 +189,69 @@ def _persistent_budget_report(
         "reservation_cny_per_attempt": "1.002048",
         "run": dict(amount),
         "cumulative": dict(amount),
+        "attempt_evidence": {
+            "run": list(attempt_buckets),
+            "cumulative": list(attempt_buckets),
+        },
     }
+
+
+def _budget_report_with_attempt_buckets(
+    *,
+    run_id: str,
+    buckets: list[dict[str, object]],
+) -> dict[str, object]:
+    committed = Decimal("0")
+    settled = Decimal("0")
+    attempt_count = 0
+    reserved_count = 0
+    uncertain_count = 0
+    for bucket in buckets:
+        count = int(bucket["count"])
+        reserved = Decimal(str(bucket["reserved_cny"]))
+        known_raw = bucket["known_cost_cny"]
+        known = (
+            Decimal(str(known_raw))
+            if known_raw is not None
+            else None
+        )
+        status = bucket["status"]
+        attempt_count += count
+        if status == "reserved":
+            reserved_count += count
+        if status == "uncertain":
+            uncertain_count += count
+        if status in {"settled_exact", "settled_upper_bound"}:
+            assert known is not None
+            committed += known * count
+            settled += known * count
+        else:
+            committed += max(reserved, known or reserved) * count
+    report = _persistent_budget_report(
+        run_id=run_id,
+        attempt_count=0,
+    )
+    amount = {
+        "currency": "CNY",
+        "hard_limit_cny": "20",
+        "execution_limit_cny": "18",
+        "committed_cny": format(committed, "f"),
+        "settled_cny": format(settled, "f"),
+        "remaining_execution_cny": format(
+            max(Decimal("0"), Decimal("18") - committed),
+            "f",
+        ),
+        "attempt_count": attempt_count,
+        "reserved_count": reserved_count,
+        "uncertain_count": uncertain_count,
+    }
+    report["run"] = dict(amount)
+    report["cumulative"] = dict(amount)
+    report["attempt_evidence"] = {
+        "run": list(buckets),
+        "cumulative": list(buckets),
+    }
+    return report
 
 
 def _model_error_with_attempts(attempts: int) -> dict[str, object]:
@@ -161,7 +266,7 @@ def _model_error_with_attempts(attempts: int) -> dict[str, object]:
         "tool_calls": [],
         "finish_reason": None,
         "response_id": None,
-        "observed_model": "deepseek-v4-flash",
+        "observed_model": None,
         "usage": None,
         "error_code": "MODEL_HTTP_ERROR",
         "http_status": 500,
@@ -360,6 +465,48 @@ def test_failed_attempt_preserves_a_real_budget_overrun(
     assert bundle.summary.budget.cumulative.committed_cny == "18.1"
 
 
+def test_failed_attempt_rejects_false_breach_with_hidden_bucket_cost(
+    tmp_path: Path,
+) -> None:
+    run_id = "formal-failed-20260729-false-breach"
+    failed_record = _case_record(status="failed")
+    failed_record["model_calls"] = [_model_error_with_attempts(3)]
+    bundle_path = write_formal_failure_bundle(
+        output_root=tmp_path / "failed-attempts",
+        context=_context(run_id=run_id),
+        case_records=[failed_record],
+        records_captured=True,
+        budget_summary=_persistent_budget_report(
+            run_id=run_id,
+            attempt_count=4,
+            committed_cny="18.1",
+        ),
+    )
+    summary_path = bundle_path / "summary.json"
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    for scope in ("run", "cumulative"):
+        summary["budget"][scope]["committed_cny"] = "17.9"
+        summary["budget"][scope]["remaining_execution_cny"] = "0.1"
+    summary["budget_limit_breached"] = False
+    summary_path.write_text(
+        json.dumps(
+            summary,
+            ensure_ascii=False,
+            sort_keys=True,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    _refresh_integrity_entry(bundle_path, "summary.json")
+
+    with pytest.raises(
+        ValidationError,
+        match="attempt evidence|budget|derivations",
+    ):
+        validate_formal_failure_bundle(bundle_path)
+
+
 @pytest.mark.parametrize(
     ("prompt_tokens", "run_id"),
     [
@@ -394,6 +541,146 @@ def test_failed_attempt_rejects_visible_usage_hidden_by_zero_budget(
                 committed_cny="0",
             ),
         )
+
+
+def test_failed_attempt_accepts_canonical_usage_matched_to_ledger_bucket(
+    tmp_path: Path,
+) -> None:
+    run_id = "formal-failed-20260729-visible-settled"
+    failed_record = _case_record(status="failed")
+    failed_record["model_calls"] = [
+        _successful_model_call_with_usage(prompt_tokens=1)
+    ]
+    budget = _persistent_budget_report(
+        run_id=run_id,
+        attempt_count=1,
+        committed_cny="0.000001",
+    )
+    for scope in ("run", "cumulative"):
+        amount = budget[scope]
+        assert isinstance(amount, dict)
+        amount.update(
+            {
+                "settled_cny": "0.000001",
+                "remaining_execution_cny": "17.999999",
+            }
+        )
+    budget["attempt_evidence"] = {
+        "run": [
+            {
+                "status": "settled_exact",
+                "settlement_mode": "exact",
+                "reserved_cny": "1.002048",
+                "known_cost_cny": "0.000001",
+                "count": 1,
+            }
+        ],
+        "cumulative": [
+            {
+                "status": "settled_exact",
+                "settlement_mode": "exact",
+                "reserved_cny": "1.002048",
+                "known_cost_cny": "0.000001",
+                "count": 1,
+            }
+        ],
+    }
+
+    bundle_path = write_formal_failure_bundle(
+        output_root=tmp_path / run_id,
+        context=_context(run_id=run_id),
+        case_records=[failed_record],
+        records_captured=True,
+        budget_summary=budget,
+    )
+
+    bundle = validate_formal_failure_bundle(bundle_path)
+    assert bundle.summary.budget is not None
+    assert bundle.summary.budget.run.committed_cny == "0.000001"
+
+
+def test_failed_attempt_rejects_coordinated_underreservation(
+    tmp_path: Path,
+) -> None:
+    run_id = "formal-failed-20260729-underreserved"
+    failed_record = _case_record(status="failed")
+    failed_record["model_calls"] = [
+        _successful_model_call_with_usage(prompt_tokens=1)
+    ]
+    budget = _budget_report_with_attempt_buckets(
+        run_id=run_id,
+        buckets=[
+            {
+                "status": "settled_exact",
+                "settlement_mode": "exact",
+                "reserved_cny": "0.000001",
+                "known_cost_cny": "0.000001",
+                "count": 1,
+            }
+        ],
+    )
+    budget["reservation_cny_per_attempt"] = "0.000001"
+
+    with pytest.raises(
+        (ValidationError, ValueError),
+        match="reservation|canonical",
+    ):
+        write_formal_failure_bundle(
+            output_root=tmp_path / run_id,
+            context=_context(run_id=run_id),
+            case_records=[failed_record],
+            records_captured=True,
+            budget_summary=budget,
+        )
+
+
+@pytest.mark.parametrize("call_kind", ["success_retry", "error_retry"])
+def test_failed_attempt_matches_retries_to_uncertain_attempt_buckets(
+    tmp_path: Path,
+    call_kind: str,
+) -> None:
+    run_id = f"formal-failed-20260729-{call_kind}"
+    failed_record = _case_record(status="failed")
+    uncertain_bucket = {
+        "status": "uncertain",
+        "settlement_mode": None,
+        "reserved_cny": "1.002048",
+        "known_cost_cny": None,
+        "count": 2 if call_kind == "success_retry" else 3,
+    }
+    buckets = [uncertain_bucket]
+    if call_kind == "success_retry":
+        success_call = _successful_model_call_with_usage(prompt_tokens=1)
+        success_call["provider_attempts"] = 3
+        failed_record["model_calls"] = [success_call]
+        buckets.append(
+            {
+                "status": "settled_exact",
+                "settlement_mode": "exact",
+                "reserved_cny": "1.002048",
+                "known_cost_cny": "0.000001",
+                "count": 1,
+            }
+        )
+    else:
+        failed_record["model_calls"] = [_model_error_with_attempts(3)]
+
+    bundle_path = write_formal_failure_bundle(
+        output_root=tmp_path / run_id,
+        context=_context(run_id=run_id),
+        case_records=[failed_record],
+        records_captured=True,
+        budget_summary=_budget_report_with_attempt_buckets(
+            run_id=run_id,
+            buckets=buckets,
+        ),
+    )
+
+    bundle = validate_formal_failure_bundle(bundle_path)
+    assert bundle.summary.budget is not None
+    assert bundle.summary.budget.run.uncertain_count == (
+        uncertain_bucket["count"]
+    )
 
 
 def test_failed_attempt_rejects_usage_on_an_error_model_call(

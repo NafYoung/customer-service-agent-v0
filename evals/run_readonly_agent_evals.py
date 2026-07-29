@@ -836,6 +836,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                             run_error
                             or RuntimeError("formal attempt failed")
                         ),
+                        "max_output_tokens": (
+                            settings.deepseek_max_tokens
+                        ),
                         "source": {
                             "git_commit": source_git_commit,
                             "git_dirty": False,

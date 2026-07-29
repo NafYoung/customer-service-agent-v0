@@ -424,6 +424,7 @@ def test_failed_holdout_chain_binds_private_attempt_bundle(
                 "failed_at": "2026-07-29T16:00:01+00:00",
                 "failure_stage": "suite_execution",
                 "failure_code": "MODEL_HTTP_ERROR",
+                "max_output_tokens": 1024,
                 "source": {
                     "git_commit": declaration.source_git_commit,
                     "git_dirty": False,

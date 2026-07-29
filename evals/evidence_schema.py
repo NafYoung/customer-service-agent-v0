@@ -450,6 +450,66 @@ class BudgetRunIdentity(StrictEvidenceModel):
         return self
 
 
+class BudgetAttemptBucket(StrictEvidenceModel):
+    status: Literal[
+        "reserved",
+        "uncertain",
+        "settled_exact",
+        "settled_upper_bound",
+    ]
+    settlement_mode: Literal["exact", "upper_bound"] | None
+    reserved_cny: MoneyCny
+    known_cost_cny: MoneyCny | None
+    count: int = Field(ge=1)
+
+    @model_validator(mode="after")
+    def validate_attempt_state(self) -> BudgetAttemptBucket:
+        reserved = Decimal(self.reserved_cny)
+        known = (
+            Decimal(self.known_cost_cny)
+            if self.known_cost_cny is not None
+            else None
+        )
+        if reserved <= 0:
+            raise ValueError(
+                "Budget attempt reservation must be positive"
+            )
+        if self.status == "reserved":
+            if self.settlement_mode is not None or known is not None:
+                raise ValueError(
+                    "Reserved budget attempts cannot claim settlement"
+                )
+        elif self.status == "uncertain":
+            if (self.settlement_mode is None) != (known is None):
+                raise ValueError(
+                    "Uncertain budget attempt settlement is incomplete"
+                )
+            if known is not None and known <= reserved:
+                raise ValueError(
+                    "Known uncertain cost must exceed its reservation"
+                )
+        else:
+            required_mode = (
+                "exact"
+                if self.status == "settled_exact"
+                else "upper_bound"
+            )
+            if (
+                self.settlement_mode != required_mode
+                or known is None
+                or known > reserved
+            ):
+                raise ValueError(
+                    "Settled budget attempt evidence is inconsistent"
+                )
+        return self
+
+
+class BudgetAttemptEvidence(StrictEvidenceModel):
+    run: list[BudgetAttemptBucket]
+    cumulative: list[BudgetAttemptBucket]
+
+
 class BudgetSummary(StrictEvidenceModel):
     schema_version: Literal["1.0"]
     enforcement_mode: Literal[
@@ -462,6 +522,7 @@ class BudgetSummary(StrictEvidenceModel):
     reservation_cny_per_attempt: MoneyCny
     run: BudgetAmountSummary
     cumulative: BudgetAmountSummary
+    attempt_evidence: BudgetAttemptEvidence | None = None
 
     @model_validator(mode="after")
     def validate_mode(self) -> BudgetSummary:

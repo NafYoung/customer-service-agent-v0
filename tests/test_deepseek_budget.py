@@ -280,6 +280,21 @@ def test_cost_over_reservation_commits_observed_cost_and_blocks_next_attempt(
     assert report["committed_cny"] == "0.8"
     assert report["remaining_execution_cny"] == "0.3"
     assert report["uncertain_count"] == 1
+    evidence = reopened.evidence_snapshot(
+        run_id="eval-budget-overrun-0001"
+    )
+    assert evidence["attempt_evidence"]["run"] == [
+        {
+            "status": "uncertain",
+            "settlement_mode": "upper_bound",
+            "reserved_cny": "0.4",
+            "known_cost_cny": "0.8",
+            "count": 1,
+        }
+    ]
+    assert evidence["attempt_evidence"]["cumulative"] == (
+        evidence["attempt_evidence"]["run"]
+    )
     with pytest.raises(BudgetExceededError):
         reopened.reserve_attempt(
             run_id="eval-budget-overrun-0001",

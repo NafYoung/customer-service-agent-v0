@@ -9,8 +9,14 @@ from typing import Annotated, Any, Literal, Mapping, Sequence
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.agent.deepseek_budget import (
+    BudgetUsageError,
+    calculate_usage_cost,
+    cny_to_units,
+)
 from evals.canonical_pricing import (
     CanonicalPricingError,
+    require_canonical_attempt_reservation,
     require_canonical_paid_budget,
 )
 from evals.evidence import verify_eval_bundle, write_eval_bundle
@@ -78,6 +84,7 @@ class FormalFailureContext(StrictFailureModel):
     failed_at: datetime
     failure_stage: FailureStage
     failure_code: FailureCode
+    max_output_tokens: int = Field(ge=1)
     source: FormalFailureSource
     case_set: FormalFailureCaseSet
     formal_holdout: FormalFailureHoldoutBindings
@@ -104,6 +111,7 @@ class FormalFailureManifest(StrictFailureModel):
     failed_at: datetime
     failure_stage: FailureStage
     failure_code: FailureCode
+    max_output_tokens: int = Field(ge=1)
     source: FormalFailureSource
     case_set: FormalFailureCaseSet
     formal_holdout: FormalFailureHoldoutBindings
@@ -199,9 +207,11 @@ class FormalFailureSummary(StrictFailureModel):
             self.budget.enforcement_mode != "persistent_sqlite"
             or self.budget.run_identity is None
             or self.budget.price is None
+            or self.budget.attempt_evidence is None
         ):
             raise ValueError(
-                "Captured formal failure budget must be persistent"
+                "Captured formal failure budget must include persistent "
+                "attempt evidence"
             )
         captured_provider_attempts = (
             self.partial.provider_attempt_count
@@ -230,6 +240,99 @@ class FormalFailureSummary(StrictFailureModel):
                 "Failed-attempt budget derivations are inconsistent"
             )
         return self
+
+
+def _bucket_key(bucket: Any) -> tuple[str, str | None, str, str | None]:
+    return (
+        bucket.status,
+        bucket.settlement_mode,
+        bucket.reserved_cny,
+        bucket.known_cost_cny,
+    )
+
+
+def _recompute_attempt_amounts(
+    buckets: Sequence[Any],
+) -> dict[str, int]:
+    committed_units = 0
+    settled_units = 0
+    attempt_count = 0
+    reserved_count = 0
+    uncertain_count = 0
+    for bucket in buckets:
+        reserved_units = cny_to_units(
+            Decimal(bucket.reserved_cny)
+        )
+        known_units = (
+            cny_to_units(Decimal(bucket.known_cost_cny))
+            if bucket.known_cost_cny is not None
+            else None
+        )
+        count = bucket.count
+        attempt_count += count
+        if bucket.status == "reserved":
+            reserved_count += count
+        if bucket.status == "uncertain":
+            uncertain_count += count
+        if bucket.status in {
+            "settled_exact",
+            "settled_upper_bound",
+        }:
+            assert known_units is not None
+            committed_units += known_units * count
+            settled_units += known_units * count
+        else:
+            committed_units += max(
+                reserved_units,
+                known_units or reserved_units,
+            ) * count
+    return {
+        "committed_units": committed_units,
+        "settled_units": settled_units,
+        "attempt_count": attempt_count,
+        "reserved_count": reserved_count,
+        "uncertain_count": uncertain_count,
+    }
+
+
+def _require_attempt_totals(
+    *,
+    buckets: Sequence[Any],
+    amount: Any,
+    reservation_cny: str | None,
+    cumulative: bool,
+) -> None:
+    if reservation_cny is not None and any(
+        bucket.reserved_cny != reservation_cny for bucket in buckets
+    ):
+        raise ValueError(
+            "Failed-attempt bucket reservation differs from the paid guard"
+        )
+    recomputed = _recompute_attempt_amounts(buckets)
+    if (
+        cny_to_units(Decimal(amount.committed_cny))
+        != recomputed["committed_units"]
+        or cny_to_units(Decimal(amount.settled_cny))
+        != recomputed["settled_units"]
+        or amount.attempt_count != recomputed["attempt_count"]
+        or amount.reserved_count != recomputed["reserved_count"]
+        or amount.uncertain_count != recomputed["uncertain_count"]
+    ):
+        raise ValueError(
+            "Failed-attempt budget totals differ from attempt evidence"
+        )
+    if cumulative:
+        expected_remaining = max(
+            0,
+            cny_to_units(Decimal(amount.execution_limit_cny))
+            - recomputed["committed_units"],
+        )
+        if cny_to_units(
+            Decimal(amount.remaining_execution_cny)
+        ) != expected_remaining:
+            raise ValueError(
+                "Failed-attempt remaining budget is inconsistent"
+            )
 
 
 class FormalFailureEvidenceBundle(StrictFailureModel):
@@ -264,7 +367,7 @@ class FormalFailureEvidenceBundle(StrictFailureModel):
                     "Failed-attempt budget identity differs from the run"
                 )
             try:
-                require_canonical_paid_budget(
+                canonical_price = require_canonical_paid_budget(
                     price=budget_price,
                     expected_model=budget_identity.model,
                     run_hard_limit_cny=(
@@ -284,6 +387,188 @@ class FormalFailureEvidenceBundle(StrictFailureModel):
                 raise ValueError(
                     "Failed-attempt budget pricing is not canonical"
                 ) from exc
+            try:
+                require_canonical_attempt_reservation(
+                    canonical_price=canonical_price,
+                    max_output_tokens=manifest.max_output_tokens,
+                    reservation_cny_per_attempt=(
+                        summary.budget.reservation_cny_per_attempt
+                    ),
+                )
+            except CanonicalPricingError as exc:
+                raise ValueError(
+                    "Failed-attempt reservation is not canonical"
+                ) from exc
+            attempt_evidence = summary.budget.attempt_evidence
+            if attempt_evidence is None:
+                raise ValueError(
+                    "Failed-attempt budget lacks attempt evidence"
+                )
+            _require_attempt_totals(
+                buckets=attempt_evidence.run,
+                amount=summary.budget.run,
+                reservation_cny=(
+                    summary.budget.reservation_cny_per_attempt
+                ),
+                cumulative=False,
+            )
+            _require_attempt_totals(
+                buckets=attempt_evidence.cumulative,
+                amount=summary.budget.cumulative,
+                reservation_cny=None,
+                cumulative=True,
+            )
+            run_bucket_counts: Counter[
+                tuple[str, str | None, str, str | None]
+            ] = Counter()
+            cumulative_bucket_counts: Counter[
+                tuple[str, str | None, str, str | None]
+            ] = Counter()
+            for bucket in attempt_evidence.run:
+                run_bucket_counts[_bucket_key(bucket)] += bucket.count
+            for bucket in attempt_evidence.cumulative:
+                cumulative_bucket_counts[_bucket_key(bucket)] += (
+                    bucket.count
+                )
+            if any(
+                count > cumulative_bucket_counts[key]
+                for key, count in run_bucket_counts.items()
+            ):
+                raise ValueError(
+                    "Failed-attempt run buckets are absent from cumulative "
+                    "attempt evidence"
+                )
+            available_settled_attempts: Counter[
+                tuple[str, str, int]
+            ] = Counter()
+            for bucket in attempt_evidence.run:
+                if bucket.status not in {
+                    "settled_exact",
+                    "settled_upper_bound",
+                }:
+                    continue
+                assert bucket.settlement_mode is not None
+                assert bucket.known_cost_cny is not None
+                available_settled_attempts[
+                    (
+                        bucket.status,
+                        bucket.settlement_mode,
+                        cny_to_units(
+                            Decimal(bucket.known_cost_cny)
+                        ),
+                    )
+                ] += bucket.count
+            observable_usage_units = 0
+            priced_attempt_count = 0
+            captured_provider_attempts = 0
+            for case in self.cases:
+                for call in case.model_calls:
+                    provider_attempts = call.provider_attempts
+                    if call.status == "success":
+                        if (
+                            call.usage is None
+                            or provider_attempts is None
+                            or isinstance(provider_attempts, bool)
+                            or provider_attempts < 1
+                            or call.error_code is not None
+                            or call.http_status is not None
+                            or call.observed_model
+                            != budget_identity.model
+                        ):
+                            raise ValueError(
+                                "Failed-attempt success model-call "
+                                "protocol is inconsistent"
+                            )
+                        try:
+                            priced_usage = calculate_usage_cost(
+                                canonical_price,
+                                call.usage,
+                            )
+                        except BudgetUsageError as exc:
+                            raise ValueError(
+                                "Failed-attempt observable usage "
+                                "cannot be priced"
+                            ) from exc
+                        bucket_key = (
+                            (
+                                "settled_exact"
+                                if priced_usage.mode == "exact"
+                                else "settled_upper_bound"
+                            ),
+                            priced_usage.mode,
+                            priced_usage.units,
+                        )
+                        if available_settled_attempts[bucket_key] < 1:
+                            raise ValueError(
+                                "Failed-attempt observable usage has no "
+                                "matching settled ledger bucket"
+                            )
+                        available_settled_attempts[bucket_key] -= 1
+                        observable_usage_units += priced_usage.units
+                        priced_attempt_count += 1
+                        captured_provider_attempts += provider_attempts
+                    elif (
+                        call.usage is not None
+                        or call.error_code is None
+                        or call.tool_calls
+                        or call.finish_reason is not None
+                        or call.response_id is not None
+                        or call.observed_model is not None
+                    ):
+                        raise ValueError(
+                            "Failed-attempt error model-call "
+                            "protocol is inconsistent"
+                        )
+                    elif provider_attempts is not None:
+                        if (
+                            isinstance(provider_attempts, bool)
+                            or provider_attempts < 0
+                        ):
+                            raise ValueError(
+                                "Failed-attempt error model-call "
+                                "attempt count is invalid"
+                            )
+                        captured_provider_attempts += provider_attempts
+            run_committed_units = cny_to_units(
+                Decimal(summary.budget.run.committed_cny)
+            )
+            run_settled_units = cny_to_units(
+                Decimal(summary.budget.run.settled_cny)
+            )
+            if (
+                run_committed_units < observable_usage_units
+                or run_settled_units < observable_usage_units
+            ):
+                raise ValueError(
+                    "Failed-attempt budget hides observable usage cost"
+                )
+            unknown_observed_attempts = (
+                captured_provider_attempts - priced_attempt_count
+            )
+            unfinalized_attempts = sum(
+                bucket.count
+                for bucket in attempt_evidence.run
+                if bucket.status in {"reserved", "uncertain"}
+            )
+            if unfinalized_attempts < unknown_observed_attempts:
+                raise ValueError(
+                    "Failed-attempt retries or errors lack reserved or "
+                    "uncertain ledger evidence"
+                )
+            if (
+                summary.budget.run.attempt_count
+                == priced_attempt_count
+                and (
+                    run_committed_units != observable_usage_units
+                    or run_settled_units != observable_usage_units
+                    or summary.budget.run.reserved_count != 0
+                    or summary.budget.run.uncertain_count != 0
+                )
+            ):
+                raise ValueError(
+                    "Fully observed failed-attempt budget commitment "
+                    "differs from canonical usage cost"
+                )
 
         case_keys = [(item.case_id, item.trial) for item in self.cases]
         trajectory_keys = [

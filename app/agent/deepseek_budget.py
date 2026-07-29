@@ -625,6 +625,13 @@ class SQLiteBudgetLedger:
         provider_request_id: str | None,
     ) -> UsageCost:
         cost = calculate_usage_cost(price_snapshot, usage)
+        safe_usage = {
+            key: value
+            for key, value in usage.items()
+            if isinstance(key, str)
+            and isinstance(value, int)
+            and not isinstance(value, bool)
+        }
         connection = self._connect()
         try:
             connection.execute("BEGIN IMMEDIATE")
@@ -654,12 +661,18 @@ class SQLiteBudgetLedger:
                     UPDATE budget_attempts
                     SET settled_units = ?,
                         status = 'uncertain',
+                        settlement_mode = ?,
+                        usage_json = ?,
+                        provider_request_id = ?,
                         error_code = 'COST_EXCEEDS_RESERVATION',
                         settled_at = ?
                     WHERE attempt_id = ?
                     """,
                     (
                         cost.units,
+                        cost.mode,
+                        json.dumps(safe_usage, sort_keys=True),
+                        provider_request_id,
                         datetime.now(UTC).isoformat(),
                         reservation.attempt_id,
                     ),
@@ -673,13 +686,6 @@ class SQLiteBudgetLedger:
                 if cost.mode == "exact"
                 else "settled_upper_bound"
             )
-            safe_usage = {
-                key: value
-                for key, value in usage.items()
-                if isinstance(key, str)
-                and isinstance(value, int)
-                and not isinstance(value, bool)
-            }
             connection.execute(
                 """
                 UPDATE budget_attempts
@@ -835,6 +841,57 @@ class SQLiteBudgetLedger:
         }
 
     @staticmethod
+    def _attempt_evidence(
+        connection: sqlite3.Connection,
+        *,
+        run_id: str | None,
+    ) -> list[dict[str, Any]]:
+        where = ""
+        params: tuple[str, ...] = ()
+        if run_id is not None:
+            where = "WHERE run_id = ?"
+            params = (run_id,)
+        rows = connection.execute(
+            f"""
+            SELECT
+                status,
+                settlement_mode,
+                reserved_units,
+                settled_units,
+                COUNT(*) AS attempt_count
+            FROM budget_attempts
+            {where}
+            GROUP BY
+                status,
+                settlement_mode,
+                reserved_units,
+                settled_units
+            ORDER BY
+                status,
+                settlement_mode,
+                reserved_units,
+                settled_units
+            """,
+            params,
+        ).fetchall()
+        return [
+            {
+                "status": row["status"],
+                "settlement_mode": row["settlement_mode"],
+                "reserved_cny": format_cny(
+                    int(row["reserved_units"])
+                ),
+                "known_cost_cny": (
+                    format_cny(int(row["settled_units"]))
+                    if row["settled_units"] is not None
+                    else None
+                ),
+                "count": int(row["attempt_count"]),
+            }
+            for row in rows
+        ]
+
+    @staticmethod
     def _run_identity(
         connection: sqlite3.Connection,
         *,
@@ -909,6 +966,14 @@ class SQLiteBudgetLedger:
                 connection,
                 run_id=None,
             )
+            run_attempts = self._attempt_evidence(
+                connection,
+                run_id=run_id,
+            )
+            cumulative_attempts = self._attempt_evidence(
+                connection,
+                run_id=None,
+            )
             run_snapshot["remaining_execution_cny"] = cumulative_snapshot[
                 "remaining_execution_cny"
             ]
@@ -917,6 +982,10 @@ class SQLiteBudgetLedger:
                 "run_identity": run_identity,
                 "run": run_snapshot,
                 "cumulative": cumulative_snapshot,
+                "attempt_evidence": {
+                    "run": run_attempts,
+                    "cumulative": cumulative_attempts,
+                },
             }
         except Exception:
             if connection.in_transaction:
@@ -1042,6 +1111,9 @@ class DeepSeekBudgetGuard:
             ),
             "run": ledger_snapshot["run"],
             "cumulative": ledger_snapshot["cumulative"],
+            "attempt_evidence": ledger_snapshot[
+                "attempt_evidence"
+            ],
         }
 
     def close(self) -> None:
