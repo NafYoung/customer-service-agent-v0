@@ -1128,10 +1128,16 @@ class DeepSeekBudgetGuard:
             field_name="Provider request timeout",
         )
         required_window = timeout + PRICE_WINDOW_SAFETY_MARGIN_SECONDS
-        self._minimum_price_validity_seconds = max(
+        bound_window = max(
             self._minimum_price_validity_seconds,
             required_window,
         )
+        self._price_snapshot.require_current(
+            expected_model=self._model,
+            now=self._now_provider(),
+            minimum_remaining=timedelta(seconds=bound_window),
+        )
+        self._minimum_price_validity_seconds = bound_window
 
     def reserve_attempt(
         self,

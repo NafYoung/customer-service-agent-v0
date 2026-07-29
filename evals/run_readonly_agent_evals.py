@@ -1004,7 +1004,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             settings,
             budget_guard=budget_guard,
         )
-    except ValueError as exc:
+    except (BudgetError, ValueError) as exc:
         budget_guard.close()
         if args.purpose == "holdout_formal":
             print(

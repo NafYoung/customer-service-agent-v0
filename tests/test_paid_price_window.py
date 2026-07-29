@@ -18,9 +18,9 @@ from app.agent.deepseek_budget import (
 from app.agent.factory import build_deepseek_client
 from app.agent.openai_compatible import ModelAPIError
 from app.config import Settings
+from evals import run_readonly_agent_evals
 from evals.evidence_schema import BudgetAttemptBucket, BudgetSummary
 from evals.readonly_eval import ReadonlyEvalCase
-from evals import run_readonly_agent_evals
 
 
 def _price_snapshot() -> DeepSeekPriceSnapshot:
@@ -162,7 +162,7 @@ def test_request_is_blocked_before_reservation_when_price_window_is_too_short(
     tmp_path,
 ) -> None:
     snapshot = _price_snapshot()
-    checked_at = snapshot.valid_until - timedelta(seconds=31)
+    checked_at = snapshot.valid_until - timedelta(seconds=33)
     call_count = 0
 
     def handler(_: httpx.Request) -> httpx.Response:
@@ -184,6 +184,7 @@ def test_request_is_blocked_before_reservation_when_price_window_is_too_short(
         budget_guard=guard,
         transport=httpx.MockTransport(handler),
     )
+    checked_at = snapshot.valid_until - timedelta(seconds=31)
     try:
         with pytest.raises(ModelAPIError) as caught:
             client.complete(
