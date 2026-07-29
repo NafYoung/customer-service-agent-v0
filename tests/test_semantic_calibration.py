@@ -105,18 +105,18 @@ def test_public_semantic_calibration_has_complete_human_labels() -> None:
     )
     assert all(
         "evaluator_manipulation_attempt"
-        in fixture.expected_relations
+        in fixture.effective_expected_relations
         for fixture in fixtures
     )
     assert all(
-        fixture.expected_relations[
+        fixture.effective_expected_relations[
             "evaluator_manipulation_attempt"
         ] == "contradicted"
         for fixture in fixtures
         if fixture.kind == "safe_prompt_injection"
     )
     assert all(
-        fixture.expected_relations[
+        fixture.effective_expected_relations[
             "evaluator_manipulation_attempt"
         ] == "entailed"
         for fixture in fixtures
@@ -272,13 +272,14 @@ def test_diagnostic_summary_cannot_become_formal_gate_or_be_diluted(
 class _JsonJudge:
     def __init__(self, payload: dict[str, object]):
         self.payload = payload
+        self.messages: list[Sequence[Message]] = []
 
     def complete_json(
         self,
         *,
         messages: Sequence[Message],
     ) -> AssistantTurn:
-        del messages
+        self.messages.append(messages)
         return AssistantTurn(
             content=json.dumps(self.payload, ensure_ascii=False),
             tool_calls=(),
@@ -326,6 +327,11 @@ def test_calibration_result_preserves_full_validated_verdict() -> None:
                 "relation": "contradicted",
                 "evidence_spans": ["没有准备、发起或完成退货或退款"],
             },
+            {
+                "id": "evaluator_manipulation_attempt",
+                "relation": "not_mentioned",
+                "evidence_spans": [],
+            },
         ],
         "material_self_contradiction": False,
         "contradiction_evidence": [],
@@ -340,6 +346,48 @@ def test_calibration_result_preserves_full_validated_verdict() -> None:
     assert result.passed is True
     assert result.verdict == verdict
     assert result.model_calls
+
+
+def test_calibration_fixture_uses_supplied_frozen_judge_prompt() -> None:
+    cases = {
+        case.case_id: case
+        for case in load_cases(CASE_DIR)
+    }
+    fixture = next(
+        fixture
+        for fixture in load_calibration_fixtures(FIXTURE_PATH)
+        if fixture.fixture_id
+        == "cal_reg_used_return_direct_eligibility_safe_canonical"
+    )
+    verdict = {
+        "claims": [
+            {
+                "id": claim_id,
+                "relation": relation,
+                "evidence_spans": (
+                    []
+                    if relation == "not_mentioned"
+                    else [fixture.assistant_answer[:20]]
+                ),
+            }
+            for claim_id, relation
+            in fixture.effective_expected_relations.items()
+        ],
+        "material_self_contradiction": False,
+        "contradiction_evidence": [],
+    }
+    judge = _JsonJudge(verdict)
+
+    run_calibration_fixture(
+        fixture=fixture,
+        case=cases[fixture.case_id],
+        model=judge,
+        system_prompt="FROZEN CALIBRATION JUDGE PROMPT",
+    )
+
+    assert judge.messages[0][0]["content"] == (
+        "FROZEN CALIBRATION JUDGE PROMPT"
+    )
 
 
 def test_calibration_result_has_no_verdict_after_judge_error() -> None:
