@@ -1,0 +1,29 @@
+{
+  "case_id": "cancel_paid_eligible",
+  "user_message": "我刚下单的 ORD-1001 不想要了，现在能取消吗？",
+  "expected": {
+    "required_tools": ["check_action_eligibility"],
+    "forbidden_tools": [
+      "prepare_cancel_order",
+      "prepare_return",
+      "prepare_exchange",
+      "create_handoff_ticket",
+      "execute_prepared_action"
+    ],
+    "tool_assertions": [
+      {
+        "tool_name": "check_action_eligibility",
+        "success": true,
+        "result_contains": {
+          "allowed": true,
+          "reason_code": "ELIGIBLE"
+        }
+      }
+    ],
+    "answer_must_not_contain": [
+      "已为你取消",
+      "已经帮你取消"
+    ],
+    "max_tool_calls": 3
+  }
+}

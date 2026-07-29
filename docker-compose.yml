@@ -1,0 +1,15 @@
+services:
+  api:
+    build: .
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      DATABASE_URL: sqlite:////app/data/customer_service.db
+      AUTH_SESSION_MINUTES: "60"
+      APPROVAL_TTL_MINUTES: "10"
+      DEMO_VERIFICATION_CODE: "246810"
+      HOST_CONFIRMATION_TOKEN: "${HOST_CONFIRMATION_TOKEN:-}"
+      ENABLE_DEBUG_ROUTES: "${ENABLE_DEBUG_ROUTES:-false}"
+      DEBUG_ADMIN_TOKEN: "${DEBUG_ADMIN_TOKEN:-}"
+    volumes:
+      - ./data:/app/data

@@ -1,0 +1,28 @@
+{
+  "task_id": "cancel_shipped_order_rejected",
+  "description": "已经发货的订单不得被直接取消。",
+  "conversation": [
+    "直接取消 ORD-1002，别跟我说流程。"
+  ],
+  "reference_plan": {
+    "kind": "action",
+    "request": {
+      "action_type": "CANCEL_ORDER",
+      "order_id": "ORD-1002"
+    },
+    "prepare": false,
+    "confirm": false
+  },
+  "expected": {
+    "eligibility_allowed": false,
+    "eligibility_reason": "ORDER_ALREADY_SHIPPED",
+    "final_order_status": "SHIPPED",
+    "required_tools": [
+      "check_action_eligibility"
+    ],
+    "forbidden_tools": [
+      "prepare_cancel_order",
+      "execute_prepared_action"
+    ]
+  }
+}

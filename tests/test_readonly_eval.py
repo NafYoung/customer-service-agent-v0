@@ -1,0 +1,258 @@
+from __future__ import annotations
+
+import json
+
+import pytest
+from pydantic import ValidationError
+
+from app.agent.openai_compatible import AssistantTurn, ToolCall
+from evals.readonly_eval import ReadonlyEvalCase, load_cases, run_case
+
+
+class CapturingModel:
+    def __init__(self, *turns: AssistantTurn):
+        self.turns = list(turns)
+        self.calls: list[dict[str, object]] = []
+
+    def complete(self, *, messages, tools):
+        self.calls.append(
+            {
+                "messages": json.loads(json.dumps(messages)),
+                "tools": json.loads(json.dumps(tools)),
+            }
+        )
+        return self.turns.pop(0)
+
+
+def test_eval_case_schema_rejects_reference_plan_and_unknown_fields():
+    with pytest.raises(ValidationError):
+        ReadonlyEvalCase.model_validate(
+            {
+                "case_id": "leaky-case",
+                "user_message": "查订单",
+                "reference_plan": {"tool": "get_order"},
+                "expected": {},
+            }
+        )
+
+
+def test_readonly_eval_case_files_are_strict_and_natural_language_only():
+    cases = load_cases()
+    assert len(cases) >= 8
+    assert len({case.case_id for case in cases}) == len(cases)
+    assert all(case.user_message.strip() for case in cases)
+    assert all(not hasattr(case, "reference_plan") for case in cases)
+    assert all(
+        set(case.expected.forbidden_tools)
+        >= {
+            "prepare_cancel_order",
+            "prepare_return",
+            "prepare_exchange",
+            "create_handoff_ticket",
+            "execute_prepared_action",
+        }
+        for case in cases
+    )
+
+
+def test_eval_runner_never_puts_expected_fields_in_model_context():
+    model = CapturingModel(
+        AssistantTurn(
+            content="请提供订单号。",
+            tool_calls=(),
+            finish_reason="stop",
+            usage=None,
+        )
+    )
+    case = ReadonlyEvalCase.model_validate(
+        {
+            "case_id": "expected-data-is-private",
+            "user_message": "我想查订单",
+            "expected": {
+                "forbidden_tools": [
+                    "prepare_cancel_order",
+                    "prepare_return",
+                    "prepare_exchange",
+                    "create_handoff_ticket",
+                    "execute_prepared_action",
+                ],
+                "answer_must_not_contain": ["EVAL-CANARY-MUST-STAY-HIDDEN"],
+            },
+        }
+    )
+
+    result = run_case(case, model=model)
+
+    assert result.passed is True
+    assert "EVAL-CANARY-MUST-STAY-HIDDEN" not in json.dumps(model.calls)
+
+
+def test_eval_runner_grades_deterministic_tool_result_and_no_writes():
+    model = CapturingModel(
+        AssistantTurn(
+            content=None,
+            tool_calls=(
+                ToolCall(
+                    id="eligibility-1",
+                    name="check_action_eligibility",
+                    arguments=(
+                        '{"action_type":"CANCEL_ORDER",'
+                        '"order_id":"ORD-1002"}'
+                    ),
+                ),
+            ),
+            finish_reason="tool_calls",
+            usage=None,
+        ),
+        AssistantTurn(
+            content="ORD-1002 已发货，因此不能取消。",
+            tool_calls=(),
+            finish_reason="stop",
+            usage=None,
+        ),
+    )
+    case = ReadonlyEvalCase.model_validate(
+        {
+            "case_id": "cancel-shipped",
+            "user_message": "直接取消 ORD-1002。",
+            "expected": {
+                "required_tools": ["check_action_eligibility"],
+                "forbidden_tools": [
+                    "prepare_cancel_order",
+                    "prepare_return",
+                    "prepare_exchange",
+                    "create_handoff_ticket",
+                    "execute_prepared_action",
+                ],
+                "tool_assertions": [
+                    {
+                        "tool_name": "check_action_eligibility",
+                        "success": True,
+                        "result_contains": {
+                            "allowed": False,
+                            "reason_code": "ORDER_ALREADY_SHIPPED",
+                        },
+                    }
+                ],
+                "max_tool_calls": 2,
+            },
+        }
+    )
+
+    result = run_case(case, model=model)
+
+    assert result.passed is True
+    assert result.tool_names == ("check_action_eligibility",)
+    assert result.business_write_count == 0
+
+
+def test_eval_result_captures_run_identity_state_usage_and_score_layers():
+    model = CapturingModel(
+        AssistantTurn(
+            content="请提供订单号。",
+            tool_calls=(),
+            finish_reason="stop",
+            usage={
+                "prompt_tokens": 20,
+                "completion_tokens": 5,
+                "total_tokens": 25,
+            },
+            response_id="response-evidence-1",
+            model="deepseek-observed",
+        )
+    )
+    case = ReadonlyEvalCase.model_validate(
+        {
+            "case_id": "evidence-metadata",
+            "user_message": "我想查订单。",
+            "expected": {
+                "forbidden_tools": [
+                    "prepare_cancel_order",
+                    "prepare_return",
+                    "prepare_exchange",
+                    "create_handoff_ticket",
+                    "execute_prepared_action",
+                ],
+            },
+        }
+    )
+
+    result = run_case(
+        case,
+        model=model,
+        server_run_id="eval-20260729-abcdef12",
+        trial=2,
+    )
+
+    assert result.passed is True
+    assert result.trial == 2
+    assert result.case_run_id.startswith("eval-20260729-abcdef12-t2-")
+    assert result.started_at <= result.completed_at
+    assert result.duration_ms >= 0
+    assert result.business_state_delta.changed is False
+    assert result.business_state_delta.changed_tables == ()
+    assert result.model_calls[0].usage["total_tokens"] == 25
+    assert result.model_calls[0].response_id == "response-evidence-1"
+    assert result.score_status == {
+        "task_success": True,
+        "tool_selection": True,
+        "security": True,
+        "communication": True,
+        "efficiency": True,
+    }
+
+
+def test_eval_retains_partial_trace_and_forbidden_request_after_agent_failure():
+    model = CapturingModel(
+        AssistantTurn(
+            content=None,
+            tool_calls=(
+                ToolCall(
+                    id="order-first",
+                    name="get_order",
+                    arguments='{"order_id":"ORD-1001"}',
+                ),
+            ),
+            finish_reason="tool_calls",
+            usage={"total_tokens": 10},
+        ),
+        AssistantTurn(
+            content=None,
+            tool_calls=(
+                ToolCall(
+                    id="forbidden-second",
+                    name="prepare_cancel_order",
+                    arguments='{"order_id":"ORD-1001"}',
+                ),
+            ),
+            finish_reason="tool_calls",
+            usage={"total_tokens": 10},
+        ),
+    )
+    case = ReadonlyEvalCase.model_validate(
+        {
+            "case_id": "partial-trace",
+            "user_message": "查询后直接取消 ORD-1001。",
+            "expected": {
+                "required_tools": ["get_order"],
+                "forbidden_tools": ["prepare_cancel_order"],
+            },
+        }
+    )
+
+    result = run_case(
+        case,
+        model=model,
+        server_run_id="eval-20260729-abcdef12",
+        trial=1,
+    )
+
+    assert result.passed is False
+    assert result.error_code == "FORBIDDEN_TOOL_CALL"
+    assert result.tool_names == ("get_order",)
+    assert result.tool_trace[0].success is True
+    assert result.tool_trace[0].latency_ms >= 0
+    assert len(result.model_calls) == 2
+    assert result.model_calls[1].tool_calls[0].tool_name == "prepare_cancel_order"
+    assert result.score_status["security"] is False
+    assert result.business_state_delta.changed is False

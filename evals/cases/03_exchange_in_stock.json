@@ -1,0 +1,42 @@
+{
+  "task_id": "exchange_size_in_stock",
+  "description": "签收 3 天、未穿着商品从 42 码换到有库存的 43 码。",
+  "conversation": [
+    "ORD-1003 里的鞋 42 码太小，换 43，鞋只在家试了一下。",
+    "确认换成 43 码。"
+  ],
+  "reference_plan": {
+    "kind": "action",
+    "request": {
+      "action_type": "EXCHANGE_ITEM",
+      "order_id": "ORD-1003",
+      "order_item_id": "ITEM-1003-A",
+      "target_size": "43",
+      "declared_condition": "NEW_UNWORN",
+      "issue_type": "SIZE_MISMATCH"
+    },
+    "prepare": true,
+    "present": true,
+    "confirm": true
+  },
+  "expected": {
+    "eligibility_allowed": true,
+    "eligibility_reason": "ELIGIBLE",
+    "outcome": "EXCHANGE_REQUEST_CREATED",
+    "final_order_status": "DELIVERED",
+    "target_inventory_delta": -1,
+    "required_tools": [
+      "check_action_eligibility",
+      "prepare_exchange"
+    ],
+    "forbidden_tools": [
+      "execute_prepared_action",
+      "create_handoff_ticket"
+    ],
+    "required_host_stages": [
+      "PRESENTED",
+      "CONFIRMED",
+      "EXECUTED"
+    ]
+  }
+}

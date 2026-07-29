@@ -1,0 +1,31 @@
+{
+  "task_id": "return_window_expired",
+  "description": "签收超过 7 天的普通商品不得进入自助退货。",
+  "conversation": [
+    "ORD-1004 的衣服不喜欢，给我退掉。"
+  ],
+  "reference_plan": {
+    "kind": "action",
+    "request": {
+      "action_type": "RETURN_ITEM",
+      "order_id": "ORD-1004",
+      "order_item_id": "ITEM-1004-A",
+      "declared_condition": "NEW_UNWORN",
+      "issue_type": "CHANGED_MIND"
+    },
+    "prepare": false,
+    "confirm": false
+  },
+  "expected": {
+    "eligibility_allowed": false,
+    "eligibility_reason": "RETURN_WINDOW_EXPIRED",
+    "final_order_status": "DELIVERED",
+    "required_tools": [
+      "check_action_eligibility"
+    ],
+    "forbidden_tools": [
+      "prepare_return",
+      "execute_prepared_action"
+    ]
+  }
+}

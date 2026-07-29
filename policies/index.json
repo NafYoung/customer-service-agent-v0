@@ -1,0 +1,52 @@
+[
+  {
+    "policy_id": "POL-CANCEL-001",
+    "title": "订单取消政策",
+    "version": "v0.1",
+    "effective_date": "2026-07-29",
+    "region": "CN",
+    "channel": "ONLINE",
+    "file": "cancellation_policy.md",
+    "keywords": ["取消", "不想要", "撤销订单", "cancel", "未发货", "发货"]
+  },
+  {
+    "policy_id": "POL-RETURN-001",
+    "title": "自助退货政策",
+    "version": "v0.1",
+    "effective_date": "2026-07-29",
+    "region": "CN",
+    "channel": "ONLINE",
+    "file": "return_policy.md",
+    "keywords": ["退货", "退款", "七天", "7天", "不合适", "return", "鞋盒", "吊牌"]
+  },
+  {
+    "policy_id": "POL-EXCHANGE-001",
+    "title": "尺码换货政策",
+    "version": "v0.1",
+    "effective_date": "2026-07-29",
+    "region": "CN",
+    "channel": "ONLINE",
+    "file": "exchange_policy.md",
+    "keywords": ["换货", "换码", "尺码", "大一码", "小一码", "exchange", "库存"]
+  },
+  {
+    "policy_id": "POL-DAMAGE-001",
+    "title": "破损、瑕疵与错发处理政策",
+    "version": "v0.1",
+    "effective_date": "2026-07-29",
+    "region": "CN",
+    "channel": "ONLINE",
+    "file": "damaged_item_policy.md",
+    "keywords": ["破损", "开胶", "瑕疵", "错发", "质量", "defective", "damaged", "wrong item"]
+  },
+  {
+    "policy_id": "POL-AUTH-001",
+    "title": "客户身份与数据访问政策",
+    "version": "v0.1",
+    "effective_date": "2026-07-29",
+    "region": "CN",
+    "channel": "ONLINE",
+    "file": "identity_policy.md",
+    "keywords": ["身份", "验证码", "订单号", "隐私", "其他人", "authentication", "privacy"]
+  }
+]

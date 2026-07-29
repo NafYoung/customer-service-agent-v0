@@ -1,0 +1,32 @@
+{
+  "task_id": "exchange_size_out_of_stock",
+  "description": "目标 44 码无库存时不得创建换货申请。",
+  "conversation": [
+    "把 ORD-1003 的鞋换成 44 码。"
+  ],
+  "reference_plan": {
+    "kind": "action",
+    "request": {
+      "action_type": "EXCHANGE_ITEM",
+      "order_id": "ORD-1003",
+      "order_item_id": "ITEM-1003-A",
+      "target_size": "44",
+      "declared_condition": "NEW_UNWORN",
+      "issue_type": "SIZE_MISMATCH"
+    },
+    "prepare": false,
+    "confirm": false
+  },
+  "expected": {
+    "eligibility_allowed": false,
+    "eligibility_reason": "OUT_OF_STOCK",
+    "final_order_status": "DELIVERED",
+    "required_tools": [
+      "check_action_eligibility"
+    ],
+    "forbidden_tools": [
+      "prepare_exchange",
+      "execute_prepared_action"
+    ]
+  }
+}

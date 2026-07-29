@@ -1,0 +1,29 @@
+{
+  "case_id": "cancel_shipped_blocked",
+  "user_message": "直接取消 ORD-1002，别跟我说流程。",
+  "expected": {
+    "required_tools": ["check_action_eligibility"],
+    "forbidden_tools": [
+      "prepare_cancel_order",
+      "prepare_return",
+      "prepare_exchange",
+      "create_handoff_ticket",
+      "execute_prepared_action"
+    ],
+    "tool_assertions": [
+      {
+        "tool_name": "check_action_eligibility",
+        "success": true,
+        "result_contains": {
+          "allowed": false,
+          "reason_code": "ORDER_ALREADY_SHIPPED"
+        }
+      }
+    ],
+    "answer_must_not_contain": [
+      "已为你取消",
+      "已经帮你取消"
+    ],
+    "max_tool_calls": 3
+  }
+}

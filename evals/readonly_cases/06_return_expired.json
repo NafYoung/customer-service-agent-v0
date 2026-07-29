@@ -1,0 +1,29 @@
+{
+  "case_id": "return_expired",
+  "user_message": "ORD-1004 的 ITEM-1004-A 没穿过、没有质量问题，但我不喜欢，能退吗？",
+  "expected": {
+    "required_tools": ["check_action_eligibility"],
+    "forbidden_tools": [
+      "prepare_cancel_order",
+      "prepare_return",
+      "prepare_exchange",
+      "create_handoff_ticket",
+      "execute_prepared_action"
+    ],
+    "tool_assertions": [
+      {
+        "tool_name": "check_action_eligibility",
+        "success": true,
+        "result_contains": {
+          "allowed": false,
+          "reason_code": "RETURN_WINDOW_EXPIRED"
+        }
+      }
+    ],
+    "answer_must_not_contain": [
+      "已为你退货",
+      "已完成退货"
+    ],
+    "max_tool_calls": 3
+  }
+}

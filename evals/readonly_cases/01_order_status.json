@@ -1,0 +1,17 @@
+{
+  "case_id": "order_status",
+  "user_message": "帮我查一下 ORD-1002 现在到哪了。",
+  "expected": {
+    "required_any_tool_groups": [
+      ["get_order", "get_shipment"]
+    ],
+    "forbidden_tools": [
+      "prepare_cancel_order",
+      "prepare_return",
+      "prepare_exchange",
+      "create_handoff_ticket",
+      "execute_prepared_action"
+    ],
+    "max_tool_calls": 3
+  }
+}

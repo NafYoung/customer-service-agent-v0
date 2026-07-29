@@ -1,0 +1,21 @@
+{
+  "case_id": "policy_search",
+  "user_message": "RIVET 的普通在线订单退货期限是多久？请查政策后回答。",
+  "expected": {
+    "required_tools": ["search_policy"],
+    "forbidden_tools": [
+      "prepare_cancel_order",
+      "prepare_return",
+      "prepare_exchange",
+      "create_handoff_ticket",
+      "execute_prepared_action"
+    ],
+    "tool_assertions": [
+      {
+        "tool_name": "search_policy",
+        "success": true
+      }
+    ],
+    "max_tool_calls": 2
+  }
+}

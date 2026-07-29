@@ -1,0 +1,20 @@
+{
+  "schema_version": "1.0",
+  "provider": "deepseek",
+  "model": "deepseek-v4-flash",
+  "currency": "CNY",
+  "tokens_per_price_unit": 1000000,
+  "rates_cny": {
+    "prompt_cache_hit": "0.02",
+    "prompt_cache_miss": "1",
+    "completion": "2"
+  },
+  "limits": {
+    "context_tokens": 1000000,
+    "max_output_tokens": 384000
+  },
+  "source_url": "https://api-docs.deepseek.com/zh-cn/quick_start/pricing/",
+  "usage_source_url": "https://api-docs.deepseek.com/api/create-chat-completion/",
+  "captured_at": "2026-07-29T08:58:58Z",
+  "valid_until": "2026-07-30T08:58:58Z"
+}
