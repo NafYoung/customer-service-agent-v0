@@ -229,6 +229,35 @@ def test_calibration_attestation_recomputes_results_summary_and_budget(
             now=datetime(2026, 7, 29, 13, tzinfo=UTC),
         )
 
+    retried = _valid_report()
+    retried["results"][0]["model_calls"][0]["provider_attempts"] = 2
+    retried["budget"]["run"]["attempt_count"] += 1
+    retried["budget"]["cumulative"]["attempt_count"] += 1
+    with pytest.raises(
+        CalibrationAttestationError,
+        match="attempt|protocol|budget",
+    ):
+        validate_calibration_attestation(
+            report_path=_write_json(tmp_path / "retried.json", retried),
+            settings=settings,
+            now=datetime(2026, 7, 29, 13, tzinfo=UTC),
+        )
+
+    drifted_price_unit = _valid_report()
+    drifted_price_unit["budget"]["price"]["tokens_per_price_unit"] = 1
+    with pytest.raises(
+        CalibrationAttestationError,
+        match="budget|cost|usage",
+    ):
+        validate_calibration_attestation(
+            report_path=_write_json(
+                tmp_path / "drifted-price-unit.json",
+                drifted_price_unit,
+            ),
+            settings=settings,
+            now=datetime(2026, 7, 29, 13, tzinfo=UTC),
+        )
+
     drifted_model = _valid_report()
     drifted_model["results"][0]["model_calls"][0][
         "observed_model"

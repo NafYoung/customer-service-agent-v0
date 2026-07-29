@@ -227,6 +227,20 @@ def test_holdout_lock_is_exclusive_and_final_status_is_persisted(
     )
 
 
+def test_holdout_declaration_requires_calibration_from_same_source_commit(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(HoldoutLockError, match="calibration|source|commit"):
+        validate_holdout_declaration(
+            manifest_path=_manifest(tmp_path / "manifest.json"),
+            case_set_name="readonly-holdout-v2",
+            cases=_cases(),
+            calibration_attestation=_attestation(),
+            calibration_review=_review(),
+            source_git_commit="2" * 40,
+        )
+
+
 def test_holdout_finalize_rejects_a_replaced_start_receipt(
     tmp_path: Path,
 ) -> None:
