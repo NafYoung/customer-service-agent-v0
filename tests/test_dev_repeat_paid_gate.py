@@ -613,6 +613,17 @@ def test_public_validator_recomputes_dev_repeat_bucket_costs() -> None:
         validate_readonly_payload(forged)
 
 
+def test_dev_repeat_payload_cannot_be_relabelled_as_diagnostic() -> None:
+    payload = _dev_repeat_payload()
+    payload["manifest"]["purpose"] = "diagnostic"
+    payload["summary"]["budget"]["run_identity"][
+        "purpose"
+    ] = "diagnostic"
+
+    with pytest.raises(ValueError, match="diagnostic|canonical|case"):
+        validate_readonly_payload(payload)
+
+
 @pytest.mark.parametrize(
     "attack",
     [
