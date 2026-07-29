@@ -278,6 +278,30 @@ def test_nonformal_paid_cli_rejects_noncanonical_case_identity_before_budget(
     assert reached == {"budget": 0}
 
 
+@pytest.mark.parametrize("attack", ["absolute", "traversal"])
+def test_cli_rejects_unsafe_run_id_before_output_path_probe(
+    tmp_path: Path,
+    attack: str,
+) -> None:
+    outside = tmp_path / "outside-existing"
+    outside.mkdir()
+    run_id = (
+        str(outside)
+        if attack == "absolute"
+        else "../outside-existing"
+    )
+
+    with pytest.raises(SystemExit):
+        runner.main(
+            [
+                "--run-id",
+                run_id,
+                "--output-root",
+                str(tmp_path / "output"),
+            ]
+        )
+
+
 def test_dev_repeat_manifest_accepts_only_canonical_7_by_4_case_set() -> None:
     cases, results = _dev_repeat_inputs()
     run_id = "eval-20260729-dev-repeat-valid"
