@@ -13,6 +13,7 @@ from app.agent.deepseek_budget import (
     BudgetExceededError,
     BudgetInvariantError,
     BudgetUsageError,
+    DeepSeekBudgetGuard,
     DeepSeekPriceSnapshot,
     SQLiteBudgetLedger,
     calculate_usage_cost,
@@ -348,3 +349,30 @@ def test_snapshot_serializes_amounts_as_strings_without_float(tmp_path):
         isinstance(value, float)
         for value in ledger.snapshot().values()
     )
+
+
+def test_budget_guard_rechecks_price_window_before_every_attempt(
+    tmp_path: Path,
+) -> None:
+    checked_at = datetime(2026, 7, 29, 12, tzinfo=UTC)
+    guard = DeepSeekBudgetGuard(
+        ledger=_ledger(tmp_path),
+        run_id="eval-price-window-recheck",
+        purpose="diagnostic",
+        price_snapshot=_price_snapshot(),
+        model="deepseek-v4-flash",
+        max_output_tokens=1024,
+        now_provider=lambda: checked_at,
+    )
+
+    guard.reserve_attempt(
+        logical_call_id="logical-call-before-expiry",
+        attempt_number=1,
+    )
+    checked_at = datetime(2026, 7, 30, 9, tzinfo=UTC)
+
+    with pytest.raises(BudgetInvariantError, match="expired"):
+        guard.reserve_attempt(
+            logical_call_id="logical-call-after-expiry",
+            attempt_number=1,
+        )
