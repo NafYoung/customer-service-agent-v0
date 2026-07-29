@@ -60,6 +60,41 @@ Result: both passed.
 | Report, budget identity, calls, and canonical price window form one ordered timezone-aware lifecycle | call-time and budget-identity attack tests | unit | PASS |
 | The output remains within the fixed private root and is owner-only | valid CLI report test | integration | PASS |
 
+## Follow-up adversarial review
+
+The second independent review found that the programmatic validator could
+still accept caller-supplied harness fingerprints and a report-declared commit
+as its trust root. It also found that a malformed successful HTTP response
+could raise a protocol error before recording that the response crossed the
+canonical price window.
+
+First follow-up RED:
+`7143ce2 test: reproduce self-certified calibration and expired malformed response`
+
+The five focused attacks proved that a forged harness, forged report commit,
+dirty or changing local source, and malformed cross-window `2xx` response were
+not fail-closed at the required boundary.
+
+First follow-up GREEN:
+`60bd81c fix: bind calibration validation to trusted source`
+
+- the validator independently freezes a clean Git commit, stable source-tree
+  hash, canonical fixture snapshot, and runtime harness before reading the
+  report;
+- caller-supplied fixture or harness snapshots are comparison inputs only;
+- the report commit must equal the independently resolved clean `HEAD`;
+- a malformed `2xx` checks the response price window before retaining its
+  ordinary protocol error, while a parsed response still contributes known
+  usage cost.
+
+The final TOCTOU follow-up used its own checkpoints:
+
+- RED: `1a3aec3 test: reproduce calibration return-time source drift`
+- GREEN: `a3a44b9 fix: recheck trusted source before calibration acceptance`
+
+Immediately before returning a validated attestation, the validator now
+recomputes the source-tree hash and rechecks the expected clean commit.
+
 ## Coverage and boundary
 
 The focused coverage run reported 85% combined coverage:
@@ -71,6 +106,10 @@ TOTAL                                       85%
 ```
 
 No network, model, secret, budget-ledger, or private-artifact access was used.
-The repository-wide verification gate was intentionally left to the parent
-integration pass because parallel Phase 2 fixes were changing holdout and
-budget modules during this cycle.
+The final repository-wide offline gate passed:
+
+```text
+make verify PYTHON=.venv/bin/python
+460 passed; total branch coverage 82.86%; contracts fresh;
+Ruff and Mypy passed; pip-audit reported no known vulnerabilities.
+```
