@@ -64,6 +64,8 @@ def _model_call(
     *,
     case_id: str,
     trial: int,
+    phase: str = "agent",
+    tool_contract_count: int = 6,
     usage: dict[str, int] | None = USAGE,
     provider_attempts: int = 1,
 ) -> ModelCallEvidence:
@@ -73,9 +75,10 @@ def _model_call(
         started_at="2026-07-29T12:00:00+00:00",
         latency_ms=1,
         message_count=2,
-        tool_contract_count=6,
+        tool_contract_count=tool_contract_count,
+        phase=phase,
         finish_reason="stop",
-        response_id=f"response-{case_id}-{trial}",
+        response_id=f"response-{phase}-{case_id}-{trial}",
         observed_model="deepseek-v4-flash",
         usage=usage,
         provider_attempts=provider_attempts,
@@ -105,7 +108,15 @@ def _result(*, case_id: str, trial: int) -> ReadonlyEvalResult:
         checks=[check.message for check in score_checks],
         score_checks=score_checks,
         final_text="safe answer",
-        model_calls=(_model_call(case_id=case_id, trial=trial),),
+        model_calls=(
+            _model_call(case_id=case_id, trial=trial),
+            _model_call(
+                case_id=case_id,
+                trial=trial,
+                phase="semantic_judge",
+                tool_contract_count=0,
+            ),
+        ),
         business_state_delta=BusinessStateDelta(
             changed=False,
             changed_tables=(),
@@ -123,6 +134,10 @@ def _dev_repeat_inputs() -> tuple[list, list[ReadonlyEvalResult]]:
         for case in cases
     ]
     return cases, results
+
+
+def _attempt_count(results: list[ReadonlyEvalResult]) -> int:
+    return sum(len(result.model_calls) for result in results)
 
 
 def _paid_budget(
@@ -190,6 +205,56 @@ def _paid_budget(
         "attempt_evidence": {
             "run": [dict(bucket)],
             "cumulative": [dict(bucket)],
+        },
+    }
+
+
+def _dev_repeat_payload() -> dict:
+    cases, results = _dev_repeat_inputs()
+    run_id = "eval-20260729-dev-repeat-public-binding"
+    budget = _paid_budget(
+        run_id=run_id,
+        purpose="dev_repeat",
+        attempt_count=_attempt_count(results),
+    )
+    started = datetime(2026, 7, 29, 12, tzinfo=UTC)
+    manifest = build_readonly_manifest(
+        run_id=run_id,
+        purpose="dev_repeat",
+        split="dev",
+        case_set_name="readonly-regression-v1",
+        cases=cases,
+        results=results,
+        settings=_settings(),
+        planned_trials=4,
+        started_at=started,
+        completed_at=started + timedelta(minutes=5),
+        budget_report=budget,
+    )
+    manifest["artifacts"] = {
+        "cases": "cases.jsonl",
+        "summary": "summary.json",
+        "trajectories": "trajectories/",
+        "integrity": "integrity.json",
+    }
+    records = [
+        result_to_record(result, split="dev")
+        for result in results
+    ]
+    return {
+        "manifest": manifest,
+        "cases": records,
+        "summary": summarize_results(
+            run_id=run_id,
+            results=results,
+            planned_trials=4,
+            budget_report=budget,
+        ),
+        "trajectories": deepcopy(records),
+        "integrity": {
+            "schema_version": "1.0",
+            "algorithm": "sha256",
+            "files": {},
         },
     }
 
@@ -329,7 +394,7 @@ def test_dev_repeat_manifest_accepts_only_canonical_7_by_4_case_set() -> None:
         budget_report=_paid_budget(
             run_id=run_id,
             purpose="dev_repeat",
-            attempt_count=len(results),
+            attempt_count=_attempt_count(results),
         ),
     )
 
@@ -346,7 +411,7 @@ def test_public_validator_recomputes_dev_repeat_bucket_costs() -> None:
     budget = _paid_budget(
         run_id=run_id,
         purpose="dev_repeat",
-        attempt_count=len(results),
+        attempt_count=_attempt_count(results),
     )
     started = datetime(2026, 7, 29, 12, tzinfo=UTC)
     manifest = build_readonly_manifest(
@@ -392,7 +457,7 @@ def test_public_validator_recomputes_dev_repeat_bucket_costs() -> None:
 
     forged = deepcopy(payload)
     forged_cost = Decimal("0.000013")
-    forged_total = forged_cost * len(results)
+    forged_total = forged_cost * _attempt_count(results)
     for scope in ("run", "cumulative"):
         forged["summary"]["budget"]["attempt_evidence"][scope][0][
             "known_cost_cny"
@@ -409,6 +474,60 @@ def test_public_validator_recomputes_dev_repeat_bucket_costs() -> None:
 
     with pytest.raises(ValueError, match="attempt|bucket|cost|record"):
         validate_readonly_payload(forged)
+
+
+@pytest.mark.parametrize(
+    "attack",
+    [
+        "move_calls_between_trials",
+        "all_calls_missing_with_forged_manifest",
+    ],
+)
+def test_public_validator_binds_paid_calls_to_each_trial(
+    attack: str,
+) -> None:
+    payload = _dev_repeat_payload()
+    if attack == "move_calls_between_trials":
+        for section in ("cases", "trajectories"):
+            moved = payload[section][0]["model_calls"]
+            payload[section][0]["model_calls"] = []
+            payload[section][1]["model_calls"] = [
+                *moved,
+                *payload[section][1]["model_calls"],
+            ]
+    else:
+        for section in ("cases", "trajectories"):
+            for record in payload[section]:
+                record["model_calls"] = []
+        payload["summary"]["usage"] = {"model_calls": 0}
+        payload["summary"]["latency_ms"]["model_call"] = {
+            "p50": None,
+            "p95": None,
+            "max": None,
+            "total": 0,
+        }
+        budget = payload["summary"]["budget"]
+        for scope in ("run", "cumulative"):
+            budget[scope].update(
+                {
+                    "committed_cny": "0",
+                    "settled_cny": "0",
+                    "remaining_execution_cny": "18",
+                    "attempt_count": 0,
+                    "reserved_count": 0,
+                    "uncertain_count": 0,
+                }
+            )
+            budget["attempt_evidence"][scope] = []
+        payload["manifest"]["model"]["observed_models"] = [
+            payload["manifest"]["model"]["requested_model"]
+        ]
+
+    with pytest.raises(
+        ValueError,
+        match="call|trial|record|observed|model",
+    ):
+        validate_readonly_payload(payload)
 
 
 @pytest.mark.parametrize(
@@ -437,7 +556,7 @@ def test_dev_repeat_manifest_rejects_unsettled_or_unpriced_paid_evidence(
     budget = _paid_budget(
         run_id=run_id,
         purpose="dev_repeat",
-        attempt_count=len(results),
+        attempt_count=_attempt_count(results),
     )
     if attack == "active":
         budget["run_status"] = "active"
@@ -501,6 +620,77 @@ def test_dev_repeat_manifest_rejects_unsettled_or_unpriced_paid_evidence(
 
     started = datetime(2026, 7, 29, 12, tzinfo=UTC)
     with pytest.raises(ValueError, match="budget|price|usage|attempt|canonical"):
+        build_readonly_manifest(
+            run_id=run_id,
+            purpose="dev_repeat",
+            split="dev",
+            case_set_name="readonly-regression-v1",
+            cases=cases,
+            results=results,
+            settings=_settings(),
+            planned_trials=4,
+            started_at=started,
+            completed_at=started + timedelta(minutes=5),
+            budget_report=budget,
+        )
+
+
+@pytest.mark.parametrize(
+    "attack",
+    [
+        "move_calls_between_trials",
+        "agent_phase_missing",
+        "agent_sequence_gap",
+        "judge_has_tools",
+        "call_outside_trial_window",
+    ],
+)
+def test_dev_repeat_manifest_binds_calls_to_each_completed_trial(
+    attack: str,
+) -> None:
+    cases, results = _dev_repeat_inputs()
+    run_id = "eval-20260729-dev-repeat-call-binding"
+    budget = _paid_budget(
+        run_id=run_id,
+        purpose="dev_repeat",
+        attempt_count=_attempt_count(results),
+    )
+    if attack == "move_calls_between_trials":
+        moved = results[0].model_calls
+        results[0].model_calls = ()
+        results[1].model_calls = (*moved, *results[1].model_calls)
+    elif attack == "agent_phase_missing":
+        results[0].model_calls = tuple(
+            replace(call, phase="semantic_judge")
+            for call in results[0].model_calls
+        )
+    elif attack == "agent_sequence_gap":
+        agent, judge = results[0].model_calls
+        results[0].model_calls = (
+            replace(agent, sequence=2),
+            judge,
+        )
+    elif attack == "judge_has_tools":
+        agent, judge = results[0].model_calls
+        results[0].model_calls = (
+            agent,
+            replace(judge, tool_contract_count=6),
+        )
+    elif attack == "call_outside_trial_window":
+        agent, judge = results[0].model_calls
+        results[0].model_calls = (
+            replace(
+                agent,
+                started_at="2026-07-29T11:59:59+00:00",
+            ),
+            judge,
+        )
+
+    started = datetime(2026, 7, 29, 12, tzinfo=UTC)
+    with pytest.raises(
+        ValueError,
+        match="call|trial|phase|sequence|judge|time|record",
+    ):
         build_readonly_manifest(
             run_id=run_id,
             purpose="dev_repeat",

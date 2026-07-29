@@ -61,7 +61,7 @@ def _canonical_price_summary() -> dict:
 
 
 def _budget_report(
-    attempt_count: int = 4,
+    attempt_count: int = 8,
     *,
     run_id: str = "eval-20260729-abcdef12",
     purpose: str = "holdout_formal",
@@ -209,6 +209,24 @@ def _result(
                 },
                 provider_attempts=1,
             ),
+            ModelCallEvidence(
+                sequence=1,
+                status="success",
+                started_at="2026-07-29T10:00:00+00:00",
+                latency_ms=100,
+                message_count=2,
+                tool_contract_count=0,
+                phase="semantic_judge",
+                finish_reason="stop",
+                response_id=f"judge-{case_id}-{trial}",
+                observed_model="deepseek-v4-flash",
+                usage={
+                    "prompt_tokens": 8,
+                    "completion_tokens": 2,
+                    "total_tokens": 10,
+                },
+                provider_attempts=1,
+            ),
         ),
         business_state_delta=BusinessStateDelta(
             changed=False,
@@ -217,6 +235,10 @@ def _result(
             after_sha256="a" * 64,
         ),
     )
+
+
+def _attempt_count(results: list[ReadonlyEvalResult]) -> int:
+    return sum(len(result.model_calls) for result in results)
 
 
 def _formal_cases() -> list[ReadonlyEvalCase]:
@@ -322,12 +344,12 @@ def test_summary_separates_strict_reliability_safety_usage_and_latency():
     assert summary["security"]["passed"] == 4
     assert summary["security"]["all_trials_passed"] is True
     assert summary["score_layers"]["efficiency"]["passed"] == 3
-    assert summary["usage"]["model_calls"] == 4
-    assert summary["usage"]["total_tokens"] == 40
+    assert summary["usage"]["model_calls"] == 8
+    assert summary["usage"]["total_tokens"] == 80
     assert summary["latency_ms"]["case"]["p50"] >= 1001
     assert summary["latency_ms"]["model_call"]["max"] == 100
     assert summary["business_state"]["changed_trials"] == 0
-    assert summary["budget"]["run"]["committed_cny"] == "0.000048"
+    assert summary["budget"]["run"]["committed_cny"] == "0.000096"
     assert summary["budget"]["cumulative"]["hard_limit_cny"] == "20"
 
 
@@ -373,7 +395,7 @@ def test_manifest_fingerprints_harness_and_never_serializes_secret_or_holdout_id
         planned_trials=4,
         started_at=started,
         completed_at=completed,
-        budget_report=_budget_report(len(results)),
+        budget_report=_budget_report(_attempt_count(results)),
         calibration_attestation=_attestation(),
         calibration_review=_review(),
         formal_holdout_evidence=_formal_holdout_evidence(settings),
@@ -463,7 +485,7 @@ def test_manifest_fingerprints_harness_and_never_serializes_secret_or_holdout_id
         started_at=started,
         completed_at=completed,
         budget_report=_budget_report(
-            len(dev_results),
+            _attempt_count(dev_results),
             run_id="eval-20260729-abcdef13",
             purpose="dev_repeat",
         ),
@@ -529,7 +551,7 @@ def test_formal_manifest_rejects_unsettled_budget_and_model_drift():
         "formal_holdout_evidence": _formal_holdout_evidence(),
     }
     unsettled = _budget_report(
-        len(results),
+        _attempt_count(results),
         run_id="eval-20260729-formal-gates",
     )
     unsettled["run"]["uncertain_count"] = 1
@@ -557,7 +579,7 @@ def test_formal_manifest_rejects_unsettled_budget_and_model_drift():
             **common,
             results=drifted,
             budget_report=_budget_report(
-                len(results),
+                _attempt_count(results),
                 run_id="eval-20260729-formal-gates",
             ),
         )
@@ -592,7 +614,7 @@ def test_formal_manifest_recomputes_exact_cost_from_every_model_call():
         "formal_holdout_evidence": _formal_holdout_evidence(),
     }
     overstated = _budget_report(
-        len(results),
+        _attempt_count(results),
         run_id="eval-20260729-formal-cost",
     )
     for scope in ("run", "cumulative"):
@@ -614,7 +636,7 @@ def test_formal_manifest_recomputes_exact_cost_from_every_model_call():
         ),
     )
     retry_budget = _budget_report(
-        len(results) + 1,
+        _attempt_count(results) + 1,
         run_id="eval-20260729-formal-cost",
     )
     with pytest.raises(ValueError, match="attempt|cost|usage"):
@@ -622,6 +644,117 @@ def test_formal_manifest_recomputes_exact_cost_from_every_model_call():
             **{**common, "results": retried},
             budget_report=retry_budget,
         )
+
+
+@pytest.mark.parametrize(
+    "attack",
+    [
+        "move_calls_between_trials",
+        "judge_sequence_gap",
+        "judge_has_tools",
+        "call_outside_trial_window",
+    ],
+)
+def test_formal_manifest_binds_calls_to_each_completed_trial(
+    attack: str,
+) -> None:
+    settings = Settings(deepseek_model="deepseek-v4-flash")
+    cases = _formal_cases()
+    results = [
+        _result(case_id=case.case_id, trial=trial, passed=True)
+        for trial in range(1, 5)
+        for case in cases
+    ]
+    if attack == "move_calls_between_trials":
+        moved = results[0].model_calls
+        results[0].model_calls = ()
+        results[1].model_calls = (*moved, *results[1].model_calls)
+    elif attack == "judge_sequence_gap":
+        agent, judge = results[0].model_calls
+        results[0].model_calls = (
+            agent,
+            replace(judge, sequence=2),
+        )
+    elif attack == "judge_has_tools":
+        agent, judge = results[0].model_calls
+        results[0].model_calls = (
+            agent,
+            replace(judge, tool_contract_count=1),
+        )
+    elif attack == "call_outside_trial_window":
+        agent, judge = results[0].model_calls
+        results[0].model_calls = (
+            agent,
+            replace(
+                judge,
+                started_at="2026-07-29T10:00:02+00:00",
+            ),
+        )
+    run_id = "eval-20260729-formal-call-binding"
+    started = datetime.now(UTC)
+
+    with pytest.raises(
+        ValueError,
+        match="call|trial|phase|sequence|judge|time|record",
+    ):
+        build_readonly_manifest(
+            run_id=run_id,
+            purpose="holdout_formal",
+            split="holdout",
+            case_set_name="readonly-holdout-v2",
+            cases=cases,
+            results=results,
+            settings=settings,
+            planned_trials=4,
+            started_at=started,
+            completed_at=started + timedelta(seconds=1),
+            budget_report=_budget_report(
+                _attempt_count(results),
+                run_id=run_id,
+            ),
+            calibration_attestation=_attestation(),
+            calibration_review=_review(),
+            formal_holdout_evidence=_formal_holdout_evidence(),
+        )
+
+
+def test_completed_paid_manifest_allows_a_scored_trial_to_fail() -> None:
+    settings = Settings(deepseek_model="deepseek-v4-flash")
+    cases = _formal_cases()
+    results = [
+        _result(
+            case_id=case.case_id,
+            trial=trial,
+            passed=not (case is cases[0] and trial == 1),
+            efficiency_passed=not (case is cases[0] and trial == 1),
+        )
+        for trial in range(1, 5)
+        for case in cases
+    ]
+    run_id = "eval-20260729-formal-scored-failure"
+    started = datetime.now(UTC)
+
+    manifest = build_readonly_manifest(
+        run_id=run_id,
+        purpose="holdout_formal",
+        split="holdout",
+        case_set_name="readonly-holdout-v2",
+        cases=cases,
+        results=results,
+        settings=settings,
+        planned_trials=4,
+        started_at=started,
+        completed_at=started + timedelta(seconds=1),
+        budget_report=_budget_report(
+            _attempt_count(results),
+            run_id=run_id,
+        ),
+        calibration_attestation=_attestation(),
+        calibration_review=_review(),
+        formal_holdout_evidence=_formal_holdout_evidence(),
+    )
+
+    assert manifest["status"] == "completed"
 
 
 @pytest.mark.parametrize(
@@ -649,7 +782,7 @@ def test_formal_manifest_rejects_noncanonical_budget_contract(
         for case in cases
     ]
     budget = _budget_report(
-        len(results),
+        _attempt_count(results),
         run_id="eval-20260729-formal-canonical-price",
     )
     if attack == "forged_price":
@@ -719,7 +852,7 @@ def test_formal_manifest_rejects_a_settled_execution_overrun() -> None:
         ),
     )
     budget = _budget_report(
-        len(results),
+        _attempt_count(results),
         run_id="eval-20260729-formal-overrun",
     )
     for scope in ("run", "cumulative"):
@@ -756,7 +889,7 @@ def test_formal_bundle_schema_recomputes_cost_instead_of_trusting_summary():
         for case in cases
     ]
     budget = _budget_report(
-        len(results),
+        _attempt_count(results),
         run_id="eval-20260729-formal-schema-cost",
     )
     started = datetime.now(UTC)
@@ -851,6 +984,20 @@ def test_formal_bundle_schema_recomputes_cost_instead_of_trusting_summary():
     )
     with pytest.raises(ValueError, match="Case|trajectory|differ"):
         validate_readonly_payload(mismatched_trajectory)
+
+    moved_calls = deepcopy(payload)
+    for record_set in ("cases", "trajectories"):
+        moved = moved_calls[record_set][0]["model_calls"]
+        moved_calls[record_set][0]["model_calls"] = []
+        moved_calls[record_set][1]["model_calls"] = [
+            *moved,
+            *moved_calls[record_set][1]["model_calls"],
+        ]
+    with pytest.raises(
+        ValueError,
+        match="call|trial|phase|sequence|record",
+    ):
+        validate_readonly_payload(moved_calls)
 
     stale_summary = deepcopy(payload)
     for record_set in ("cases", "trajectories"):
