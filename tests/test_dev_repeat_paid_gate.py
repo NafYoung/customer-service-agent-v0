@@ -363,9 +363,14 @@ def test_programmatic_formal_run_rejects_forged_context_before_model_call(
     assert list(tmp_path.iterdir()) == []
 
 
+@pytest.mark.parametrize(
+    "output_attack",
+    ["alternate_root", "symlink_escape"],
+)
 def test_issued_formal_context_binds_fixed_output_root_before_model_call(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    output_attack: str,
 ) -> None:
     cases = [
         ReadonlyEvalCase.model_validate(
@@ -453,7 +458,16 @@ def test_issued_formal_context_binds_fixed_output_root_before_model_call(
     private_root = tmp_path / "private"
     fixed_output_root = private_root / "eval-runs"
     fixed_lock_root = private_root / "holdout" / "formal-run-locks"
+    outside_output_root = tmp_path / "outside-output"
+    if output_attack == "symlink_escape":
+        private_root.mkdir(mode=0o700)
+        outside_output_root.mkdir(mode=0o700)
+        fixed_output_root.symlink_to(
+            outside_output_root,
+            target_is_directory=True,
+        )
     monkeypatch.setattr(runner, "DEFAULT_OUTPUT_ROOT", fixed_output_root)
+    monkeypatch.setattr(runner, "PRIVATE_ARTIFACT_ROOT", private_root)
     monkeypatch.setattr(
         runner,
         "DEFAULT_HOLDOUT_LOCK_ROOT",
@@ -482,7 +496,11 @@ def test_issued_formal_context_binds_fixed_output_root_before_model_call(
         acquired_lock=acquired_lock,
     )
     model = _CountingModel()
-    wrong_output_root = tmp_path / "attacker-output"
+    requested_output_root = (
+        fixed_output_root
+        if output_attack == "symlink_escape"
+        else tmp_path / "attacker-output"
+    )
 
     assert context.output_root == fixed_output_root
     with pytest.raises(ValueError, match="validated formal"):
@@ -495,7 +513,7 @@ def test_issued_formal_context_binds_fixed_output_root_before_model_call(
             split="holdout",
             case_set_name="readonly-holdout-v2",
             trials=4,
-            output_root=wrong_output_root,
+            output_root=requested_output_root,
             calibration_attestation=attestation,
             calibration_review=review,
             formal_holdout_evidence=runner.FormalHoldoutEvidence(
@@ -527,7 +545,10 @@ def test_issued_formal_context_binds_fixed_output_root_before_model_call(
         )
 
     assert model.calls == 0
-    assert not wrong_output_root.exists()
+    if output_attack == "symlink_escape":
+        assert list(outside_output_root.iterdir()) == []
+    else:
+        assert not requested_output_root.exists()
 
 
 @pytest.mark.parametrize("attack", ["forged_sentinel", "case_hash"])
@@ -564,6 +585,7 @@ def test_programmatic_formal_context_rejects_internal_binding_attacks(
         declaration_manifest_sha256="4" * 64,
         lock_start_path=tmp_path / "readonly-holdout-v2.start.json",
         lock_start_receipt_sha256="5" * 64,
+        output_root=tmp_path,
         _sentinel=(
             object()
             if attack == "forged_sentinel"

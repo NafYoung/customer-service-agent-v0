@@ -946,6 +946,7 @@ def test_formal_runtime_failure_keeps_partial_evidence_and_terminal(
             "6340394c8edd5d95c2756f3f4753d4e224682b7f84a445c76b3abb675bad2edb"
         ),
         harness_sha256=harness_sha256,
+        runtime_identity_sha256="8" * 64,
         passed_trials=28,
     )
     attestation = ValidatedCalibrationAttestation(
