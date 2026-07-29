@@ -8,6 +8,7 @@ from decimal import Decimal
 
 import pytest
 
+from evals import readonly_reporting
 from app.config import Settings
 from evals.calibration_attestation import (
     ValidatedCalibrationAttestation,
@@ -204,6 +205,33 @@ def test_create_server_run_id_is_unique_and_url_safe():
     assert "/" not in first
     assert " " not in first
     assert 8 <= len(first) <= 80
+
+
+def test_clean_git_gate_requires_a_resolved_clean_commit(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        readonly_reporting,
+        "_git_snapshot",
+        lambda: ("a" * 40, False),
+    )
+    assert readonly_reporting.require_clean_git_worktree() == "a" * 40
+
+    monkeypatch.setattr(
+        readonly_reporting,
+        "_git_snapshot",
+        lambda: ("a" * 40, True),
+    )
+    with pytest.raises(ValueError, match="clean"):
+        readonly_reporting.require_clean_git_worktree()
+
+    monkeypatch.setattr(
+        readonly_reporting,
+        "_git_snapshot",
+        lambda: (None, None),
+    )
+    with pytest.raises(ValueError, match="Git|commit"):
+        readonly_reporting.require_clean_git_worktree()
 
 
 def test_summary_separates_strict_reliability_safety_usage_and_latency():
@@ -564,5 +592,5 @@ def test_formal_bundle_schema_recomputes_cost_instead_of_trusting_summary():
             "remaining_execution_cny"
         ] = "1"
 
-    with pytest.raises(ValueError, match="cost|usage|formal"):
+    with pytest.raises(ValueError, match="cost|usage|[Ff]ormal"):
         validate_readonly_payload(payload)
