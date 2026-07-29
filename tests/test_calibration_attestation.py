@@ -13,6 +13,7 @@ import pytest
 
 from app.agent.deepseek_budget import load_price_snapshot
 from app.config import Settings
+from evals import calibration_attestation as calibration_attestation_module
 from evals.calibration_attestation import (
     CalibrationAttestationError,
     canonical_contract_set_sha256,
@@ -34,6 +35,25 @@ CASE_DIR = Path("evals/readonly_regression_cases")
 PRICE_SNAPSHOT_PATH = Path(
     "pricing/deepseek-v4-flash-2026-07-29.json"
 )
+_TRUSTED_TEST_COMMIT = "1" * 40
+
+
+@pytest.fixture(autouse=True)
+def _trusted_clean_source(monkeypatch: pytest.MonkeyPatch) -> None:
+    def require_clean_source(*, expected_commit=None):
+        if (
+            expected_commit is not None
+            and expected_commit != _TRUSTED_TEST_COMMIT
+        ):
+            raise ValueError("stale trusted commit")
+        return _TRUSTED_TEST_COMMIT
+
+    monkeypatch.setattr(
+        calibration_attestation_module,
+        "require_clean_git_worktree",
+        require_clean_source,
+        raising=False,
+    )
 
 
 def _file_sha256(path: Path) -> str:
@@ -391,6 +411,128 @@ def test_calibration_attestation_accepts_canonical_trailing_slash_endpoint(
     )
 
     assert validated.run_id == report["run_id"]
+
+
+def test_calibration_attestation_rejects_caller_supplied_forged_harness(
+    tmp_path: Path,
+) -> None:
+    report = _valid_report()
+    forged_harness = dict(report["harness"])
+    forged_harness["prompt_sha256"] = "0" * 64
+    report["harness"] = forged_harness
+
+    with pytest.raises(
+        CalibrationAttestationError,
+        match="harness|trusted|source",
+    ):
+        validate_calibration_attestation(
+            report_path=_write_json(
+                tmp_path / "forged-self-certified-harness.json",
+                report,
+            ),
+            settings=Settings(),
+            now=datetime(2026, 7, 29, 13, tzinfo=UTC),
+            harness_fingerprints=forged_harness,
+        )
+
+
+def test_calibration_attestation_rejects_report_commit_not_current_trusted_head(
+    tmp_path: Path,
+) -> None:
+    report = _valid_report()
+    report["source_git_commit"] = "0" * 40
+
+    with pytest.raises(
+        CalibrationAttestationError,
+        match="commit|source|trusted",
+    ):
+        validate_calibration_attestation(
+            report_path=_write_json(
+                tmp_path / "forged-source-commit.json",
+                report,
+            ),
+            settings=Settings(),
+            now=datetime(2026, 7, 29, 13, tzinfo=UTC),
+            harness_fingerprints=report["harness"],
+        )
+
+
+def test_calibration_attestation_rejects_dirty_source_before_report_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    report_path = _write_json(tmp_path / "dirty-source.json", _valid_report())
+
+    def reject_dirty_source(*, expected_commit=None):
+        del expected_commit
+        raise ValueError("dirty source")
+
+    def fail_report_read(*args, **kwargs):
+        del args, kwargs
+        raise AssertionError("report must not be read before source precheck")
+
+    monkeypatch.setattr(
+        calibration_attestation_module,
+        "require_clean_git_worktree",
+        reject_dirty_source,
+    )
+    monkeypatch.setattr(
+        calibration_attestation_module,
+        "read_json_object_snapshot",
+        fail_report_read,
+    )
+
+    with pytest.raises(
+        CalibrationAttestationError,
+        match="source|clean|trusted",
+    ):
+        validate_calibration_attestation(
+            report_path=report_path,
+            settings=Settings(),
+            now=datetime(2026, 7, 29, 13, tzinfo=UTC),
+        )
+
+
+def test_calibration_attestation_rejects_commit_drift_during_freeze(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    report_path = _write_json(tmp_path / "stale-source.json", _valid_report())
+    clean_checks = 0
+
+    def drift_after_freeze(*, expected_commit=None):
+        nonlocal clean_checks
+        clean_checks += 1
+        if expected_commit is not None:
+            raise ValueError("commit changed during trusted freeze")
+        return _TRUSTED_TEST_COMMIT
+
+    def fail_report_read(*args, **kwargs):
+        del args, kwargs
+        raise AssertionError("report must not be read after source drift")
+
+    monkeypatch.setattr(
+        calibration_attestation_module,
+        "require_clean_git_worktree",
+        drift_after_freeze,
+    )
+    monkeypatch.setattr(
+        calibration_attestation_module,
+        "read_json_object_snapshot",
+        fail_report_read,
+    )
+
+    with pytest.raises(
+        CalibrationAttestationError,
+        match="source|commit|trusted",
+    ):
+        validate_calibration_attestation(
+            report_path=report_path,
+            settings=Settings(),
+            now=datetime(2026, 7, 29, 13, tzinfo=UTC),
+        )
+
+    assert clean_checks == 2
 
 
 @pytest.mark.parametrize(

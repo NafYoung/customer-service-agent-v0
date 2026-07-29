@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
@@ -414,6 +414,68 @@ def test_budget_guard_retains_malformed_success_reservation(tmp_path):
     assert report["attempt_count"] == 1
     assert report["uncertain_count"] == 1
     assert report["committed_cny"] == "1.002048"
+
+
+def test_malformed_success_crossing_price_window_reports_expiry_first(
+    tmp_path,
+):
+    snapshot = load_price_snapshot(PRICE_SNAPSHOT_PATH)
+    checked_at = snapshot.valid_until - timedelta(seconds=60)
+    call_count = 0
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        nonlocal checked_at, call_count
+        call_count += 1
+        checked_at = snapshot.valid_until + timedelta(microseconds=1)
+        return httpx.Response(
+            200,
+            headers={"x-request-id": "malformed-cross-window"},
+            json={"choices": []},
+        )
+
+    guard = DeepSeekBudgetGuard(
+        ledger=SQLiteBudgetLedger(
+            path=tmp_path / "private" / "budget.sqlite3",
+            hard_limit_cny=Decimal("20"),
+            execution_limit_cny=Decimal("18"),
+        ),
+        run_id="eval-malformed-cross-window",
+        purpose="diagnostic",
+        price_snapshot=snapshot,
+        model="deepseek-v4-flash",
+        max_output_tokens=1024,
+        now_provider=lambda: checked_at,
+    )
+    client = OpenAICompatibleChatClient(
+        api_key="fixture-key",
+        base_url="https://api.deepseek.com",
+        model="deepseek-v4-flash",
+        max_tokens=1024,
+        max_retries=2,
+        budget_guard=guard,
+        transport=httpx.MockTransport(handler),
+    )
+    try:
+        with pytest.raises(ModelAPIError) as caught:
+            client.complete(
+                messages=[{"role": "user", "content": "hello"}],
+                tools=[],
+            )
+    finally:
+        client.close()
+
+    assert caught.value.code == "MODEL_PRICE_EXPIRED"
+    assert caught.value.attempts == 1
+    assert call_count == 1
+    assert guard.snapshot()["attempt_evidence"]["run"] == [
+        {
+            "status": "uncertain",
+            "settlement_mode": None,
+            "reserved_cny": "1.002048",
+            "known_cost_cny": None,
+            "count": 1,
+        }
+    ]
 
 
 @pytest.mark.parametrize(
