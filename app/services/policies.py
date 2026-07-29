@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import cast
 
@@ -16,10 +16,30 @@ class PolicyService:
     implementation later without changing the tool schema.
     """
 
-    def __init__(self, policy_dir: Path):
+    def __init__(
+        self,
+        policy_dir: Path,
+        *,
+        policy_documents: Mapping[str, str] | None = None,
+    ):
         self.policy_dir = policy_dir
-        with (policy_dir / "index.json").open("r", encoding="utf-8") as file:
-            self.index: list[dict[str, object]] = json.load(file)
+        documents = (
+            dict(policy_documents)
+            if policy_documents is not None
+            else {
+                path.name: path.read_text(encoding="utf-8")
+                for path in sorted(policy_dir.iterdir())
+                if path.is_file()
+            }
+        )
+        index_payload = json.loads(documents["index.json"])
+        if not isinstance(index_payload, list):
+            raise ValueError("Policy index must be a JSON array.")
+        self.index = cast(list[dict[str, object]], index_payload)
+        self._policy_bodies = {
+            str(entry["file"]): documents[str(entry["file"])]
+            for entry in self.index
+        }
 
     def search(
         self,
@@ -45,7 +65,7 @@ class PolicyService:
             if title.casefold() in normalized_query:
                 score += 5
 
-            body = (self.policy_dir / str(entry["file"])).read_text(encoding="utf-8")
+            body = self._policy_bodies[str(entry["file"])]
             for term in normalized_query.split():
                 if len(term) >= 2 and term in body.casefold():
                     score += 1
