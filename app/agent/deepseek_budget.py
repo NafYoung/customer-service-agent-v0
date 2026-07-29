@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import Any, Literal, Mapping
+from typing import Any, Callable, Literal, Mapping
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -789,10 +789,12 @@ class DeepSeekBudgetGuard:
         model: str,
         max_output_tokens: int,
         now: datetime | None = None,
+        now_provider: Callable[[], datetime] | None = None,
     ):
+        self._now_provider = now_provider or (lambda: datetime.now(UTC))
         price_snapshot.require_current(
             expected_model=model,
-            now=now,
+            now=now or self._now_provider(),
         )
         self._ledger = ledger
         self._run_id = run_id
@@ -817,6 +819,10 @@ class DeepSeekBudgetGuard:
     ) -> BudgetReservation:
         if self._closed:
             raise BudgetInvariantError("Budget guard is already closed.")
+        self._price_snapshot.require_current(
+            expected_model=self._model,
+            now=self._now_provider(),
+        )
         return self._ledger.reserve_attempt(
             run_id=self._run_id,
             logical_call_id=logical_call_id,
@@ -866,6 +872,7 @@ class DeepSeekBudgetGuard:
         return {
             "schema_version": "1.0",
             "enforcement_mode": "persistent_sqlite",
+            "run_status": "completed" if self._closed else "active",
             "price": {
                 "provider": self._price_snapshot.provider,
                 "model": self._price_snapshot.model,
