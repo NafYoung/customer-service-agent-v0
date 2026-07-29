@@ -217,12 +217,22 @@ def test_manifest_fingerprints_harness_and_never_serializes_secret_or_holdout_id
     assert manifest["harness"]["tool_contracts_sha256"]
     assert manifest["harness"]["policies_sha256"]
     assert manifest["harness"]["agent_loop_sha256"]
+    assert manifest["harness"]["model_runtime_sha256"]
+    assert manifest["harness"]["semantic_judge_prompt_sha256"]
+    assert manifest["harness"]["semantic_judge_source_sha256"]
     assert manifest["source"]["source_tree_sha256"]
     assert manifest["execution"]["planned_trials"] == 1
     assert manifest["execution"]["completed_trials"] == 1
     assert manifest["model"]["observed_models"] == ["deepseek-v4-flash"]
     assert manifest["model"]["generation_config"]["temperature"] == 0.0
-    assert manifest["eval"]["scorer_version"] == "readonly-scorer-v4"
+    assert manifest["model"]["semantic_judge"] == {
+        "version": "atomic-claims-v1",
+        "response_format": "json_object",
+        "tools_enabled": False,
+        "temperature": 0.0,
+        "thinking": "disabled",
+    }
+    assert manifest["eval"]["scorer_version"] == "readonly-scorer-v6"
     assert manifest["budget"]["price_snapshot_sha256"] == "f" * 64
     assert manifest["budget"]["hard_limit_cny"] == "20"
 

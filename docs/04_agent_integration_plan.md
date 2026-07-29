@@ -12,7 +12,9 @@ v0 是供 Agent 调用的确定性交易后端原型。它已有业务规则、�
 - 认证、客户会话和确认由宿主应用负责；
 - 完整契约规划了 10 个工具；只读阶段获得前 6 个，Preparation 阶段获得
   前 9 个，`create_handoff_ticket` 尚不属于任一当前模型运行时；
-- Reference Eval 读取结构化 `reference_plan`，不测试自然语言理解；只读 Agent Eval 已有一次真实基线但还不是隐藏 holdout；
+- Reference Eval 读取结构化 `reference_plan`，不测试自然语言理解；只读
+  Agent 已完成开发集 4-trial 和一次退役 holdout v1，新语义门、公开回归与
+  holdout v2 仍待完成；
 - SQLite、固定验证码和本地调试机制都不适合生产使用。
 
 ## 2. 模型与宿主的权限边界

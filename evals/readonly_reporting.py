@@ -21,12 +21,21 @@ from evals.readonly_eval import (
     ReadonlyEvalCase,
     ReadonlyEvalResult,
 )
+from evals.semantic_judge import (
+    SEMANTIC_JUDGE_PROMPT_PATH,
+    SEMANTIC_JUDGE_VERSION,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 PROMPT_PATH = ROOT / "app" / "agent" / "readonly_system_prompt.md"
 AGENT_LOOP_PATH = ROOT / "app" / "agent" / "readonly.py"
 SCORER_PATH = ROOT / "evals" / "readonly_eval.py"
 SEED_PATH = ROOT / "app" / "seed.py"
+SETTINGS_PATH = ROOT / "app" / "config.py"
+MODEL_ADAPTER_PATH = ROOT / "app" / "agent" / "openai_compatible.py"
+MODEL_FACTORY_PATH = ROOT / "app" / "agent" / "factory.py"
+EVAL_RUNNER_PATH = ROOT / "evals" / "run_readonly_agent_evals.py"
+SEMANTIC_JUDGE_SOURCE_PATH = ROOT / "evals" / "semantic_judge.py"
 _SOURCE_SUFFIXES = {".py", ".md", ".json", ".toml", ".txt", ".yml", ".yaml"}
 _SOURCE_ROOTS = ("app", "evals", "policies", "scripts", "tests")
 _TOP_LEVEL_SOURCES = (
@@ -37,6 +46,7 @@ _TOP_LEVEL_SOURCES = (
     "docker-compose.yml",
     "Makefile",
 )
+READONLY_SCORER_VERSION = "readonly-scorer-v6"
 
 
 def create_server_run_id() -> str:
@@ -109,6 +119,61 @@ def _package_versions() -> dict[str, str]:
         except metadata.PackageNotFoundError:
             versions[package_name] = "not-installed"
     return versions
+
+
+def current_readonly_harness_fingerprints(
+    settings: Settings | None = None,
+) -> dict[str, str]:
+    """Return the frozen inputs required by a declared holdout."""
+
+    runtime_settings = settings or Settings()
+    policy_fingerprints = {
+        path.relative_to(ROOT).as_posix(): _file_sha256(path)
+        for path in sorted((ROOT / "policies").glob("*"))
+        if path.is_file()
+    }
+    return {
+        "prompt_sha256": _file_sha256(PROMPT_PATH),
+        "tool_contracts_sha256": stable_sha256(
+            get_read_only_tool_contracts()
+        ),
+        "policies_sha256": stable_sha256(policy_fingerprints),
+        "seed_sha256": _file_sha256(SEED_PATH),
+        "agent_loop_sha256": _file_sha256(AGENT_LOOP_PATH),
+        "scorer_version": READONLY_SCORER_VERSION,
+        "scorer_sha256": _file_sha256(SCORER_PATH),
+        "semantic_judge_version": SEMANTIC_JUDGE_VERSION,
+        "semantic_judge_prompt_sha256": _file_sha256(
+            SEMANTIC_JUDGE_PROMPT_PATH
+        ),
+        "semantic_judge_source_sha256": _file_sha256(
+            SEMANTIC_JUDGE_SOURCE_PATH
+        ),
+        "model_runtime_sha256": stable_sha256(
+            {
+                "settings_source_sha256": _file_sha256(SETTINGS_PATH),
+                "adapter_source_sha256": _file_sha256(MODEL_ADAPTER_PATH),
+                "factory_source_sha256": _file_sha256(MODEL_FACTORY_PATH),
+                "runner_source_sha256": _file_sha256(EVAL_RUNNER_PATH),
+                "provider": "deepseek",
+                "base_url": runtime_settings.deepseek_base_url.rstrip("/"),
+                "requested_model": runtime_settings.deepseek_model,
+                "stream": False,
+                "thinking": "disabled",
+                "temperature": runtime_settings.deepseek_temperature,
+                "tool_choice": "auto",
+                "semantic_judge_response_format": "json_object",
+                "seed": None,
+                "max_tokens": runtime_settings.deepseek_max_tokens,
+                "timeout_seconds": runtime_settings.deepseek_timeout_seconds,
+                "max_retries": runtime_settings.deepseek_max_retries,
+                "agent_max_tool_rounds": (
+                    runtime_settings.agent_max_tool_rounds
+                ),
+                "agent_max_tool_calls": runtime_settings.agent_max_tool_calls,
+            }
+        ),
+    }
 
 
 def _rate(passed: int, total: int) -> float:
@@ -396,11 +461,7 @@ def build_readonly_manifest(
             if call.observed_model
         }
     )
-    policy_fingerprints = {
-        path.relative_to(ROOT).as_posix(): _file_sha256(path)
-        for path in sorted((ROOT / "policies").glob("*"))
-        if path.is_file()
-    }
+    harness_fingerprints = current_readonly_harness_fingerprints(settings)
     eval_metadata: dict[str, Any] = {
         "suite_name": "readonly-agent",
         "suite_version": "2.0",
@@ -408,8 +469,8 @@ def build_readonly_manifest(
         "case_set_name": case_set_name,
         "case_count": len(cases),
         "case_set_sha256": stable_sha256(case_payloads),
-        "scorer_version": "readonly-scorer-v4",
-        "scorer_sha256": _file_sha256(SCORER_PATH),
+        "scorer_version": harness_fingerprints["scorer_version"],
+        "scorer_sha256": harness_fingerprints["scorer_sha256"],
     }
     if split == "dev":
         eval_metadata["case_ids"] = [case.case_id for case in cases]
@@ -437,13 +498,27 @@ def build_readonly_manifest(
         },
         "eval": eval_metadata,
         "harness": {
-            "prompt_sha256": _file_sha256(PROMPT_PATH),
-            "tool_contracts_sha256": stable_sha256(
-                get_read_only_tool_contracts()
-            ),
-            "policies_sha256": stable_sha256(policy_fingerprints),
-            "seed_data_sha256": _file_sha256(SEED_PATH),
-            "agent_loop_sha256": _file_sha256(AGENT_LOOP_PATH),
+            "prompt_sha256": harness_fingerprints["prompt_sha256"],
+            "tool_contracts_sha256": harness_fingerprints[
+                "tool_contracts_sha256"
+            ],
+            "policies_sha256": harness_fingerprints["policies_sha256"],
+            "seed_data_sha256": harness_fingerprints["seed_sha256"],
+            "agent_loop_sha256": harness_fingerprints[
+                "agent_loop_sha256"
+            ],
+            "model_runtime_sha256": harness_fingerprints[
+                "model_runtime_sha256"
+            ],
+            "semantic_judge_version": harness_fingerprints[
+                "semantic_judge_version"
+            ],
+            "semantic_judge_prompt_sha256": harness_fingerprints[
+                "semantic_judge_prompt_sha256"
+            ],
+            "semantic_judge_source_sha256": harness_fingerprints[
+                "semantic_judge_source_sha256"
+            ],
             "max_tool_rounds": settings.agent_max_tool_rounds,
             "max_tool_calls": settings.agent_max_tool_calls,
         },
@@ -463,6 +538,13 @@ def build_readonly_manifest(
             "retry_policy": {
                 "max_retries": settings.deepseek_max_retries,
                 "backoff": "bounded_exponential_with_jitter",
+            },
+            "semantic_judge": {
+                "version": SEMANTIC_JUDGE_VERSION,
+                "response_format": "json_object",
+                "tools_enabled": False,
+                "temperature": settings.deepseek_temperature,
+                "thinking": "disabled",
             },
         },
         "execution": {

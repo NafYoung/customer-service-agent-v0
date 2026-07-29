@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
-from typing import Callable, Sequence
+from typing import Callable, Literal, Sequence
+from urllib.parse import urlparse
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -21,6 +23,13 @@ from app.agent.openai_compatible import ChatModel
 from app.config import Settings
 from evals.evidence import write_eval_bundle
 from evals.evidence_schema import validate_readonly_bundle
+from evals.holdout_lock import (
+    HoldoutDeclaration,
+    HoldoutLockError,
+    acquire_holdout_run_lock,
+    finalize_holdout_run_lock,
+    validate_holdout_declaration,
+)
 from evals.readonly_eval import (
     DEFAULT_CASE_DIR,
     ReadonlyEvalCase,
@@ -34,10 +43,14 @@ from evals.readonly_reporting import (
     result_to_record,
     summarize_results,
 )
+from evals.semantic_judge import SemanticJsonModel
 
 DEFAULT_OUTPUT_ROOT = ROOT / "artifacts" / "eval-runs"
 DEFAULT_BUDGET_LEDGER = (
     ROOT / "artifacts" / "private" / "deepseek-budget.sqlite3"
+)
+DEFAULT_HOLDOUT_LOCK_ROOT = (
+    ROOT / "artifacts" / "private" / "holdout" / "formal-run-locks"
 )
 PRICE_SNAPSHOT_PATH = (
     ROOT / "pricing" / "deepseek-v4-flash-2026-07-29.json"
@@ -46,12 +59,32 @@ HARD_BUDGET_LIMIT_CNY = Decimal("20")
 EXECUTION_BUDGET_LIMIT_CNY = Decimal("18")
 
 
+def validate_paid_eval_settings(settings: Settings) -> None:
+    endpoint = urlparse(settings.deepseek_base_url)
+    if (
+        endpoint.scheme != "https"
+        or endpoint.hostname != "api.deepseek.com"
+        or endpoint.port not in {None, 443}
+        or endpoint.username is not None
+        or endpoint.password is not None
+        or endpoint.query
+        or endpoint.fragment
+        or endpoint.path.rstrip("/") not in {"", "/v1"}
+    ):
+        raise ValueError(
+            "Paid Eval requires the official DeepSeek HTTPS endpoint."
+        )
+    if settings.deepseek_temperature != 0:
+        raise ValueError("Paid Eval requires DEEPSEEK_TEMPERATURE=0.")
+
+
 def build_deepseek_budget_guard(
     *,
     settings: Settings,
     run_id: str,
     purpose: str,
 ) -> DeepSeekBudgetGuard:
+    validate_paid_eval_settings(settings)
     snapshot = load_price_snapshot(PRICE_SNAPSHOT_PATH)
     return DeepSeekBudgetGuard(
         ledger=SQLiteBudgetLedger(
@@ -83,6 +116,15 @@ def _build_parser() -> argparse.ArgumentParser:
         "--output-root",
         type=Path,
         default=DEFAULT_OUTPUT_ROOT,
+    )
+    parser.add_argument(
+        "--holdout-manifest",
+        type=Path,
+        default=None,
+        help=(
+            "Required for holdout_formal; binds the sealed cases and frozen "
+            "harness to a single process-safe formal run."
+        ),
     )
     parser.add_argument("--run-id", default=None)
     parser.add_argument(
@@ -117,10 +159,22 @@ def _validate_args(
         parser.error(f"{args.purpose} requires exactly 4 trials")
     if args.purpose == "holdout_formal" and args.split != "holdout":
         parser.error("holdout_formal requires --split holdout")
+    if args.split == "holdout" and args.purpose != "holdout_formal":
+        parser.error("the holdout split requires --purpose holdout_formal")
+    if args.purpose == "holdout_formal" and args.holdout_manifest is None:
+        parser.error("holdout_formal requires --holdout-manifest")
+    if args.purpose != "holdout_formal" and args.holdout_manifest is not None:
+        parser.error("--holdout-manifest is only valid for holdout_formal")
     if args.split == "holdout" and args.case_dir.resolve() == DEFAULT_CASE_DIR.resolve():
         parser.error("holdout runs require an explicit non-development --case-dir")
-    if not args.case_set_name.strip():
-        parser.error("--case-set-name cannot be empty")
+    if not re.fullmatch(
+        r"[a-z0-9][a-z0-9_-]{2,79}",
+        args.case_set_name,
+    ):
+        parser.error(
+            "--case-set-name must be 3-80 lowercase letters, digits, "
+            "underscores, or hyphens"
+        )
 
 
 def run_eval_suite(
@@ -135,6 +189,7 @@ def run_eval_suite(
     trials: int,
     output_root: Path,
     budget_report_provider: Callable[[], dict] | None = None,
+    semantic_judge_model: SemanticJsonModel | None = None,
 ) -> tuple[list[ReadonlyEvalResult], dict, Path]:
     started_at = datetime.now(UTC)
     results = [
@@ -143,6 +198,7 @@ def run_eval_suite(
             model=model,
             server_run_id=run_id,
             trial=trial,
+            semantic_judge_model=semantic_judge_model,
         )
         for trial in range(1, trials + 1)
         for case in cases
@@ -201,22 +257,29 @@ def _print_results(
     results: Sequence[ReadonlyEvalResult],
     summary: dict,
     bundle_path: Path,
+    *,
+    disclose_case_details: bool = True,
 ) -> None:
-    print("| case | trial | result | tools | business state changed |")
-    print("|---|---:|---:|---|---:|")
-    for item in results:
-        status = "PASS" if item.passed else "FAIL"
-        tools = ", ".join(item.tool_names) or "-"
-        state_changed = bool(
-            item.business_state_delta
-            and item.business_state_delta.changed
-        )
-        print(
-            f"| {item.case_id} | {item.trial} | {status} | "
-            f"{tools} | {state_changed} |"
-        )
-        for failure in item.failures:
-            print(f"  - {item.case_id} trial {item.trial}: {failure}")
+    if disclose_case_details:
+        print("| case | trial | result | tools | business state changed |")
+        print("|---|---:|---:|---|---:|")
+        for item in results:
+            status = "PASS" if item.passed else "FAIL"
+            tools = ", ".join(item.tool_names) or "-"
+            state_changed = bool(
+                item.business_state_delta
+                and item.business_state_delta.changed
+            )
+            print(
+                f"| {item.case_id} | {item.trial} | {status} | "
+                f"{tools} | {state_changed} |"
+            )
+            for failure in item.failures:
+                print(
+                    f"  - {item.case_id} trial {item.trial}: {failure}"
+                )
+    else:
+        print("Formal holdout completed; private case details withheld.")
 
     passed = summary["strict"]["passed"]
     total = summary["total_trials"]
@@ -256,6 +319,18 @@ def main(argv: Sequence[str] | None = None) -> int:
             "use a fresh server run ID."
         )
         return 3
+    declaration: HoldoutDeclaration | None = None
+    if args.purpose == "holdout_formal":
+        try:
+            declaration = validate_holdout_declaration(
+                manifest_path=args.holdout_manifest,
+                case_set_name=args.case_set_name,
+                cases=cases,
+                settings=settings,
+            )
+        except HoldoutLockError as exc:
+            print(f"HOLDOUT DECLARATION ERROR: {exc}")
+            return 2
     budget_guard = None
     try:
         budget_guard = build_deepseek_budget_guard(
@@ -263,8 +338,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             run_id=run_id,
             purpose=args.purpose,
         )
-    except BudgetError as exc:
-        print(f"BUDGET ERROR: {exc}")
+    except (BudgetError, ValueError) as exc:
+        print(f"BUDGET OR CONFIGURATION ERROR: {exc}")
         return 2
 
     try:
@@ -281,6 +356,22 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         return 2
 
+    holdout_lock_path: Path | None = None
+    if declaration is not None:
+        try:
+            holdout_lock_path = acquire_holdout_run_lock(
+                lock_root=DEFAULT_HOLDOUT_LOCK_ROOT,
+                declaration=declaration,
+                run_id=run_id,
+            )
+        except HoldoutLockError as exc:
+            model.close()
+            budget_guard.close()
+            print(f"HOLDOUT LOCK ERROR: {exc}")
+            return 2
+
+    run_error: Exception | None = None
+    lock_status: Literal["completed", "failed"] = "failed"
     try:
         results, summary, bundle_path = run_eval_suite(
             model=model,
@@ -293,15 +384,37 @@ def main(argv: Sequence[str] | None = None) -> int:
             trials=args.trials,
             output_root=args.output_root,
             budget_report_provider=budget_guard.snapshot,
+            semantic_judge_model=model,
         )
+        lock_status = "completed"
     except (OSError, ValueError) as exc:
-        print(f"EVIDENCE ERROR: {type(exc).__name__}: {exc}")
-        return 3
+        run_error = exc
     finally:
         model.close()
         budget_guard.close()
 
-    _print_results(results, summary, bundle_path)
+    if holdout_lock_path is not None:
+        try:
+            finalize_holdout_run_lock(
+                lock_path=holdout_lock_path,
+                status=lock_status,
+                run_id=run_id,
+            )
+        except HoldoutLockError as exc:
+            print(f"HOLDOUT LOCK ERROR: {exc}")
+            return 3
+    if run_error is not None:
+        print(
+            f"EVIDENCE ERROR: {type(run_error).__name__}: {run_error}"
+        )
+        return 3
+
+    _print_results(
+        results,
+        summary,
+        bundle_path,
+        disclose_case_details=args.purpose != "holdout_formal",
+    )
     return 0 if all(result.passed for result in results) else 1
 
 

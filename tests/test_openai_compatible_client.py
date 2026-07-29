@@ -144,6 +144,58 @@ def test_client_sends_openai_compatible_tool_request_and_parses_tool_call():
     assert "fixture-key" not in repr(turn)
 
 
+def test_client_json_mode_is_tool_free_and_cannot_be_overridden():
+    observed: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        observed["body"] = json.loads(request.content)
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "finish_reason": "stop",
+                        "message": {
+                            "role": "assistant",
+                            "content": '{"claims":[]}',
+                        },
+                    }
+                ],
+                "usage": {"total_tokens": 8},
+            },
+        )
+
+    client = OpenAICompatibleChatClient(
+        api_key="fixture-key",
+        base_url="https://api.deepseek.com",
+        model="deepseek-test-model",
+        temperature=0,
+        extra_body={"thinking": {"type": "disabled"}},
+        transport=httpx.MockTransport(handler),
+    )
+    try:
+        turn = client.complete_json(
+            messages=[{"role": "user", "content": "Return JSON."}],
+        )
+    finally:
+        client.close()
+
+    body = observed["body"]
+    assert body["response_format"] == {"type": "json_object"}
+    assert body["temperature"] == 0
+    assert "tools" not in body
+    assert "tool_choice" not in body
+    assert turn.content == '{"claims":[]}'
+
+    with pytest.raises(ValueError, match="response_format"):
+        OpenAICompatibleChatClient(
+            api_key="fixture-key",
+            base_url="https://api.deepseek.com",
+            model="deepseek-test-model",
+            extra_body={"response_format": {"type": "text"}},
+        )
+
+
 @pytest.mark.parametrize("status_code", [401, 429, 500])
 def test_client_maps_http_errors_without_leaking_secret(status_code: int):
     def handler(_: httpx.Request) -> httpx.Response:

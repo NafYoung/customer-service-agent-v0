@@ -9,6 +9,7 @@
   "policies_sha256": "cfd573426343f6964d335ea8010815e97d441dad39b3237be09c0f21e0cbf4bc",
   "seed_sha256": "199881cbdf2cf4177c7d7b654ada8ff11b49a56989378271307d4ba095999799",
   "agent_loop_sha256": "5890cd16f7c9804b4d86dde1ff5ef9d2ed85012f649290bf8a9bc3cf763a970b",
+  "scorer_version": "readonly-scorer-v2",
   "scorer_sha256": "200ff0759afab419717947797bd1091c90c655746271ffd81774dad06bf8b574",
   "coverage_category_counts": {
     "ordinary_query": 5,

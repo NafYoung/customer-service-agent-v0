@@ -137,14 +137,19 @@ class OpenAICompatibleChatClient:
         reserved_extra_fields = {
             "messages",
             "model",
+            "response_format",
             "stream",
             "temperature",
             "tool_choice",
             "tools",
         }
-        if reserved_extra_fields.intersection(extra_body or {}):
+        overridden_fields = reserved_extra_fields.intersection(
+            extra_body or {}
+        )
+        if overridden_fields:
             raise ValueError(
-                "extra_body cannot override reserved protocol fields"
+                "extra_body cannot override reserved protocol fields: "
+                + ", ".join(sorted(overridden_fields))
             )
 
         self._api_key = api_key
@@ -198,11 +203,39 @@ class OpenAICompatibleChatClient:
         messages: Sequence[Message],
         tools: Sequence[ToolContract],
     ) -> AssistantTurn:
+        return self._complete(
+            messages=messages,
+            tools=tools,
+            response_format=None,
+        )
+
+    def complete_json(
+        self,
+        *,
+        messages: Sequence[Message],
+    ) -> AssistantTurn:
+        """Request one tool-free JSON object for an isolated evaluator."""
+
+        return self._complete(
+            messages=messages,
+            tools=(),
+            response_format={"type": "json_object"},
+        )
+
+    def _complete(
+        self,
+        *,
+        messages: Sequence[Message],
+        tools: Sequence[ToolContract],
+        response_format: Mapping[str, str] | None,
+    ) -> AssistantTurn:
         payload: dict[str, Any] = {
             "model": self._model,
             "messages": list(messages),
             "stream": False,
         }
+        if response_format is not None:
+            payload["response_format"] = dict(response_format)
         if self._max_tokens is not None:
             payload["max_tokens"] = self._max_tokens
         if self._temperature is not None:

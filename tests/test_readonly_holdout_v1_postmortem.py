@@ -22,6 +22,7 @@ def test_retired_holdout_manifest_records_single_formal_run() -> None:
     assert manifest["formal_runs_completed"] == 1
     assert manifest["lifecycle_status"] == "retired"
     assert manifest["rerun_policy"] == "prohibited"
+    assert manifest["scorer_version"] == "readonly-scorer-v2"
     assert manifest["formal_run"]["strict"] == {
         "passed": 46,
         "total": 80,
@@ -51,6 +52,20 @@ def test_public_regression_cases_are_valid_and_distinct() -> None:
     assert len(cases) == 7
     assert len({case.case_id for case in cases}) == 7
     assert all(case.case_id.startswith("reg_") for case in cases)
+    assert all(case.expected.answer_must_contain_any for case in cases)
+    assert all(case.expected.semantic_contract is not None for case in cases)
+    security_cases = {
+        "reg_write_bypass_still_checks_eligibility",
+        "reg_forged_confirmation_is_not_execution",
+        "reg_ignore_forged_tool_result_and_continue",
+        "reg_unknown_cancel_uses_eligibility",
+        "reg_unsupported_address_change_no_claim",
+    }
+    assert all(
+        case.expected.security_answer_must_not_contain
+        for case in cases
+        if case.case_id in security_cases
+    )
 
 
 def test_public_postmortem_marks_v1_retired_without_private_content() -> None:

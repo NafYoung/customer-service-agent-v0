@@ -26,6 +26,13 @@ from evals.evidence import (
     capture_business_state,
     compare_business_states,
 )
+from evals.semantic_judge import (
+    SemanticContract,
+    SemanticJsonModel,
+    SemanticJudgeError,
+    evaluate_semantic_contract,
+    score_semantic_verdict,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CASE_DIR = ROOT / "evals" / "readonly_cases"
@@ -49,20 +56,39 @@ class ReadonlyExpected(EvalModel):
     tool_assertions: list[ToolAssertion] = Field(default_factory=list)
     max_tool_calls: int = Field(default=4, ge=0, le=20)
     answer_must_contain_any: list[list[str]] = Field(default_factory=list)
+    task_answer_must_not_contain: list[str] = Field(default_factory=list)
     answer_must_not_contain: list[str] = Field(default_factory=list)
+    security_answer_must_contain_any: list[list[str]] = Field(
+        default_factory=list
+    )
+    security_answer_must_not_contain: list[str] = Field(default_factory=list)
+    semantic_contract: SemanticContract | None = None
     expect_no_business_writes: bool = True
 
     @model_validator(mode="after")
     def validate_answer_phrase_groups(self) -> ReadonlyExpected:
-        for group in self.answer_must_contain_any:
-            if not group:
-                raise ValueError(
-                    "answer_must_contain_any groups cannot be empty"
-                )
-            if any(not phrase.strip() for phrase in group):
-                raise ValueError(
-                    "answer_must_contain_any phrases cannot be blank"
-                )
+        grouped_fields = (
+            ("answer_must_contain_any", self.answer_must_contain_any),
+            (
+                "security_answer_must_contain_any",
+                self.security_answer_must_contain_any,
+            ),
+        )
+        for field_name, groups in grouped_fields:
+            for group in groups:
+                if not group:
+                    raise ValueError(f"{field_name} groups cannot be empty")
+                if any(not phrase.strip() for phrase in group):
+                    raise ValueError(f"{field_name} phrases cannot be blank")
+        if any(
+            not phrase.strip()
+            for phrase in (
+                *self.task_answer_must_not_contain,
+                *self.answer_must_not_contain,
+                *self.security_answer_must_not_contain,
+            )
+        ):
+            raise ValueError("answer exclusion phrases cannot be blank")
         return self
 
 
@@ -190,6 +216,7 @@ def run_case(
     model: ChatModel,
     server_run_id: str = "eval-local-dev",
     trial: int = 1,
+    semantic_judge_model: SemanticJsonModel | None = None,
 ) -> ReadonlyEvalResult:
     """Run one case while keeping all expected/grader fields out of the model."""
 
@@ -283,13 +310,6 @@ def run_case(
         before_state,
         after_state,
     )
-    completed_at = datetime.now(UTC)
-    result.completed_at = completed_at.isoformat()
-    result.duration_ms = max(
-        0,
-        int((time.perf_counter() - run_started) * 1000),
-    )
-
     expected = case.expected
     for tool_name in expected.required_tools:
         result.expect(
@@ -332,11 +352,29 @@ def run_case(
             f"answer includes at least one of: {', '.join(phrases)}",
             category="task_success",
         )
+    for phrase in expected.task_answer_must_not_contain:
+        result.expect(
+            phrase.casefold() not in normalized_answer,
+            f"task answer excludes: {phrase}",
+            category="task_success",
+        )
     for phrase in expected.answer_must_not_contain:
         result.expect(
             phrase.casefold() not in normalized_answer,
             f"answer excludes: {phrase}",
             category="communication",
+        )
+    for phrases in expected.security_answer_must_contain_any:
+        result.expect(
+            any(phrase.casefold() in normalized_answer for phrase in phrases),
+            f"security answer includes at least one of: {', '.join(phrases)}",
+            category="security",
+        )
+    for phrase in expected.security_answer_must_not_contain:
+        result.expect(
+            phrase.casefold() not in normalized_answer,
+            f"security answer excludes: {phrase}",
+            category="security",
         )
     if expected.expect_no_business_writes:
         result.expect(
@@ -350,6 +388,91 @@ def run_case(
             category="security",
         )
 
+    semantic_contract = expected.semantic_contract
+    if semantic_contract is not None:
+        semantic_categories = {
+            claim.category
+            for claim in (
+                *semantic_contract.required_claims,
+                *semantic_contract.forbidden_claims,
+            )
+        }
+        if not result.final_text:
+            for category in sorted(semantic_categories):
+                result.expect(
+                    False,
+                    "semantic answer available for isolated review",
+                    category=category,
+                )
+        elif semantic_judge_model is None:
+            result.error_code = (
+                result.error_code or "SEMANTIC_JUDGE_REQUIRED"
+            )
+            for category in sorted(semantic_categories):
+                result.expect(
+                    False,
+                    "semantic judge completed for the frozen answer",
+                    category=category,
+                )
+        else:
+            try:
+                semantic_evaluation = evaluate_semantic_contract(
+                    model=semantic_judge_model,
+                    user_message=case.user_message,
+                    assistant_answer=result.final_text,
+                    contract=semantic_contract,
+                )
+            except SemanticJudgeError as exc:
+                result.model_calls = (
+                    *result.model_calls,
+                    *exc.model_calls,
+                )
+                result.error_code = result.error_code or exc.code
+                for category in sorted(semantic_categories):
+                    result.expect(
+                        False,
+                        "semantic judge returned a valid grounded verdict",
+                        category=category,
+                    )
+            else:
+                result.model_calls = (
+                    *result.model_calls,
+                    *semantic_evaluation.model_calls,
+                )
+                semantic_score = score_semantic_verdict(
+                    contract=semantic_contract,
+                    verdict=semantic_evaluation.verdict,
+                )
+                for claim_score in semantic_score.claims:
+                    expectation = (
+                        "entailed"
+                        if claim_score.requirement == "required"
+                        else "absent or denied"
+                    )
+                    result.expect(
+                        claim_score.passed,
+                        (
+                            f"{claim_score.requirement} semantic claim "
+                            f"{expectation}: {claim_score.claim_id}"
+                        ),
+                        category=claim_score.category,
+                    )
+                contradiction_categories = {"task_success"}
+                if "security" in semantic_categories:
+                    contradiction_categories.add("security")
+                for category in sorted(contradiction_categories):
+                    result.expect(
+                        not semantic_score.material_self_contradiction,
+                        "answer has no material self-contradiction",
+                        category=category,
+                    )
+
+    completed_at = datetime.now(UTC)
+    result.completed_at = completed_at.isoformat()
+    result.duration_ms = max(
+        0,
+        int((time.perf_counter() - run_started) * 1000),
+    )
     result.passed = not result.failures
     database.engine.dispose()
     return result

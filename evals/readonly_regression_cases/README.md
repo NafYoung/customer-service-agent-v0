@@ -5,7 +5,10 @@ These cases promote confirmed model or prompt failures from the retired
 
 - They are public and are no longer secret holdout material.
 - They must not be used to recalculate or replace the v1 formal score.
-- They are intended for offline harness checks and future development runs.
+- They contain public atomic `semantic_contract` claims for isolated language
+  scoring; those claims never enter the tested Agent context.
+- They are used by the 37 public human-labelled calibration fixtures and future
+  four-trial development runs.
 - The retired v1 holdout must never be rerun.
 
 Cases whose original expectations over-prescribed an equivalent read tool or

@@ -71,6 +71,7 @@ class ModelCallEvidence:
     latency_ms: int
     message_count: int
     tool_contract_count: int
+    phase: str = "agent"
     tool_calls: tuple[ModelToolCallEvidence, ...] = ()
     finish_reason: str | None = None
     response_id: str | None = None
@@ -85,8 +86,9 @@ class ModelCallEvidence:
 class ObservedChatModel:
     """Record non-content model-call metadata without changing model behavior."""
 
-    def __init__(self, model: ChatModel):
+    def __init__(self, model: ChatModel, *, phase: str = "agent"):
         self._model = model
+        self._phase = phase
         self.calls: list[ModelCallEvidence] = []
 
     def complete(
@@ -109,6 +111,7 @@ class ObservedChatModel:
                     latency_ms=_elapsed_ms(started),
                     message_count=len(messages),
                     tool_contract_count=len(tools),
+                    phase=self._phase,
                     error_code=exc.code,
                     http_status=exc.status_code,
                     provider_request_id=exc.request_id,
@@ -125,6 +128,7 @@ class ObservedChatModel:
                     latency_ms=_elapsed_ms(started),
                     message_count=len(messages),
                     tool_contract_count=len(tools),
+                    phase=self._phase,
                     error_code="UNEXPECTED_MODEL_ERROR",
                 )
             )
@@ -138,6 +142,7 @@ class ObservedChatModel:
                 latency_ms=_elapsed_ms(started),
                 message_count=len(messages),
                 tool_contract_count=len(tools),
+                phase=self._phase,
                 tool_calls=tuple(
                     ModelToolCallEvidence(
                         tool_call_id=call.id,

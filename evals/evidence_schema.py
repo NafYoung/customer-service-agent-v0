@@ -63,6 +63,19 @@ class HarnessSnapshot(StrictEvidenceModel):
     policies_sha256: Sha256 = Field(pattern=r"^[0-9a-f]{64}$")
     seed_data_sha256: Sha256 = Field(pattern=r"^[0-9a-f]{64}$")
     agent_loop_sha256: Sha256 = Field(pattern=r"^[0-9a-f]{64}$")
+    model_runtime_sha256: Sha256 | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{64}$",
+    )
+    semantic_judge_version: str | None = None
+    semantic_judge_prompt_sha256: Sha256 | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{64}$",
+    )
+    semantic_judge_source_sha256: Sha256 | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{64}$",
+    )
     max_tool_rounds: int = Field(ge=1)
     max_tool_calls: int = Field(ge=1)
 
@@ -80,6 +93,14 @@ class RetryPolicy(StrictEvidenceModel):
     backoff: str
 
 
+class SemanticJudgeConfig(StrictEvidenceModel):
+    version: str
+    response_format: Literal["json_object"]
+    tools_enabled: Literal[False]
+    temperature: float
+    thinking: Literal["disabled"]
+
+
 class ModelSnapshot(StrictEvidenceModel):
     provider: str
     requested_model: str
@@ -88,6 +109,7 @@ class ModelSnapshot(StrictEvidenceModel):
     generation_config: GenerationConfig
     timeout_seconds: float = Field(gt=0)
     retry_policy: RetryPolicy
+    semantic_judge: SemanticJudgeConfig | None = None
 
 
 class ExecutionSnapshot(StrictEvidenceModel):
@@ -292,6 +314,7 @@ class ModelCallRecord(StrictEvidenceModel):
     latency_ms: int = Field(ge=0)
     message_count: int = Field(ge=0)
     tool_contract_count: int = Field(ge=0)
+    phase: Literal["agent", "semantic_judge"] = "agent"
     tool_calls: list[ModelToolRequest]
     finish_reason: str | None
     response_id: str | None

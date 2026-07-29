@@ -1,8 +1,8 @@
 # RIVET Customer Service Agent v0
 
-一个面向求职作品的鞋服电商售后项目。当前版本是**确定性交易后端原型 + 首个只读单 Agent**，已经具备 DeepSeek 的 OpenAI-compatible 适配，但不是已经闭合全部安全边界的端到端客服 Agent。
+一个面向求职作品的鞋服电商售后项目。当前版本是**确定性交易后端原型 + 分阶段有界单 Agent 核心**，已经具备 DeepSeek 的 OpenAI-compatible 适配，但不是已经闭合全部安全边界的端到端客服 Agent。
 
-它把语言理解与交易执行分开：当前模型只能使用查询与资格判断工具；后端保留的操作准备、转人工、预览展示、可信确认与最终执行尚未接入模型控制流。当前保存的是用于开发和评测的工具调试轨迹，不是安全审计日志。
+它把语言理解与交易执行分开：只读 Agent 仍固定使用 6 个查询与资格工具；独立 Preparation Agent 核心可使用这 6 个工具和 3 个明确的 `prepare_*` 工具，但不能认证、转人工、展示、确认或执行。公开宿主 UI 尚未接入该核心。当前保存的是用于开发和评测的工具调试轨迹，不是安全审计日志。
 
 所有品牌、客户、订单、物流和政策均为合成数据，不包含真实公司或客户资料。
 
@@ -23,8 +23,11 @@
 - 10 个未来 Agent 工具的机器可读 Schema，以及独立的宿主 HTTP OpenAPI 文档；
 - provider-neutral Chat Completions 接口与 DeepSeek V4 Flash 配置；
 - 只向模型开放 6 个查询/资格工具的有界单 Agent 循环；
+- 独立 Preparation Agent 核心：精确 9 工具白名单，每次运行最多创建
+  1 个 Approval，来源绑定服务端运行与结构化 tool call；
+- prepare 成功后禁止继续调用工具；违规时整个 Agent 事务回滚；
 - 工具名白名单、参数二次校验、敏感上下文隔离，以及最多 4 轮/12 次工具调用；
-- 10 个不向模型泄露期望结果的只读自然语言 Agent Eval 案例。
+- 10 个不向模型泄露期望结果的只读自然语言 Agent Eval 案例；
 - 真实 Prompt A/B：本次同一 harness 的单次观察中，严格口径从 7/10 提升到 10/10，工具调用从 25 次降到 12 次；两组各 10 条案例均未新增审批、确认、执行或工单记录。
 - 可独立验证的 Eval bundle：运行/源码/Prompt/工具/政策/scorer 指纹、
   脱敏逐 trial 轨迹、完整业务状态哈希、Token、延迟、费用和 SHA-256
@@ -33,14 +36,23 @@
   上限、异常请求保留最坏预留；
 - 开发集正式 `10 cases × 4 trials`：40/40，`pass^4=1.00`，安全断言
   40/40，业务状态变化 0；
+- 只读 holdout v1 已按预声明协议唯一运行并如实退役：46/80，
+  `pass^4=0.35`；赛后审计确认 0 个真实安全关键违规，但暴露出评分语义、
+  缺参澄清和工具效率问题，不能把它改写成通过；
+- `readonly-scorer-v6` 原子命题语义门：被测回答冻结后才由隔离裁判逐项
+  判断蕴含、否定、遗漏和矛盾，工具、权限、写入和业务状态仍由代码硬判；
+- 37 条公开人工标注语义校准夹具，以及 holdout split、唯一运行锁、完整
+  runtime 指纹和正式输出隐私控制；
 - `ruff`、`mypy`、分支覆盖率门、Schema freshness、`pip-audit` 和
   Gitleaks Git 历史扫描的 CI 配置。
 
 尚未完成：
 
-- 独立封存的隐藏 holdout；
+- DeepSeek 语义裁判的付费校准、七类公开回归 4-trial 复验和全新
+  holdout v2 唯一正式运行；
 - 向量或混合检索；
 - Web 聊天界面；
+- Preparation Agent 与规范化确认卡之间的宿主控制流；
 - PostgreSQL 高并发库存控制；
 - 完整安全审计与生产身份系统；
 - 真实电商、ERP、物流和支付接口。
@@ -51,13 +63,16 @@
 flowchart TD
     U[Customer] --> H[Host application / future chat UI]
     H --> AUTH[Authentication outside Agent schema]
-    H --> A[Read-only single Agent]
-    A --> LLM[DeepSeek OpenAI-compatible API]
-    A --> T[6 allowlisted read-only tools]
+    H --> RO[Read-only Agent: 6 tools]
+    H -. host integration pending .-> PA[Preparation Agent: exact 9 tools]
+    RO --> LLM[DeepSeek OpenAI-compatible API]
+    PA --> LLM
+    RO --> T[Read and eligibility tools]
+    PA --> T
+    PA --> PREP[Prepare one canonical preview]
     T --> ORD[Order and shipment service]
     T --> POL[Versioned policy search]
     T --> RULES[Deterministic eligibility rules]
-    H -. future .-> PREP[Prepare action preview]
     H -. future .-> HANDOFF[Human handoff flow]
     PREP --> CONF[Trusted presentation and confirmation]
     CONF --> ACT[Deterministic execution]
@@ -223,7 +238,17 @@ make verify
 
 Reference Eval 验证的是环境、规则、工具轨迹和最终状态评分器。它读取结构化 `reference_plan`，因此**不能被宣传为 LLM Agent 8/8 成功率**。新的只读 Agent Eval 才会把自然语言 `user_message` 和 6 个工具 Schema 交给模型，期望结果只由评分器读取。
 
-真实只读 Agent Eval 需要把 `.env` 安全加载到当前进程：
+真实只读 Agent Eval 需要把 `.env` 安全加载到当前进程。新语义评分器先运行
+公开校准；预期失败夹具必须 100% 判对，预期通过夹具至少 95%：
+
+```bash
+set -a
+source .env
+set +a
+python evals/run_semantic_judge_calibration.py
+```
+
+校准通过后才运行开发回归：
 
 ```bash
 set -a
@@ -232,19 +257,27 @@ set +a
 python evals/run_readonly_agent_evals.py \
   --purpose dev_repeat \
   --split dev \
-  --case-set-name readonly-dev-v2 \
+  --case-dir evals/readonly_regression_cases \
+  --case-set-name readonly-regression-v1 \
   --trials 4
 ```
 
 它使用 `deepseek-v4-flash`、关闭 thinking、关闭 streaming，只提供 6 个
-只读/资格工具。付费请求必须经过持久预算账本；价格快照过期、模型不匹配、
-重复 run、usage 不可信或下一次最坏预留会越界时失败关闭。
+只读/资格工具。每个回答冻结后再以无工具 JSON 模式运行原子命题语义裁判；
+评分命题不会进入被测 Agent 上下文。付费请求必须经过同一个持久预算账本；
+价格快照过期、模型不匹配、重复 run、usage 不可信或下一次最坏预留会越界时
+失败关闭。语义裁判不能覆盖任何确定性安全失败。
 
 2026-07-29 的首次真实基线为 7/10；Prompt-only B 组单次达到 10/10，并把
 工具调用从 25 次降到 12 次。随后正式重复运行 4 trials，达到 40/40、
 `pass^4=1.00`，安全断言 40/40，所有业务表无变化；94 次模型 HTTP attempt
 按 usage 与官方单价快照结算为 ¥0.04357292，未决预留为 0。开发集参与过
 Prompt 优化，不能替代隐藏 holdout，也不能据此声称生产安全。
+
+随后唯一运行的 holdout v1 得到 46/80、`pass^4=0.35`，费用
+¥0.08381112。它已退役并禁止重跑；完整失败分析进入公开回归。新的 v2 必须在
+语义校准、公开回归和独立离线审查全部通过后重新封存，且仍只允许一次正式
+运行。公开结果只报告聚合指标，不公开私有题面、案例 ID 或评分命题。
 
 每次正式运行会在被 Git 忽略的 `artifacts/eval-runs/` 写入私有证据包。
 独立验证：
@@ -265,14 +298,26 @@ provider request ID 或本机环境细节。
 - `docs/05_deepseek_readonly_agent_v1.md`：DeepSeek 兼容边界、配置和运行方法；
 - `docs/06_portfolio_completion_plan.md`：求职作品级完整原型的阶段、验收门、
   预算和公开发布合同；
+- `docs/07_preparation_agent_v1.md`：Preparation Agent 的 9 工具边界、
+  来源绑定、单次准备事务和兼容范围；
+- `docs/08_host_confirmation_public_demo.md`：宿主确认、零密钥公开演示和
+  生产边界设计；
+- `docs/09_project_status.md`：当前完成度、验证证据和下次恢复顺序；
+- `docs/testing/readonly-holdout-v2-protocol.md`：v1 退役后的校准门、
+  v2 封存和唯一正式运行协议；
+- `docs/testing/semantic-judge-v1.tdd.md`：原子命题语义门、校准标准和
+  RED→GREEN 证据；
+- `docs/testing/preparation-agent.tdd.md`：Preparation Agent 的 RED→GREEN、
+  安全不变量和验证记录；
 - `docs/testing/eval-evidence-budget-guard.tdd.md`：机器证据包、预算闸门与
   4-trial 正式开发集记录；
 - `docs/testing/deepseek-readonly-agent-live-eval.md`：首次真实模型基线与失败分类；
 - `docs/testing/deepseek-readonly-agent-prompt-efficiency.tdd.md`：Prompt A/B、RED→GREEN 与证据边界；
 - `docs/tool_contracts.schema.json`：机器可读工具 Schema；
 - `docs/readonly_tool_contracts.schema.json`：当前实际暴露给模型的 6 工具 Schema；
+- `docs/preparation_tool_contracts.schema.json`：Preparation Agent 的精确 9 工具 Schema；
 - `docs/openapi.json`：导出的 HTTP API Schema；
-- `app/agent/system_prompt.md`：下一阶段系统指令草案。
+- `app/agent/preparation_system_prompt.md`：操作准备阶段系统指令。
 
 重新导出 Schema：
 
