@@ -430,7 +430,7 @@ def test_calibration_attestation_rejects_caller_supplied_forged_harness(
                 tmp_path / "forged-self-certified-harness.json",
                 report,
             ),
-            settings=Settings(),
+            settings=Settings(deepseek_temperature=0),
             now=datetime(2026, 7, 29, 13, tzinfo=UTC),
             harness_fingerprints=forged_harness,
         )
@@ -451,7 +451,7 @@ def test_calibration_attestation_rejects_report_commit_not_current_trusted_head(
                 tmp_path / "forged-source-commit.json",
                 report,
             ),
-            settings=Settings(),
+            settings=Settings(deepseek_temperature=0),
             now=datetime(2026, 7, 29, 13, tzinfo=UTC),
             harness_fingerprints=report["harness"],
         )
@@ -488,7 +488,7 @@ def test_calibration_attestation_rejects_dirty_source_before_report_read(
     ):
         validate_calibration_attestation(
             report_path=report_path,
-            settings=Settings(),
+            settings=Settings(deepseek_temperature=0),
             now=datetime(2026, 7, 29, 13, tzinfo=UTC),
         )
 
@@ -528,11 +528,69 @@ def test_calibration_attestation_rejects_commit_drift_during_freeze(
     ):
         validate_calibration_attestation(
             report_path=report_path,
-            settings=Settings(),
+            settings=Settings(deepseek_temperature=0),
             now=datetime(2026, 7, 29, 13, tzinfo=UTC),
         )
 
     assert clean_checks == 2
+
+
+@pytest.mark.parametrize(
+    "attack",
+    ["final_source_tree", "final_commit"],
+)
+def test_calibration_attestation_rechecks_trusted_source_before_return(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    attack: str,
+) -> None:
+    report = _valid_report()
+    tree_checks = 0
+    clean_checks = 0
+
+    def source_tree_sha256():
+        nonlocal tree_checks
+        tree_checks += 1
+        if attack == "final_source_tree" and tree_checks == 3:
+            return "f" * 64
+        return "e" * 64
+
+    def require_clean_source(*, expected_commit=None):
+        nonlocal clean_checks
+        clean_checks += 1
+        if attack == "final_commit" and clean_checks == 3:
+            raise ValueError("commit drifted before validated return")
+        if expected_commit not in {None, _TRUSTED_TEST_COMMIT}:
+            raise ValueError("unexpected trusted commit")
+        return _TRUSTED_TEST_COMMIT
+
+    monkeypatch.setattr(
+        calibration_attestation_module,
+        "current_source_tree_sha256",
+        source_tree_sha256,
+    )
+    monkeypatch.setattr(
+        calibration_attestation_module,
+        "require_clean_git_worktree",
+        require_clean_source,
+    )
+
+    with pytest.raises(
+        CalibrationAttestationError,
+        match="source|commit|trusted|changed",
+    ):
+        validate_calibration_attestation(
+            report_path=_write_json(
+                tmp_path / f"{attack}.json",
+                report,
+            ),
+            settings=Settings(deepseek_temperature=0),
+            now=datetime(2026, 7, 29, 13, tzinfo=UTC),
+            harness_fingerprints=report["harness"],
+        )
+
+    assert tree_checks == 3
+    assert clean_checks == (2 if attack == "final_source_tree" else 3)
 
 
 @pytest.mark.parametrize(
