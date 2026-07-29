@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import json
 from copy import deepcopy
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+
+import pytest
 
 from app.config import Settings
 from evals.calibration_attestation import (
@@ -80,11 +83,19 @@ def _attestation() -> ValidatedCalibrationAttestation:
         fixture_sha256="c" * 64,
         contract_set_sha256="d" * 64,
         harness_sha256="e" * 64,
-        result_count=44,
+        result_count=49,
         fixture_ids=tuple(
             f"canonical-fixture-{index:02d}"
-            for index in range(44)
+            for index in range(49)
         ),
+        fixture_kinds=tuple(
+            (
+                f"canonical-fixture-{index:02d}",
+                "safe_canonical",
+            )
+            for index in range(49)
+        ),
+        completed_at=datetime(2026, 7, 29, 12, tzinfo=UTC),
     )
 
 
@@ -227,7 +238,7 @@ def test_summary_separates_strict_reliability_safety_usage_and_latency():
     assert summary["latency_ms"]["case"]["p50"] >= 1001
     assert summary["latency_ms"]["model_call"]["max"] == 100
     assert summary["business_state"]["changed_trials"] == 0
-    assert summary["budget"]["run"]["committed_cny"] == "0.0048"
+    assert summary["budget"]["run"]["committed_cny"] == "0.000048"
     assert summary["budget"]["cumulative"]["hard_limit_cny"] == "20"
 
 
@@ -419,7 +430,12 @@ def test_formal_manifest_rejects_unsettled_budget_and_model_drift():
         raise AssertionError("formal manifest accepted unsettled budget")
 
     drifted = deepcopy(results)
-    drifted[0].model_calls[0].observed_model = "different-model"
+    drifted[0].model_calls = (
+        replace(
+            drifted[0].model_calls[0],
+            observed_model="different-model",
+        ),
+    )
     try:
         build_readonly_manifest(
             **common,
@@ -430,3 +446,54 @@ def test_formal_manifest_rejects_unsettled_budget_and_model_drift():
         assert "model" in str(exc)
     else:
         raise AssertionError("formal manifest accepted model drift")
+
+
+def test_formal_manifest_recomputes_exact_cost_from_every_model_call():
+    settings = Settings(deepseek_model="deepseek-v4-flash")
+    cases = _formal_cases()
+    results = [
+        _result(case_id=case.case_id, trial=trial, passed=True)
+        for trial in range(1, 5)
+        for case in cases
+    ]
+    started = datetime.now(UTC)
+    common = {
+        "run_id": "eval-20260729-formal-cost",
+        "purpose": "holdout_formal",
+        "split": "holdout",
+        "case_set_name": "readonly-holdout-v2",
+        "cases": cases,
+        "results": results,
+        "settings": settings,
+        "planned_trials": 4,
+        "started_at": started,
+        "completed_at": started + timedelta(seconds=1),
+        "calibration_attestation": _attestation(),
+        "calibration_review": _review(),
+        "formal_holdout_evidence": _formal_holdout_evidence(),
+    }
+    overstated = _budget_report(len(results))
+    for scope in ("run", "cumulative"):
+        overstated[scope]["committed_cny"] = "17"
+        overstated[scope]["settled_cny"] = "17"
+        overstated[scope]["remaining_execution_cny"] = "1"
+
+    with pytest.raises(ValueError, match="cost|usage|budget"):
+        build_readonly_manifest(
+            **common,
+            budget_report=overstated,
+        )
+
+    retried = deepcopy(results)
+    retried[0].model_calls = (
+        replace(
+            retried[0].model_calls[0],
+            provider_attempts=2,
+        ),
+    )
+    retry_budget = _budget_report(len(results) + 1)
+    with pytest.raises(ValueError, match="attempt|cost|usage"):
+        build_readonly_manifest(
+            **{**common, "results": retried},
+            budget_report=retry_budget,
+        )
