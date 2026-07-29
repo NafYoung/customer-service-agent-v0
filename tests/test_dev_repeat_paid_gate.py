@@ -585,10 +585,12 @@ def test_dev_repeat_manifest_rejects_unsettled_or_unpriced_paid_evidence(
     elif attack == "missing_usage":
         results[0].model_calls = (
             replace(results[0].model_calls[0], usage=None),
+            *results[0].model_calls[1:],
         )
     elif attack == "retry":
         results[0].model_calls = (
             replace(results[0].model_calls[0], provider_attempts=2),
+            *results[0].model_calls[1:],
         )
         budget["run"]["attempt_count"] += 1
     elif attack == "cost":

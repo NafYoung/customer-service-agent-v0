@@ -605,6 +605,89 @@ def result_to_record(
     }
 
 
+def _paid_evidence_datetime(
+    value: str | datetime,
+    *,
+    label: str,
+) -> datetime:
+    try:
+        parsed = (
+            value
+            if isinstance(value, datetime)
+            else datetime.fromisoformat(value)
+        )
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{label} timestamp is invalid") from exc
+    if parsed.tzinfo is None:
+        raise ValueError(f"{label} timestamp must be timezone-aware")
+    return parsed
+
+
+def _require_completed_paid_trial_calls(
+    *,
+    label: str,
+    results: Sequence[ReadonlyEvalResult],
+    expected_model: str,
+) -> None:
+    observed_models: set[str] = set()
+    for result in results:
+        trial_started = _paid_evidence_datetime(
+            result.started_at,
+            label=f"{label} trial",
+        )
+        trial_completed = _paid_evidence_datetime(
+            result.completed_at,
+            label=f"{label} trial",
+        )
+        calls = list(result.model_calls)
+        agent_calls = [
+            call for call in calls if call.phase == "agent"
+        ]
+        judge_calls = [
+            call
+            for call in calls
+            if call.phase == "semantic_judge"
+        ]
+        if (
+            not agent_calls
+            or len(judge_calls) != 1
+            or len(agent_calls) + len(judge_calls) != len(calls)
+            or [call.sequence for call in agent_calls]
+            != list(range(1, len(agent_calls) + 1))
+            or judge_calls[0].sequence != 1
+            or judge_calls[0].tool_contract_count != 0
+            or bool(judge_calls[0].tool_calls)
+        ):
+            raise ValueError(
+                f"{label} each completed trial requires consecutive "
+                "agent calls and one isolated semantic-judge call"
+            )
+        for call in calls:
+            call_started = _paid_evidence_datetime(
+                call.started_at,
+                label=f"{label} model call",
+            )
+            if not trial_started <= call_started <= trial_completed:
+                raise ValueError(
+                    f"{label} model-call time is outside its trial record"
+                )
+            if (
+                call.status != "success"
+                or call.usage is None
+                or call.provider_attempts != 1
+                or call.observed_model != expected_model
+            ):
+                raise ValueError(
+                    f"{label} calls require the exact model and "
+                    "single-attempt usage"
+                )
+            observed_models.add(call.observed_model)
+    if observed_models != {expected_model}:
+        raise ValueError(
+            f"{label} observed models differ from completed trial calls"
+        )
+
+
 def _require_completed_paid_evidence(
     *,
     label: str,
@@ -665,22 +748,16 @@ def _require_completed_paid_evidence(
         raise ValueError(
             f"{label} run is outside the canonical price window"
         )
+    _require_completed_paid_trial_calls(
+        label=label,
+        results=results,
+        expected_model=settings.deepseek_model,
+    )
     model_calls = [
         call
         for result in results
         for call in result.model_calls
     ]
-    if any(
-        call.status != "success"
-        or call.usage is None
-        or call.provider_attempts != 1
-        or call.observed_model != settings.deepseek_model
-        for call in model_calls
-    ):
-        raise ValueError(
-            f"{label} calls require the exact model and "
-            "single-attempt usage"
-        )
     expected_buckets: Counter[
         tuple[str, str, str, str]
     ] = Counter()

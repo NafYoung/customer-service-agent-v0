@@ -1195,19 +1195,64 @@ def _require_completed_paid_bundle_records(
         raise ValueError(
             f"{label} run is outside canonical pricing"
         )
+    observed_models: set[str] = set()
+    for record in records:
+        calls = record.model_calls
+        agent_calls = [
+            call for call in calls if call.phase == "agent"
+        ]
+        judge_calls = [
+            call
+            for call in calls
+            if call.phase == "semantic_judge"
+        ]
+        if (
+            not agent_calls
+            or len(judge_calls) != 1
+            or len(agent_calls) + len(judge_calls) != len(calls)
+            or [call.sequence for call in agent_calls]
+            != list(range(1, len(agent_calls) + 1))
+            or judge_calls[0].sequence != 1
+            or judge_calls[0].tool_contract_count != 0
+            or bool(judge_calls[0].tool_calls)
+        ):
+            raise ValueError(
+                f"{label} each completed trial requires consecutive "
+                "agent calls and one isolated semantic-judge call"
+            )
+        for call in calls:
+            if (
+                call.started_at.tzinfo is None
+                or not (
+                    record.started_at
+                    <= call.started_at
+                    <= record.completed_at
+                )
+            ):
+                raise ValueError(
+                    f"{label} model-call time is outside its trial record"
+                )
+            if (
+                call.status != "success"
+                or call.usage is None
+                or call.provider_attempts != 1
+                or call.observed_model
+                != manifest.model.requested_model
+            ):
+                raise ValueError(
+                    f"{label} model-call usage is not exact"
+                )
+            observed_models.add(call.observed_model)
+    if (
+        observed_models != {manifest.model.requested_model}
+        or manifest.model.observed_models != sorted(observed_models)
+    ):
+        raise ValueError(
+            f"{label} manifest observed models differ from records"
+        )
     model_calls = [
         call for item in records for call in item.model_calls
     ]
-    if any(
-        call.status != "success"
-        or call.usage is None
-        or call.provider_attempts != 1
-        or call.observed_model != manifest.model.requested_model
-        for call in model_calls
-    ):
-        raise ValueError(
-            f"{label} model-call usage is not exact"
-        )
     expected_buckets: Counter[
         tuple[str, str, str, str]
     ] = Counter()

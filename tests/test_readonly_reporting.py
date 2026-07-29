@@ -573,6 +573,7 @@ def test_formal_manifest_rejects_unsettled_budget_and_model_drift():
             drifted[0].model_calls[0],
             observed_model="different-model",
         ),
+        *drifted[0].model_calls[1:],
     )
     try:
         build_readonly_manifest(
@@ -634,6 +635,7 @@ def test_formal_manifest_recomputes_exact_cost_from_every_model_call():
             retried[0].model_calls[0],
             provider_attempts=2,
         ),
+        *retried[0].model_calls[1:],
     )
     retry_budget = _budget_report(
         _attempt_count(results) + 1,
@@ -850,6 +852,7 @@ def test_formal_manifest_rejects_a_settled_execution_overrun() -> None:
                 "total_tokens": 18_000_000,
             },
         ),
+        *results[0].model_calls[1:],
     )
     budget = _budget_report(
         _attempt_count(results),
