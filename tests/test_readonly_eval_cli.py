@@ -4,6 +4,7 @@ import json
 import subprocess
 import sys
 from copy import deepcopy
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -82,6 +83,11 @@ class OfflineSemanticEvalModel(OfflineEvalModel):
                             "id": "already_executed",
                             "relation": "contradicted",
                             "evidence_spans": ["尚未执行"],
+                        },
+                        {
+                            "id": "evaluator_manipulation_attempt",
+                            "relation": "not_mentioned",
+                            "evidence_spans": [],
                         },
                     ],
                     "material_self_contradiction": False,
@@ -491,11 +497,17 @@ def test_formal_cli_validates_calibration_chain_before_budget_or_model(
     attestation = ValidatedCalibrationAttestation(
         report_sha256="a" * 64,
         run_id="eval-20260729-calibration-v2",
+        source_git_commit="1" * 40,
         fixture_sha256="c" * 64,
         contract_set_sha256="d" * 64,
         harness_sha256="e" * 64,
-        result_count=44,
-        fixture_ids=tuple(f"fixture-{index:02d}" for index in range(44)),
+        result_count=49,
+        fixture_ids=tuple(f"fixture-{index:02d}" for index in range(49)),
+        fixture_kinds=tuple(
+            (f"fixture-{index:02d}", "safe_canonical")
+            for index in range(49)
+        ),
+        completed_at=datetime(2026, 7, 29, 12, tzinfo=UTC),
     )
     review = ValidatedCalibrationReview(
         review_sha256="b" * 64,
@@ -503,6 +515,7 @@ def test_formal_cli_validates_calibration_chain_before_budget_or_model(
         reviewed_count=5,
     )
     calls: list[str] = []
+    expected_source_commit = "2" * 40
 
     monkeypatch.setattr(
         run_readonly_agent_evals,
@@ -510,7 +523,14 @@ def test_formal_cli_validates_calibration_chain_before_budget_or_model(
         lambda path: cases,
     )
 
+    def require_clean_source(*, expected_commit=None):
+        assert expected_commit is None
+        calls.append("clean")
+        return expected_source_commit
+
     def validate_attestation(**kwargs):
+        assert "fixture_snapshot" in kwargs
+        assert "harness_fingerprints" in kwargs
         calls.append("attestation")
         return attestation
 
@@ -522,6 +542,8 @@ def test_formal_cli_validates_calibration_chain_before_budget_or_model(
     def reject_declaration(**kwargs):
         assert kwargs["calibration_attestation"] is attestation
         assert kwargs["calibration_review"] is review
+        assert kwargs["source_git_commit"] == expected_source_commit
+        assert kwargs["harness_fingerprints"]
         calls.append("declaration")
         raise HoldoutLockError("generic formal declaration failure")
 
@@ -529,6 +551,12 @@ def test_formal_cli_validates_calibration_chain_before_budget_or_model(
         calls.append("budget")
         raise AssertionError("budget construction must not be reached")
 
+    monkeypatch.setattr(
+        run_readonly_agent_evals,
+        "require_clean_git_worktree",
+        require_clean_source,
+        raising=False,
+    )
     monkeypatch.setattr(
         run_readonly_agent_evals,
         "validate_calibration_attestation",
@@ -578,4 +606,97 @@ def test_formal_cli_validates_calibration_chain_before_budget_or_model(
     )
 
     assert exit_code == 2
-    assert calls == ["attestation", "review", "declaration"]
+    assert calls == ["clean", "attestation", "review", "declaration"]
+
+
+def test_formal_cli_rejects_dirty_source_before_attestation_or_budget(
+    tmp_path,
+    monkeypatch,
+):
+    cases = [
+        ReadonlyEvalCase.model_validate(
+            {
+                "case_id": f"private-holdout-{index:02d}",
+                "user_message": "private input",
+                "expected": {
+                    "semantic_contract": {
+                        "required_claims": [
+                            {
+                                "id": f"safe_{index:02d}",
+                                "category": "security",
+                                "proposition": "the response remains safe",
+                            }
+                        ],
+                        "forbidden_claims": [],
+                    }
+                },
+            }
+        )
+        for index in range(20)
+    ]
+    reached: list[str] = []
+    monkeypatch.setattr(
+        run_readonly_agent_evals,
+        "load_cases",
+        lambda path: cases,
+    )
+
+    def reject_dirty_source(**kwargs):
+        del kwargs
+        reached.append("clean")
+        raise ValueError("clean Git worktree required")
+
+    def fail_attestation(**kwargs):
+        del kwargs
+        reached.append("attestation")
+        raise AssertionError("attestation must not be reached")
+
+    def fail_budget(**kwargs):
+        del kwargs
+        reached.append("budget")
+        raise AssertionError("budget must not be reached")
+
+    monkeypatch.setattr(
+        run_readonly_agent_evals,
+        "require_clean_git_worktree",
+        reject_dirty_source,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        run_readonly_agent_evals,
+        "validate_calibration_attestation",
+        fail_attestation,
+    )
+    monkeypatch.setattr(
+        run_readonly_agent_evals,
+        "build_deepseek_budget_guard",
+        fail_budget,
+    )
+
+    exit_code = run_readonly_agent_evals.main(
+        [
+            "--case-dir",
+            str(tmp_path / "private-cases"),
+            "--output-root",
+            str(tmp_path / "output"),
+            "--run-id",
+            "eval-20260729-formal-dirty",
+            "--purpose",
+            "holdout_formal",
+            "--split",
+            "holdout",
+            "--case-set-name",
+            "readonly-holdout-v2",
+            "--trials",
+            "4",
+            "--holdout-manifest",
+            str(tmp_path / "manifest.json"),
+            "--calibration-report",
+            str(tmp_path / "calibration.json"),
+            "--calibration-review",
+            str(tmp_path / "review.json"),
+        ]
+    )
+
+    assert exit_code == 2
+    assert reached == ["clean"]

@@ -135,6 +135,18 @@ def test_holdout_eligible_calibration_writes_a_validated_closed_report(
     )
     budget_guard = _ClosedBudgetGuard(len(fixtures))
     model = _CanonicalCalibrationModel(budget_guard)
+    clean_checks: list[str | None] = []
+
+    def require_clean_source(*, expected_commit=None):
+        clean_checks.append(expected_commit)
+        return "1" * 40
+
+    monkeypatch.setattr(
+        calibration_cli,
+        "require_clean_git_worktree",
+        require_clean_source,
+        raising=False,
+    )
     monkeypatch.setattr(
         calibration_cli,
         "build_deepseek_budget_guard",
@@ -165,9 +177,17 @@ def test_holdout_eligible_calibration_writes_a_validated_closed_report(
         report["attestation_kind"]
         == "semantic_judge_holdout_eligibility"
     )
+    assert report["source_git_commit"] == "1" * 40
+    assert clean_checks == [None, "1" * 40]
     validate_calibration_attestation(
         report_path=report_path,
         settings=calibration_cli.Settings(),
+        fixture_snapshot=(
+            calibration_cli.freeze_readonly_harness(
+                calibration_cli.Settings()
+            ).calibration_fixture_snapshot
+        ),
+        harness_fingerprints=report["harness"],
     )
 
 
