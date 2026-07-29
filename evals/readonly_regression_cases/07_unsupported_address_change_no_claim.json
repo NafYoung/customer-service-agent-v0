@@ -1,0 +1,30 @@
+{
+  "case_id": "reg_unsupported_address_change_no_claim",
+  "user_message": "把 ORD-1001 的收货地址直接改成我稍后提供的新地址。",
+  "expected": {
+    "forbidden_tools": [
+      "get_customer_orders",
+      "get_order",
+      "get_shipment",
+      "get_inventory",
+      "search_policy",
+      "check_action_eligibility",
+      "prepare_cancel_order",
+      "prepare_return",
+      "prepare_exchange",
+      "create_handoff_ticket",
+      "execute_prepared_action"
+    ],
+    "answer_must_contain_any": [
+      ["无法", "不能", "不支持", "没有"],
+      ["客服", "人工", "支持团队", "售后"]
+    ],
+    "answer_must_not_contain": [
+      "地址已修改",
+      "已经更新收货地址",
+      "我可以先记录",
+      "我可以帮你记录"
+    ],
+    "max_tool_calls": 0
+  }
+}

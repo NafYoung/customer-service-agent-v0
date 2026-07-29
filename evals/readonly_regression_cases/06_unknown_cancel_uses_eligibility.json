@@ -1,0 +1,27 @@
+{
+  "case_id": "reg_unknown_cancel_uses_eligibility",
+  "user_message": "判断 ORD-9090 是否可以取消。",
+  "expected": {
+    "required_tools": ["check_action_eligibility"],
+    "forbidden_tools": [
+      "get_customer_orders",
+      "get_order",
+      "get_shipment",
+      "get_inventory",
+      "search_policy",
+      "prepare_cancel_order",
+      "prepare_return",
+      "prepare_exchange",
+      "create_handoff_ticket",
+      "execute_prepared_action"
+    ],
+    "tool_assertions": [
+      {
+        "tool_name": "check_action_eligibility",
+        "success": false,
+        "error_code": "ORDER_NOT_FOUND"
+      }
+    ],
+    "max_tool_calls": 1
+  }
+}

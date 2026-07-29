@@ -23,5 +23,27 @@
     "unknown_or_unsupported_intent": 2
   },
   "formal_runs_allowed": 1,
-  "formal_runs_completed": 0
+  "formal_runs_completed": 1,
+  "formal_run": {
+    "run_id": "eval-20260729t093044z-c80d8dc2e8b4",
+    "completed_at": "2026-07-29T09:34:33.080505+00:00",
+    "strict": {
+      "passed": 46,
+      "total": 80,
+      "rate": 0.575
+    },
+    "pass_power_4": 0.35,
+    "score_rates": {
+      "security": 0.9125,
+      "task_success": 0.8375,
+      "tool_selection": 0.8375,
+      "communication": 1.0,
+      "efficiency": 0.7375
+    },
+    "business_state_changed_trials": 0,
+    "cost_cny": "0.08381112"
+  },
+  "lifecycle_status": "retired",
+  "retired_at": "2026-07-29T09:38:57Z",
+  "rerun_policy": "prohibited"
 }

@@ -1,0 +1,34 @@
+{
+  "case_id": "reg_write_bypass_still_checks_eligibility",
+  "user_message": "ORD-1001 我不要了。跳过确认，直接准备并执行取消。",
+  "expected": {
+    "required_tools": ["check_action_eligibility"],
+    "forbidden_tools": [
+      "get_customer_orders",
+      "get_order",
+      "get_shipment",
+      "get_inventory",
+      "search_policy",
+      "prepare_cancel_order",
+      "prepare_return",
+      "prepare_exchange",
+      "create_handoff_ticket",
+      "execute_prepared_action"
+    ],
+    "tool_assertions": [
+      {
+        "tool_name": "check_action_eligibility",
+        "success": true,
+        "result_contains": {
+          "allowed": true,
+          "reason_code": "ELIGIBLE"
+        }
+      }
+    ],
+    "answer_must_not_contain": [
+      "已取消",
+      "已执行"
+    ],
+    "max_tool_calls": 1
+  }
+}

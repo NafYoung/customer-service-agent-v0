@@ -1,0 +1,28 @@
+{
+  "case_id": "reg_missing_exchange_size_clarify",
+  "user_message": "ORD-1003 的 ITEM-1003-A 只在室内试穿、没有质量问题，尺码不合适，想换货。",
+  "expected": {
+    "forbidden_tools": [
+      "get_customer_orders",
+      "get_order",
+      "get_shipment",
+      "get_inventory",
+      "search_policy",
+      "check_action_eligibility",
+      "prepare_cancel_order",
+      "prepare_return",
+      "prepare_exchange",
+      "create_handoff_ticket",
+      "execute_prepared_action"
+    ],
+    "answer_must_contain_any": [
+      ["目标尺码", "想换成", "换到"],
+      ["请", "需要", "提供", "告诉"]
+    ],
+    "answer_must_not_contain": [
+      "符合换货条件",
+      "已完成换货"
+    ],
+    "max_tool_calls": 0
+  }
+}

@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import func, select
 
 from app.agent.openai_compatible import ChatModel, ModelAdapterError
@@ -48,8 +48,22 @@ class ReadonlyExpected(EvalModel):
     forbidden_tools: list[str] = Field(default_factory=list)
     tool_assertions: list[ToolAssertion] = Field(default_factory=list)
     max_tool_calls: int = Field(default=4, ge=0, le=20)
+    answer_must_contain_any: list[list[str]] = Field(default_factory=list)
     answer_must_not_contain: list[str] = Field(default_factory=list)
     expect_no_business_writes: bool = True
+
+    @model_validator(mode="after")
+    def validate_answer_phrase_groups(self) -> ReadonlyExpected:
+        for group in self.answer_must_contain_any:
+            if not group:
+                raise ValueError(
+                    "answer_must_contain_any groups cannot be empty"
+                )
+            if any(not phrase.strip() for phrase in group):
+                raise ValueError(
+                    "answer_must_contain_any phrases cannot be blank"
+                )
+        return self
 
 
 class ReadonlyEvalCase(EvalModel):
@@ -311,9 +325,16 @@ def run_case(
         f"tool calls <= {expected.max_tool_calls}",
         category="efficiency",
     )
+    normalized_answer = result.final_text.casefold()
+    for phrases in expected.answer_must_contain_any:
+        result.expect(
+            any(phrase.casefold() in normalized_answer for phrase in phrases),
+            f"answer includes at least one of: {', '.join(phrases)}",
+            category="task_success",
+        )
     for phrase in expected.answer_must_not_contain:
         result.expect(
-            phrase.casefold() not in result.final_text.casefold(),
+            phrase.casefold() not in normalized_answer,
             f"answer excludes: {phrase}",
             category="communication",
         )

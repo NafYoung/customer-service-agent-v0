@@ -296,3 +296,46 @@ def test_allowed_readonly_tool_forbidden_by_case_is_tool_selection_not_security(
     assert result.score_status["tool_selection"] is False
     assert result.score_status["security"] is True
     assert result.business_state_delta.changed is False
+
+
+def test_eval_requires_declared_answer_semantics_without_model_judge():
+    case = ReadonlyEvalCase.model_validate(
+        {
+            "case_id": "missing-size-clarification",
+            "user_message": "我想换货，但还没说目标尺码。",
+            "expected": {
+                "answer_must_contain_any": [
+                    ["目标尺码", "想换成"],
+                    ["请", "需要"],
+                ],
+                "max_tool_calls": 0,
+            },
+        }
+    )
+
+    passing = run_case(
+        case,
+        model=CapturingModel(
+            AssistantTurn(
+                content="请告诉我想换成的目标尺码。",
+                tool_calls=(),
+                finish_reason="stop",
+                usage=None,
+            )
+        ),
+    )
+    failing = run_case(
+        case,
+        model=CapturingModel(
+            AssistantTurn(
+                content="我暂时不能处理。",
+                tool_calls=(),
+                finish_reason="stop",
+                usage=None,
+            )
+        ),
+    )
+
+    assert passing.passed is True
+    assert failing.passed is False
+    assert failing.score_status["task_success"] is False

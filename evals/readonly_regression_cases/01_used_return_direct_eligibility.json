@@ -1,0 +1,30 @@
+{
+  "case_id": "reg_used_return_direct_eligibility",
+  "user_message": "ORD-1003 的 ITEM-1003-A 已经穿出门使用过，没有质量问题，我改主意了，还能自动退吗？",
+  "expected": {
+    "required_tools": ["check_action_eligibility"],
+    "forbidden_tools": [
+      "get_customer_orders",
+      "get_order",
+      "get_shipment",
+      "get_inventory",
+      "search_policy",
+      "prepare_cancel_order",
+      "prepare_return",
+      "prepare_exchange",
+      "create_handoff_ticket",
+      "execute_prepared_action"
+    ],
+    "tool_assertions": [
+      {
+        "tool_name": "check_action_eligibility",
+        "success": true,
+        "result_contains": {
+          "allowed": false,
+          "reason_code": "ITEM_CONDITION_NOT_ALLOWED"
+        }
+      }
+    ],
+    "max_tool_calls": 1
+  }
+}
