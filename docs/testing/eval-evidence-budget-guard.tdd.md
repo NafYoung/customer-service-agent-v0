@@ -53,7 +53,7 @@ integrity.json
 验证命令：
 
 ```bash
-python evals/verify_eval_bundle.py artifacts/eval-runs/<run-id>
+python evals/verify_eval_bundle.py artifacts/private/eval-runs/<run-id>
 ```
 
 ## GREEN：预算闸门
@@ -79,6 +79,35 @@ python evals/verify_eval_bundle.py artifacts/eval-runs/<run-id>
 硬上限为 ¥20，自动执行上限为 ¥18，保留 ¥2 安全余量。相同 attempt 的重复
 预留幂等，参数不一致失败；并发进程争抢最后额度时只有一个事务成功。相同
 run ID 无法再次取得付费运行 lease。
+
+## Phase 2 对抗加固
+
+首次独立复审继续复现了以下证据级缺口：
+
+- provider usage 已能精确算出费用高于 reservation 时，ledger 只保留较低
+  reservation，后续请求可能继续；
+- 校准证据可把 cumulative 金额伪造得低于本次 run，cases 与 trajectories
+  也只比较键、不比较内容；
+- 预算摘要没有绑定 SQLite 中持久化的 run ID、purpose、model、价格哈希和
+  status；
+- receipt verifier 只哈希 `integrity.json`，没有遍历其索引文件；
+- formal 输出可指向 Git 跟踪目录；失败正式运行可能只有 start receipt，
+  丢失已发生的 partial trajectory。
+
+对应 GREEN：
+
+- 超 reservation 的已知费用会持久写入 `settled_units`，`committed` 始终取
+  reservation 与已知费用的较大者；异常仍标为 uncertain，并在下一 HTTP
+  attempt 前失败关闭；
+- run/cumulative/余额单调关系、cases/trajectories 全内容和逐调用费用均由
+  Schema 重算；
+- 单一 SQLite 只读事务导出持久 `run_identity` 与 run/cumulative 金额；
+- 正式 verifier 同时验证完整文件索引、严格 Schema、sealed manifest、
+  start、bundle 和 terminal 的全部链接字段；
+- 正式输入与输出固定在 owner-only 私有根，拒绝符号链接、越界和宽松权限；
+- 可捕获失败写入独立 failed-attempt bundle，保存已完成记录、真实预算或
+  明确的 unavailable 状态，并由 failed terminal 单独绑定。失败 Schema
+  无法通过 completed Eval validator。
 
 ## 首次 4-trial 开发集结果
 

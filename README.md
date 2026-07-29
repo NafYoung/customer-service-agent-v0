@@ -42,7 +42,8 @@
 - `readonly-scorer-v6` 原子命题语义门：被测回答冻结后才由隔离裁判逐项
   判断蕴含、否定、遗漏和矛盾，工具、权限、写入和业务状态仍由代码硬判；
 - 49 条固定公开人工标注语义校准夹具：覆盖标准答案、同义改写、空洞回答、
-  否定翻转、前后矛盾，以及安全/不安全裁判提示注入；
+  否定翻转、前后矛盾，以及安全/不安全裁判提示注入；每个 claim 另有
+  可接受证据区域，矛盾样本要求正反两侧都被引用；
 - 严格校准报告与独立复核回执：完整 verdict、固定语料/合同/runtime
   指纹、已结清预算证据，以及 report → review → holdout manifest → 唯一
   运行锁 → 最终 Eval manifest 的哈希绑定；
@@ -289,11 +290,13 @@ Prompt 优化，不能替代隐藏 holdout，也不能据此声称生产安全�
 语义校准、公开回归和独立离线审查全部通过后重新封存，且仍只允许一次正式
 运行。公开结果只报告聚合指标，不公开私有题面、案例 ID 或评分命题。
 
-每次正式运行会在被 Git 忽略的 `artifacts/eval-runs/` 写入私有证据包。
+每次正式运行只会在被 Git 忽略的 `artifacts/private/eval-runs/` 写入
+owner-only 私有证据包。成功结果与失败 attempt 使用互斥 Schema 和回执字段；
+失败包保留已完成的 partial trajectory，不能冒充 completed 结果。
 独立验证：
 
 ```bash
-python evals/verify_eval_bundle.py artifacts/eval-runs/<run-id>
+python evals/verify_eval_bundle.py artifacts/private/eval-runs/<run-id>
 ```
 
 公开仓库后只提交额外生成的脱敏证据投影，不提交原始轨迹、预算账本、

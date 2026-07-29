@@ -22,6 +22,7 @@
 - 正式控制台不得输出私有 case ID 或评分短语。
 - 自定义或缩减语料不能取得 holdout eligibility；
 - 非字符串 JSON 内容、无可见字符、超长或未落地 evidence 必须协议失败；
+- 纯标点、跨 claim 共用答案片段和矛盾单侧 evidence 不能被视为 grounded；
 - 校准报告、人工复核、holdout manifest、唯一锁和最终证据必须形成同一条
   内容哈希链。
 
@@ -47,6 +48,9 @@
 11. 按确定性分层规则抽取 5 条固定夹具的独立 GO 复核回执与报告哈希绑定；
 12. 正式 holdout split、校准前置门、锁身份、模型运行时指纹和控制台披露
     全部失败关闭。
+13. 49 条固定 fixture 为 207 个 claim 标注可接受 evidence 区域；七条矛盾
+    fixture 另标注 14 个互斥侧。裁判 span 至少含字母或数字，必须落入对应
+    claim 区域；`both_or_ambiguous` 和全局矛盾 evidence 都必须覆盖两侧。
 
 本地校准入口：
 

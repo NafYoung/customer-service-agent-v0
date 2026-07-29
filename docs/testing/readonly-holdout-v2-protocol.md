@@ -24,7 +24,9 @@ v1 赛后审计确认了两类问题，因此 v2 前只允许以下有证据的�
 原子命题；被测 Agent 永远看不到 `semantic_contract`。required 命题必须
 `entailed`，forbidden 命题只能 `contradicted` 或 `not_mentioned`；歧义、
 前后矛盾、无效 JSON、未对齐 claim ID 或无法在原回答中定位 evidence span
-都失败关闭。所有正式 artifact 必须记录实际 temperature、Prompt、工具、
+都失败关闭。校准夹具还为每个 claim 标注可接受证据区域，并为矛盾样本标注
+互斥的正反两侧；纯标点、跨 claim 引用、整段答案复用和只覆盖一侧都不能
+取得校准 Gate。所有正式 artifact 必须记录实际 temperature、Prompt、工具、
 政策、seed、Agent loop、scorer、裁判 Prompt/源码，以及模型适配器、runner
 和完整安全生成参数的指纹。
 
@@ -64,17 +66,26 @@ v1 赛后审计确认了两类问题，因此 v2 前只允许以下有证据的�
 冻结的该 trial 标为不可评分/失败；不得重新调用被测 Agent。人工复核只能
 作为追加审计，不能覆盖原始自动分数。
 
-Runner 要求显式传入公开 holdout manifest、私有校准报告和私有复核回执。
-它先冻结实际执行使用的 Prompt、政策、工具合同和校准语料，要求 Git 工作树
-干净，并把校准与 holdout 绑定到同一提交；随后严格重算校准结果、费用和案例
-集及全部指纹。只有这些检查通过，才会创建预算、模型，并在第一次 provider
+Runner 要求显式传入 owner-only 的 sealed holdout manifest、私有校准报告
+和私有复核回执；公开仓库只发布不含题面和路径的脱敏 manifest 投影。
+Runner 先取得干净 Git 提交，再冻结实际执行使用的 Prompt、政策、工具合同和
+校准语料，并立即复查提交未漂移；校准与 holdout 必须绑定到同一提交。随后
+严格重算校准结果、费用、案例集及全部指纹。只有这些检查通过，才会创建预算、
+模型，并在第一次 provider
 调用前以原子独占文件消费该题集的正式运行资格。每次 HTTP attempt 前都会
 重新检查价格有效期。锁槽只由案例集哈希决定，改案例集名称、`run_id` 或
 artifact 目录都不能获得第二次机会。`holdout` split 只能与
 `holdout_formal` purpose 配对；模型名、官方 endpoint、temperature、
 thinking、tool choice、token/重试/超时、Agent 限额以及对应实现源码任一
-漂移都会失败关闭。start receipt、最终 Eval manifest、完整性索引和 terminal
-receipt 形成可重新验证的哈希链。
+漂移都会失败关闭。预算摘要必须绑定 SQLite 中持久化的 run ID、purpose、
+model、价格快照和完成状态；累计金额、余额和逐调用重算必须一致。
+
+正式成功路径只允许写入固定的 `artifacts/private/eval-runs/`，所有输入也必须
+位于固定私有根下，拒绝符号链接、越界路径、宽松目录和 `0644` 文件。最终
+干净源码复查发生在 completed bundle 落盘前。start receipt、最终 Eval
+manifest、完整性索引和 terminal receipt 形成可重新验证的哈希链；组合
+校验器会重新遍历每个索引文件并交叉比较案例集、校准、源码、runtime 和
+预算身份，而不是只比较 `integrity.json` 自身。
 
 正式命令必须包含：
 
@@ -92,6 +103,24 @@ python evals/run_readonly_agent_evals.py \
 
 正式运行的控制台只输出聚合结果，不输出私有 case ID 或带预期短语的逐例失败
 信息。完整轨迹保留在 Git 忽略、目录权限 700、文件权限 600 的私有证据包。
+
+成功后离线重验完整链：
+
+```bash
+python evals/verify_eval_bundle.py \
+  artifacts/private/eval-runs/<run-id> \
+  --holdout-manifest <sealed-holdout-v2-manifest.json> \
+  --holdout-start <readonly-holdout-v2.start.json> \
+  --holdout-terminal <readonly-holdout-v2.terminal.json>
+```
+
+任何可捕获的 Python 异常都会先尝试关闭模型和预算，再把已完成 trial 写入
+独立的 `formal_holdout_failed_attempt` 私有 bundle。该 Schema 与成功
+`ReadonlyManifest` 隔离，不能冒充 completed 结果；failed terminal 只绑定
+`attempt_bundle_integrity_sha256`。若磁盘或权限故障使失败包也无法保存，
+terminal 会明确记录 evidence unavailable，不虚构零费用或空成功证据。
+失败链使用同一校验命令并追加 `--failed-attempt`。`SIGKILL`、断电或文件系统
+整体失效不属于可捕获异常，协议不声称能在这些情况下保证 terminal 落盘。
 
 ## v2 验收
 
