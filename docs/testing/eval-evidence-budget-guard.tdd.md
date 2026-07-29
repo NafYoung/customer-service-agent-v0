@@ -114,6 +114,10 @@ run ID 无法再次取得付费运行 lease。
   代码中；一次安全读取产生的同一内存快照同时供指纹和预算守卫使用，二者
   身份不一致时会在创建 SQLite run、start receipt 或 provider attempt 前
   失败关闭；
+- 校准证明、formal 构建器和 formal v2 Schema 都从同一 canonical price
+  snapshot 与各自冻结的 `max_tokens` 重算最坏单次预留，并要求证据中的
+  `reservation_cny_per_attempt` 与规范金额完全一致；manifest/summary
+  同时降为 0、低值或只漂移 `max_tokens` 都会失败关闭；
 - 成功 bundle 的 summary 从完整 case records 重算，case 的 status、分层
   scores、score checks、checks/failures 与业务状态必须内部一致，不能把失败
   record 配成旧的 80/80 summary；
@@ -126,6 +130,12 @@ run ID 无法再次取得付费运行 lease。
 - formal bundle、manifest、start、terminal 的目录/文件权限固定为
   `0700`/`0600` 且拒绝 symlink；公开 CLI 不再认证缺少完整回执链的 formal；
 - formal 预检错误和成功摘要均不回显私有案例或 artifact 路径。
+
+该预留绑定的 TDD 复现先证明 5 个攻击用例为 RED：formal 构建器接受低预留
+和 `max_tokens` 漂移、formal Schema 接受 manifest/summary 协同降为 0，
+校准证明接受低预留和 `max_tokens` 漂移。实现统一规范重算后，同一定向命令
+的 12 个用例全部通过；预算、价格、formal 和校准相关回归共 56 个用例通过，
+Ruff 与 Mypy 定向检查通过。
 
 ## 首次 4-trial 开发集结果
 

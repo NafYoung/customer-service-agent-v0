@@ -9,7 +9,10 @@ from typing import Any, Mapping
 from pydantic import BaseModel, ValidationError
 
 from app.agent.deepseek_budget import (
+    BudgetInvariantError,
     DeepSeekPriceSnapshot,
+    format_cny,
+    worst_case_attempt_cost,
 )
 from evals.file_snapshot import (
     FileSnapshot,
@@ -128,6 +131,44 @@ def canonical_budget_price_payload(
         "rates_cny": payload["rates_cny"],
         "tokens_per_price_unit": payload["tokens_per_price_unit"],
     }
+
+
+def canonical_worst_case_attempt_reservation_cny(
+    *,
+    canonical_price: DeepSeekPriceSnapshot,
+    max_output_tokens: int,
+) -> str:
+    """Compute the exact reservation bound from canonical price and tokens."""
+
+    try:
+        reservation = worst_case_attempt_cost(
+            canonical_price,
+            max_output_tokens=max_output_tokens,
+        )
+    except (BudgetInvariantError, ValueError) as exc:
+        raise CanonicalPricingError(
+            "The formal max_tokens cannot be priced canonically."
+        ) from exc
+    return format_cny(reservation.units)
+
+
+def require_canonical_attempt_reservation(
+    *,
+    canonical_price: DeepSeekPriceSnapshot,
+    max_output_tokens: int,
+    reservation_cny_per_attempt: str,
+) -> None:
+    """Reject evidence that understates the paid guard's exact reservation."""
+
+    expected = canonical_worst_case_attempt_reservation_cny(
+        canonical_price=canonical_price,
+        max_output_tokens=max_output_tokens,
+    )
+    if reservation_cny_per_attempt != expected:
+        raise CanonicalPricingError(
+            "Paid formal evidence reservation does not match canonical "
+            "pricing and max_tokens."
+        )
 
 
 def _as_payload(

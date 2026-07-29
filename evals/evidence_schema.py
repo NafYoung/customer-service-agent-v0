@@ -17,6 +17,7 @@ from app.agent.deepseek_budget import (
 from evals.canonical_pricing import (
     CanonicalPricingError,
     canonical_price_file_sha256,
+    require_canonical_attempt_reservation,
     require_canonical_paid_budget,
 )
 from evals.evidence import (
@@ -1012,9 +1013,19 @@ class ReadonlyEvidenceBundle(StrictEvidenceModel):
                         cumulative_budget.execution_limit_cny
                     ),
                 )
+                require_canonical_attempt_reservation(
+                    canonical_price=canonical_price,
+                    max_output_tokens=(
+                        self.manifest.model.generation_config.max_tokens
+                    ),
+                    reservation_cny_per_attempt=(
+                        self.summary.budget
+                        .reservation_cny_per_attempt
+                    ),
+                )
             except CanonicalPricingError as exc:
                 raise ValueError(
-                    "Formal v2 pricing is not canonical"
+                    "Formal v2 pricing or reservation is not canonical"
                 ) from exc
             if (
                 self.manifest.harness

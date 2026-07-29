@@ -18,6 +18,7 @@ from app.agent.deepseek_budget import (
 from app.config import Settings
 from evals.canonical_pricing import (
     CanonicalPricingError,
+    require_canonical_attempt_reservation,
     require_canonical_paid_budget,
 )
 from evals.evidence import stable_sha256
@@ -462,9 +463,17 @@ def validate_calibration_attestation(
                 budget.cumulative.execution_limit_cny
             ),
         )
+        require_canonical_attempt_reservation(
+            canonical_price=canonical_price,
+            max_output_tokens=settings.deepseek_max_tokens,
+            reservation_cny_per_attempt=(
+                budget.reservation_cny_per_attempt
+            ),
+        )
     except CanonicalPricingError as exc:
         raise CalibrationAttestationError(
-            "The calibration budget pricing or limits are not canonical."
+            "The calibration budget pricing, limits, or reservation "
+            "are not canonical."
         ) from exc
     canonical_rates = BudgetRatesCny.model_validate(
         canonical_price.rates_cny.model_dump()

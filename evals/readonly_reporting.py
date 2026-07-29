@@ -27,6 +27,7 @@ from evals.canonical_pricing import (
     CanonicalPricingError,
     FrozenCanonicalPrice,
     freeze_canonical_price_snapshot,
+    require_canonical_attempt_reservation,
     require_canonical_paid_budget,
 )
 from evals.evidence import stable_sha256
@@ -738,9 +739,17 @@ def build_readonly_manifest(
                     validated_budget.cumulative.execution_limit_cny
                 ),
             )
+            require_canonical_attempt_reservation(
+                canonical_price=canonical_price,
+                max_output_tokens=settings.deepseek_max_tokens,
+                reservation_cny_per_attempt=(
+                    validated_budget.reservation_cny_per_attempt
+                ),
+            )
         except CanonicalPricingError as exc:
             raise ValueError(
-                "formal holdout budget pricing or limits are not canonical"
+                "formal holdout budget pricing, limits, or reservation "
+                "are not canonical"
             ) from exc
         if (
             started_at < canonical_price.captured_at

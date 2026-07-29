@@ -52,7 +52,7 @@ class _ClosedBudgetGuard:
                 "completed_at": "2026-07-29T12:05:00+00:00",
             },
             "price": price,
-            "reservation_cny_per_attempt": "0.01",
+            "reservation_cny_per_attempt": "1.002048",
             "run": dict(amounts),
             "cumulative": dict(amounts),
         }
