@@ -170,6 +170,36 @@ def _model_error_with_attempts(attempts: int) -> dict[str, object]:
     }
 
 
+def _successful_model_call_with_usage(
+    *,
+    prompt_tokens: int,
+) -> dict[str, object]:
+    return {
+        "sequence": 1,
+        "status": "success",
+        "started_at": "2026-07-29T15:59:59+00:00",
+        "latency_ms": 20,
+        "message_count": 2,
+        "tool_contract_count": 6,
+        "phase": "agent",
+        "tool_calls": [],
+        "finish_reason": "stop",
+        "response_id": "response-visible-usage-1",
+        "observed_model": "deepseek-v4-flash",
+        "usage": {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": 0,
+            "total_tokens": prompt_tokens,
+            "prompt_cache_hit_tokens": 0,
+            "prompt_cache_miss_tokens": prompt_tokens,
+        },
+        "error_code": None,
+        "http_status": None,
+        "provider_request_id": "provider-visible-usage-1",
+        "provider_attempts": 1,
+    }
+
+
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -328,6 +358,42 @@ def test_failed_attempt_preserves_a_real_budget_overrun(
     assert bundle.summary.budget_limit_breached is True
     assert bundle.summary.budget is not None
     assert bundle.summary.budget.cumulative.committed_cny == "18.1"
+
+
+@pytest.mark.parametrize(
+    ("prompt_tokens", "run_id"),
+    [
+        (1, "formal-failed-20260729-visible-cost"),
+        (19_000_000, "formal-failed-20260729-hidden-overrun"),
+    ],
+)
+def test_failed_attempt_rejects_visible_usage_hidden_by_zero_budget(
+    tmp_path: Path,
+    prompt_tokens: int,
+    run_id: str,
+) -> None:
+    failed_record = _case_record(status="failed")
+    failed_record["model_calls"] = [
+        _successful_model_call_with_usage(
+            prompt_tokens=prompt_tokens,
+        )
+    ]
+
+    with pytest.raises(
+        (ValidationError, ValueError),
+        match="budget|cost|usage|commit",
+    ):
+        write_formal_failure_bundle(
+            output_root=tmp_path / run_id,
+            context=_context(run_id=run_id),
+            case_records=[failed_record],
+            records_captured=True,
+            budget_summary=_persistent_budget_report(
+                run_id=run_id,
+                attempt_count=1,
+                committed_cny="0",
+            ),
+        )
 
 
 @pytest.mark.parametrize(
