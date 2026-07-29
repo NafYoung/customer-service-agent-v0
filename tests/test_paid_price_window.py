@@ -17,6 +17,7 @@ from app.agent.deepseek_budget import (
 from app.agent.factory import build_deepseek_client
 from app.agent.openai_compatible import ModelAPIError
 from app.config import Settings
+from evals.evidence_schema import BudgetSummary
 
 
 def _price_snapshot() -> DeepSeekPriceSnapshot:
@@ -248,6 +249,10 @@ def test_response_crossing_price_window_is_uncertain_and_not_retried(
             "count": 1,
         }
     ]
+    validated = BudgetSummary.model_validate(report)
+    assert validated.run.committed_cny == "1.002048"
+    assert validated.run.settled_cny == "0"
+    assert validated.run.uncertain_count == 1
 
 
 def test_retryable_http_error_crossing_price_window_is_not_retried(
