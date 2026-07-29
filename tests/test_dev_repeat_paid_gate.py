@@ -125,11 +125,12 @@ def _paid_budget(
 ) -> dict:
     settings = _settings()
     price = load_canonical_price_snapshot()
-    per_attempt = calculate_usage_cost_from_rates(
+    usage_cost = calculate_usage_cost_from_rates(
         rates_cny=price.rates_cny.model_dump(),
         tokens_per_price_unit=price.tokens_per_price_unit,
         usage=USAGE,
-    ).units
+    )
+    per_attempt = usage_cost.units
     settled = format_cny(per_attempt * attempt_count)
     remaining = format(
         Decimal("18") - Decimal(settled),
@@ -146,6 +147,21 @@ def _paid_budget(
         "reserved_count": 0,
         "uncertain_count": 0,
     }
+    reservation = canonical_worst_case_attempt_reservation_cny(
+        canonical_price=price,
+        max_output_tokens=settings.deepseek_max_tokens,
+    )
+    bucket = {
+        "status": (
+            "settled_exact"
+            if usage_cost.mode == "exact"
+            else "settled_upper_bound"
+        ),
+        "settlement_mode": usage_cost.mode,
+        "reserved_cny": reservation,
+        "known_cost_cny": format_cny(per_attempt),
+        "count": attempt_count,
+    }
     return {
         "schema_version": "1.0",
         "enforcement_mode": "persistent_sqlite",
@@ -160,14 +176,13 @@ def _paid_budget(
             "completed_at": "2026-07-29T12:05:00+00:00",
         },
         "price": canonical_budget_price_payload(price),
-        "reservation_cny_per_attempt": (
-            canonical_worst_case_attempt_reservation_cny(
-                canonical_price=price,
-                max_output_tokens=settings.deepseek_max_tokens,
-            )
-        ),
+        "reservation_cny_per_attempt": reservation,
         "run": dict(amount),
         "cumulative": dict(amount),
+        "attempt_evidence": {
+            "run": [dict(bucket)],
+            "cumulative": [dict(bucket)],
+        },
     }
 
 
@@ -307,6 +322,8 @@ def test_dev_repeat_manifest_accepts_only_canonical_7_by_4_case_set() -> None:
         "missing_usage",
         "retry",
         "cost",
+        "missing_attempt_evidence",
+        "bucket_call_mismatch",
     ],
 )
 def test_dev_repeat_manifest_rejects_unsettled_or_unpriced_paid_evidence(
@@ -357,6 +374,27 @@ def test_dev_repeat_manifest_rejects_unsettled_or_unpriced_paid_evidence(
             budget[scope]["committed_cny"] = "1"
             budget[scope]["settled_cny"] = "1"
             budget[scope]["remaining_execution_cny"] = "17"
+    elif attack == "missing_attempt_evidence":
+        budget.pop("attempt_evidence")
+    elif attack == "bucket_call_mismatch":
+        mismatched_cost = Decimal("0.000013")
+        mismatched_total = mismatched_cost * len(results)
+        for scope in ("run", "cumulative"):
+            budget["attempt_evidence"][scope][0][
+                "known_cost_cny"
+            ] = format(mismatched_cost, "f")
+            budget[scope]["committed_cny"] = format(
+                mismatched_total,
+                "f",
+            )
+            budget[scope]["settled_cny"] = format(
+                mismatched_total,
+                "f",
+            )
+            budget[scope]["remaining_execution_cny"] = format(
+                Decimal("18") - mismatched_total,
+                "f",
+            )
 
     started = datetime(2026, 7, 29, 12, tzinfo=UTC)
     with pytest.raises(ValueError, match="budget|price|usage|attempt|canonical"):
@@ -376,23 +414,11 @@ def test_dev_repeat_manifest_rejects_unsettled_or_unpriced_paid_evidence(
 
 
 def _budget_with_attempt_evidence() -> dict:
-    budget = _paid_budget(
+    return _paid_budget(
         run_id="eval-20260729-attempt-evidence",
         purpose="dev_repeat",
         attempt_count=1,
     )
-    bucket = {
-        "status": "settled_exact",
-        "settlement_mode": "exact",
-        "reserved_cny": budget["reservation_cny_per_attempt"],
-        "known_cost_cny": budget["run"]["committed_cny"],
-        "count": 1,
-    }
-    budget["attempt_evidence"] = {
-        "run": [dict(bucket)],
-        "cumulative": [dict(bucket)],
-    }
-    return budget
 
 
 @pytest.mark.parametrize(
