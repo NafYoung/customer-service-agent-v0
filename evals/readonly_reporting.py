@@ -408,7 +408,7 @@ def build_readonly_manifest(
         "case_set_name": case_set_name,
         "case_count": len(cases),
         "case_set_sha256": stable_sha256(case_payloads),
-        "scorer_version": "readonly-scorer-v2",
+        "scorer_version": "readonly-scorer-v3",
         "scorer_sha256": _file_sha256(SCORER_PATH),
     }
     if split == "dev":
@@ -455,7 +455,7 @@ def build_readonly_manifest(
             "generation_config": {
                 "stream": False,
                 "thinking": "disabled",
-                "temperature": "provider_default",
+                "temperature": settings.deepseek_temperature,
                 "seed": None,
                 "max_tokens": settings.deepseek_max_tokens,
             },

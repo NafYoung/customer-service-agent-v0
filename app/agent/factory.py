@@ -40,6 +40,7 @@ def build_deepseek_client(
         model=settings.deepseek_model,
         timeout_seconds=settings.deepseek_timeout_seconds,
         max_tokens=settings.deepseek_max_tokens,
+        temperature=settings.deepseek_temperature,
         max_retries=settings.deepseek_max_retries,
         # V4 thinking defaults to enabled. The v1 loop intentionally disables
         # it so tool-call turns do not require provider-specific reasoning

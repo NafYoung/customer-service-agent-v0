@@ -41,6 +41,9 @@ class Settings:
         os.getenv("DEEPSEEK_TIMEOUT_SECONDS", "30")
     )
     deepseek_max_tokens: int = int(os.getenv("DEEPSEEK_MAX_TOKENS", "1024"))
+    deepseek_temperature: float = float(
+        os.getenv("DEEPSEEK_TEMPERATURE", "0")
+    )
     deepseek_max_retries: int = int(os.getenv("DEEPSEEK_MAX_RETRIES", "2"))
     agent_max_tool_rounds: int = int(os.getenv("AGENT_MAX_TOOL_ROUNDS", "4"))
     agent_max_tool_calls: int = int(os.getenv("AGENT_MAX_TOOL_CALLS", "12"))

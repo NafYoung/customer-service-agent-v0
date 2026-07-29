@@ -221,6 +221,8 @@ def test_manifest_fingerprints_harness_and_never_serializes_secret_or_holdout_id
     assert manifest["execution"]["planned_trials"] == 1
     assert manifest["execution"]["completed_trials"] == 1
     assert manifest["model"]["observed_models"] == ["deepseek-v4-flash"]
+    assert manifest["model"]["generation_config"]["temperature"] == 0.0
+    assert manifest["eval"]["scorer_version"] == "readonly-scorer-v3"
     assert manifest["budget"]["price_snapshot_sha256"] == "f" * 64
     assert manifest["budget"]["hard_limit_cny"] == "20"
 

@@ -113,6 +113,7 @@ class OpenAICompatibleChatClient:
         model: str,
         timeout_seconds: float = 30.0,
         max_tokens: int | None = None,
+        temperature: float | None = None,
         max_retries: int = 0,
         retry_backoff_seconds: float = 0.25,
         extra_body: Mapping[str, Any] | None = None,
@@ -131,10 +132,13 @@ class OpenAICompatibleChatClient:
             raise ValueError("retry_backoff_seconds cannot be negative")
         if max_tokens is not None and max_tokens < 1:
             raise ValueError("max_tokens must be positive")
+        if temperature is not None and not 0 <= temperature <= 2:
+            raise ValueError("temperature must be between 0 and 2")
         reserved_extra_fields = {
             "messages",
             "model",
             "stream",
+            "temperature",
             "tool_choice",
             "tools",
         }
@@ -147,6 +151,7 @@ class OpenAICompatibleChatClient:
         self._base_url = base_url.rstrip("/")
         self._model = model
         self._max_tokens = max_tokens
+        self._temperature = temperature
         self._max_retries = max_retries
         self._retry_backoff_seconds = retry_backoff_seconds
         self._extra_body = dict(extra_body or {})
@@ -200,6 +205,8 @@ class OpenAICompatibleChatClient:
         }
         if self._max_tokens is not None:
             payload["max_tokens"] = self._max_tokens
+        if self._temperature is not None:
+            payload["temperature"] = self._temperature
         if tools:
             payload["tools"] = self._openai_tools(tools)
             payload["tool_choice"] = "auto"

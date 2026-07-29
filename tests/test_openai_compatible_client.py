@@ -93,6 +93,7 @@ def test_client_sends_openai_compatible_tool_request_and_parses_tool_call():
         base_url="https://api.deepseek.com/",
         model="deepseek-test-model",
         max_tokens=777,
+        temperature=0.2,
         extra_body={"thinking": {"type": "disabled"}},
         transport=httpx.MockTransport(handler),
     )
@@ -110,6 +111,7 @@ def test_client_sends_openai_compatible_tool_request_and_parses_tool_call():
     assert body["model"] == "deepseek-test-model"
     assert body["stream"] is False
     assert body["max_tokens"] == 777
+    assert body["temperature"] == 0.2
     assert body["tool_choice"] == "auto"
     assert body["thinking"] == {"type": "disabled"}
     assert {
@@ -460,6 +462,7 @@ def test_deepseek_factory_uses_v4_flash_and_explicitly_disables_thinking(
     assert observed["body"]["model"] == "deepseek-v4-flash"
     assert observed["body"]["stream"] is False
     assert observed["body"]["max_tokens"] == 1024
+    assert observed["body"]["temperature"] == 0.0
     assert observed["body"]["thinking"] == {"type": "disabled"}
 
 
@@ -495,4 +498,17 @@ def test_client_rejects_extra_body_overrides_of_common_protocol_fields():
             base_url="https://api.deepseek.com",
             model="deepseek-test-model",
             extra_body={"messages": [{"role": "user", "content": "override"}]},
+        )
+
+
+@pytest.mark.parametrize("temperature", [-0.1, 2.1])
+def test_client_rejects_temperature_outside_provider_range(
+    temperature: float,
+):
+    with pytest.raises(ValueError, match="temperature"):
+        OpenAICompatibleChatClient(
+            api_key="test-key",
+            base_url="https://api.deepseek.com",
+            model="deepseek-test-model",
+            temperature=temperature,
         )
