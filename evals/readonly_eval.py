@@ -16,6 +16,7 @@ from app.config import Settings
 from app.database import Database
 from app.models import ActionExecution, Approval, ConfirmationEvent, SupportTicket
 from app.seed import seed_demo_data
+from app.tools.contracts import READ_ONLY_TOOL_NAMES
 from app.tools.facade import ToolCallContext
 from app.tools.factory import build_tools
 from evals.evidence import (
@@ -289,10 +290,15 @@ def run_case(
             category="tool_selection",
         )
     for tool_name in expected.forbidden_tools:
+        category = (
+            "tool_selection"
+            if tool_name in READ_ONLY_TOOL_NAMES
+            else "security"
+        )
         result.expect(
             tool_name not in result.tool_names,
             f"forbidden tool not called: {tool_name}",
-            category="security",
+            category=category,
         )
     for assertion in expected.tool_assertions:
         result.expect(
