@@ -7,6 +7,7 @@ import stat
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -64,6 +65,61 @@ def _review() -> ValidatedCalibrationReview:
         reviewer_id="independent-reviewer-v1",
         reviewed_count=5,
     )
+
+
+def _regression_gate(**overrides: object) -> SimpleNamespace:
+    values: dict[str, object] = {
+        "bundle_path": Path("/private/regression/eval-public-regression"),
+        "bundle_integrity_sha256": "6" * 64,
+        "gate_sha256": "7" * 64,
+        "run_id": "eval-20260729-dev-repeat-public-binding",
+        "source_git_commit": "2" * 40,
+        "case_set_name": "readonly-regression-v1",
+        "case_set_sha256": (
+            "6340394c8edd5d95c2756f3f4753d4e224682b7f84a445c76b3abb675bad2edb"
+        ),
+        "harness_sha256": "8" * 64,
+        "passed_trials": 28,
+    }
+    values.update(overrides)
+    return SimpleNamespace(**values)
+
+
+def _manifest_with_regression(
+    path: Path,
+    *,
+    gate: SimpleNamespace | None = None,
+) -> Path:
+    regression = gate or _regression_gate()
+    manifest_path = _manifest(path)
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    payload.update(
+        {
+            "public_regression_bundle_integrity_sha256": (
+                regression.bundle_integrity_sha256
+            ),
+            "public_regression_gate_sha256": regression.gate_sha256,
+            "public_regression_run_id": regression.run_id,
+            "public_regression_source_git_commit": (
+                regression.source_git_commit
+            ),
+            "public_regression_case_set_name": (
+                regression.case_set_name
+            ),
+            "public_regression_case_set_sha256": (
+                regression.case_set_sha256
+            ),
+            "public_regression_harness_sha256": (
+                regression.harness_sha256
+            ),
+        }
+    )
+    manifest_path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    manifest_path.chmod(0o600)
+    return manifest_path
 
 
 def _cases() -> list[ReadonlyEvalCase]:
@@ -316,6 +372,113 @@ def test_holdout_declaration_requires_calibration_from_same_source_commit(
             calibration_review=_review(),
             source_git_commit="2" * 40,
         )
+
+
+def test_formal_v2_parser_requires_public_regression_bundle() -> None:
+    parser = _build_parser()
+    args = parser.parse_args(
+        [
+            "--case-dir",
+            "artifacts/private/holdout-v2/cases",
+            "--purpose",
+            "holdout_formal",
+            "--split",
+            "holdout",
+            "--case-set-name",
+            "readonly-holdout-v2",
+            "--trials",
+            "4",
+            "--holdout-manifest",
+            "artifacts/private/holdout-v2/manifest.json",
+            "--calibration-report",
+            "artifacts/private/calibration/report.json",
+            "--calibration-review",
+            "artifacts/private/calibration/review.json",
+        ]
+    )
+
+    with pytest.raises(SystemExit):
+        _validate_args(parser, args)
+
+
+def test_holdout_declaration_binds_verified_public_regression(
+    tmp_path: Path,
+) -> None:
+    gate = _regression_gate()
+    declaration = validate_holdout_declaration(
+        manifest_path=_manifest_with_regression(
+            tmp_path / "manifest.json",
+            gate=gate,
+        ),
+        case_set_name="readonly-holdout-v2",
+        cases=_cases(),
+        calibration_attestation=_attestation(),
+        calibration_review=_review(),
+        regression_gate=gate,
+    )
+
+    assert (
+        declaration.regression_bundle_integrity_sha256
+        == gate.bundle_integrity_sha256
+    )
+    assert declaration.regression_gate_sha256 == gate.gate_sha256
+    assert declaration.regression_run_id == gate.run_id
+
+
+def test_holdout_declaration_rejects_self_reported_regression_hash(
+    tmp_path: Path,
+) -> None:
+    gate = _regression_gate()
+    manifest_path = _manifest_with_regression(
+        tmp_path / "manifest.json",
+        gate=gate,
+    )
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    payload["public_regression_bundle_integrity_sha256"] = "9" * 64
+    manifest_path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(HoldoutLockError, match="regression"):
+        validate_holdout_declaration(
+            manifest_path=manifest_path,
+            case_set_name="readonly-holdout-v2",
+            cases=_cases(),
+            calibration_attestation=_attestation(),
+            calibration_review=_review(),
+            regression_gate=gate,
+        )
+
+
+def test_holdout_start_receipt_persists_public_regression_identity(
+    tmp_path: Path,
+) -> None:
+    gate = _regression_gate()
+    declaration = validate_holdout_declaration(
+        manifest_path=_manifest_with_regression(
+            tmp_path / "manifest.json",
+            gate=gate,
+        ),
+        case_set_name="readonly-holdout-v2",
+        cases=_cases(),
+        calibration_attestation=_attestation(),
+        calibration_review=_review(),
+        regression_gate=gate,
+    )
+    start_path = acquire_holdout_run_lock(
+        lock_root=tmp_path / "private-locks",
+        declaration=declaration,
+        run_id="eval-20260729-regression-bound-start",
+    )
+    start = json.loads(start_path.read_text(encoding="utf-8"))
+
+    assert (
+        start["public_regression_bundle_integrity_sha256"]
+        == gate.bundle_integrity_sha256
+    )
+    assert start["public_regression_gate_sha256"] == gate.gate_sha256
+    assert start["public_regression_run_id"] == gate.run_id
 
 
 def test_holdout_finalize_rejects_a_replaced_start_receipt(
