@@ -96,9 +96,7 @@ from evals.semantic_judge import SemanticJsonModel
 
 PRIVATE_ARTIFACT_ROOT = ROOT / "artifacts" / "private"
 DEFAULT_OUTPUT_ROOT = PRIVATE_ARTIFACT_ROOT / "eval-runs"
-DEFAULT_BUDGET_LEDGER = (
-    ROOT / "artifacts" / "private" / "deepseek-budget.sqlite3"
-)
+DEFAULT_BUDGET_LEDGER = ROOT / "artifacts" / "private" / "deepseek-budget.sqlite3"
 DEFAULT_HOLDOUT_LOCK_ROOT = (
     ROOT / "artifacts" / "private" / "holdout" / "formal-run-locks"
 )
@@ -180,10 +178,8 @@ def _create_validated_formal_run_context(
         or declaration.harness_sha256 != harness_sha256
         or calibration_attestation.report_sha256
         != declaration.calibration_report_sha256
-        or calibration_review.review_sha256
-        != declaration.calibration_review_sha256
-        or calibration_attestation.run_id
-        != declaration.calibration_run_id
+        or calibration_review.review_sha256 != declaration.calibration_review_sha256
+        or calibration_attestation.run_id != declaration.calibration_run_id
         or calibration_attestation.source_git_commit
         != declaration.calibration_source_git_commit
         or calibration_attestation.fixture_sha256
@@ -192,27 +188,19 @@ def _create_validated_formal_run_context(
         != declaration.calibration_contract_set_sha256
         or calibration_attestation.harness_sha256
         != declaration.calibration_harness_sha256
-        or calibration_review.reviewer_id
-        != declaration.calibration_reviewer_id
-        or calibration_review.reviewed_count
-        != declaration.calibration_reviewed_count
+        or calibration_review.reviewer_id != declaration.calibration_reviewer_id
+        or calibration_review.reviewed_count != declaration.calibration_reviewed_count
         or regression_gate.bundle_integrity_sha256
         != declaration.regression_bundle_integrity_sha256
-        or regression_gate.gate_sha256
-        != declaration.regression_gate_sha256
+        or regression_gate.gate_sha256 != declaration.regression_gate_sha256
         or regression_gate.run_id != declaration.regression_run_id
         or regression_gate.source_git_commit != source_git_commit
-        or regression_gate.case_set_name
-        != declaration.regression_case_set_name
-        or regression_gate.case_set_sha256
-        != declaration.regression_case_set_sha256
+        or regression_gate.case_set_name != declaration.regression_case_set_name
+        or regression_gate.case_set_sha256 != declaration.regression_case_set_sha256
         or regression_gate.harness_sha256 != harness_sha256
-        or acquired_lock.path.name
-        != "readonly-holdout-v2.start.json"
+        or acquired_lock.path.name != "readonly-holdout-v2.start.json"
     ):
-        raise ValueError(
-            "The validated formal run context inputs do not match."
-        )
+        raise ValueError("The validated formal run context inputs do not match.")
     context = ValidatedFormalRunContext(
         run_id=run_id,
         purpose="holdout_formal",
@@ -226,14 +214,10 @@ def _create_validated_formal_run_context(
         harness_sha256=harness_sha256,
         calibration_report_sha256=calibration_attestation.report_sha256,
         calibration_review_sha256=calibration_review.review_sha256,
-        regression_bundle_integrity_sha256=(
-            regression_gate.bundle_integrity_sha256
-        ),
+        regression_bundle_integrity_sha256=(regression_gate.bundle_integrity_sha256),
         regression_gate_sha256=regression_gate.gate_sha256,
         regression_run_id=regression_gate.run_id,
-        regression_source_git_commit=(
-            regression_gate.source_git_commit
-        ),
+        regression_source_git_commit=(regression_gate.source_git_commit),
         regression_case_set_name=regression_gate.case_set_name,
         regression_case_set_sha256=regression_gate.case_set_sha256,
         regression_harness_sha256=regression_gate.harness_sha256,
@@ -256,13 +240,9 @@ def _consume_validated_formal_run_context(
 
     context_id = id(context)
     if context_id not in _ISSUED_FORMAL_CONTEXT_IDS:
-        raise ValueError(
-            "holdout_formal requires a validated formal run context"
-        )
+        raise ValueError("holdout_formal requires a validated formal run context")
     _ISSUED_FORMAL_CONTEXT_IDS.discard(context_id)
-    expected_path = DEFAULT_HOLDOUT_LOCK_ROOT / (
-        "readonly-holdout-v2.start.json"
-    )
+    expected_path = DEFAULT_HOLDOUT_LOCK_ROOT / ("readonly-holdout-v2.start.json")
     try:
         expected_output_root = prepare_fixed_private_output_root(
             output_root,
@@ -273,14 +253,13 @@ def _consume_validated_formal_run_context(
         raise ValueError(
             "holdout_formal requires a validated formal run context"
         ) from exc
-    if Path(os.path.abspath(context.lock_start_path)) != Path(
-        os.path.abspath(expected_path)
-    ) or context.output_root != expected_output_root or Path(
-        os.path.abspath(output_root)
-    ) != expected_output_root:
-        raise ValueError(
-            "holdout_formal requires a validated formal run context"
-        )
+    if (
+        Path(os.path.abspath(context.lock_start_path))
+        != Path(os.path.abspath(expected_path))
+        or context.output_root != expected_output_root
+        or Path(os.path.abspath(output_root)) != expected_output_root
+    ):
+        raise ValueError("holdout_formal requires a validated formal run context")
     try:
         file_mode = context.lock_start_path.lstat().st_mode
         parent_mode = context.lock_start_path.parent.lstat().st_mode
@@ -302,31 +281,17 @@ def _consume_validated_formal_run_context(
         "manifest_sha256": context.declaration_manifest_sha256,
         "source_git_commit": context.source_git_commit,
         "harness_sha256": context.harness_sha256,
-        "semantic_calibration_report_sha256": (
-            context.calibration_report_sha256
-        ),
-        "semantic_calibration_review_sha256": (
-            context.calibration_review_sha256
-        ),
+        "semantic_calibration_report_sha256": (context.calibration_report_sha256),
+        "semantic_calibration_review_sha256": (context.calibration_review_sha256),
         "public_regression_bundle_integrity_sha256": (
             context.regression_bundle_integrity_sha256
         ),
-        "public_regression_gate_sha256": (
-            context.regression_gate_sha256
-        ),
+        "public_regression_gate_sha256": (context.regression_gate_sha256),
         "public_regression_run_id": context.regression_run_id,
-        "public_regression_source_git_commit": (
-            context.regression_source_git_commit
-        ),
-        "public_regression_case_set_name": (
-            context.regression_case_set_name
-        ),
-        "public_regression_case_set_sha256": (
-            context.regression_case_set_sha256
-        ),
-        "public_regression_harness_sha256": (
-            context.regression_harness_sha256
-        ),
+        "public_regression_source_git_commit": (context.regression_source_git_commit),
+        "public_regression_case_set_name": (context.regression_case_set_name),
+        "public_regression_case_set_sha256": (context.regression_case_set_sha256),
+        "public_regression_harness_sha256": (context.regression_harness_sha256),
     }
     if (
         stat.S_ISLNK(file_mode)
@@ -341,9 +306,9 @@ def _consume_validated_formal_run_context(
             for field_name, expected in expected_receipt_values.items()
         )
     ):
-        raise ValueError(
-            "holdout_formal requires a validated formal run context"
-        )
+        raise ValueError("holdout_formal requires a validated formal run context")
+
+
 class ClosableChatModel(ChatModel, Protocol):
     def close(self) -> None: ...
 
@@ -383,17 +348,13 @@ def _finalize_terminal_with_retry(
             run_id=run_id,
             expected_start_receipt_sha256=start_receipt_sha256,
             bundle_integrity_sha256=bundle_integrity_sha256,
-            attempt_bundle_integrity_sha256=(
-                attempt_bundle_integrity_sha256
-            ),
+            attempt_bundle_integrity_sha256=(attempt_bundle_integrity_sha256),
         )
 
     try:
         return write_terminal(), None
     except BaseException as exc:
-        terminal_path = lock_path.with_name(
-            "readonly-holdout-v2.terminal.json"
-        )
+        terminal_path = lock_path.with_name("readonly-holdout-v2.terminal.json")
         if not terminal_path.exists():
             terminal_path = write_terminal()
         return terminal_path, exc
@@ -412,10 +373,7 @@ def _recover_owned_start_receipt_sha256(
                 lock_path,
                 label="holdout start receipt",
             )
-            if (
-                payload.get("run_id") == run_id
-                and payload.get("status") == "started"
-            ):
+            if payload.get("run_id") == run_id and payload.get("status") == "started":
                 return receipt_sha256
             return None
         except BaseException:
@@ -431,13 +389,9 @@ def _quarantine_unverified_formal_bundle(
     quarantine_root = bundle_target.parent / "failed-quarantine"
     quarantine_root.mkdir(parents=True, exist_ok=True, mode=0o700)
     quarantine_root.chmod(0o700)
-    quarantine_target = quarantine_root / (
-        f"quarantined-{bundle_target.name}"
-    )
+    quarantine_target = quarantine_root / (f"quarantined-{bundle_target.name}")
     if quarantine_target.exists():
-        raise FileExistsError(
-            "A quarantine target already exists for this formal run."
-        )
+        raise FileExistsError("A quarantine target already exists for this formal run.")
     bundle_target.rename(quarantine_target)
     quarantine_target.chmod(0o700)
 
@@ -454,25 +408,17 @@ def validate_paid_eval_settings(settings: Settings) -> None:
         or endpoint.fragment
         or endpoint.path.rstrip("/") not in {"", "/v1"}
     ):
-        raise ValueError(
-            "Paid Eval requires the official DeepSeek HTTPS endpoint."
-        )
+        raise ValueError("Paid Eval requires the official DeepSeek HTTPS endpoint.")
     if settings.deepseek_temperature != 0:
         raise ValueError("Paid Eval requires DEEPSEEK_TEMPERATURE=0.")
     if (
-        settings.deepseek_timeout_seconds
-        != CANONICAL_DEEPSEEK_TIMEOUT_SECONDS
+        settings.deepseek_timeout_seconds != CANONICAL_DEEPSEEK_TIMEOUT_SECONDS
         or settings.deepseek_max_tokens != CANONICAL_DEEPSEEK_MAX_TOKENS
-        or settings.deepseek_max_retries
-        != CANONICAL_DEEPSEEK_MAX_RETRIES
-        or settings.agent_max_tool_rounds
-        != CANONICAL_AGENT_MAX_TOOL_ROUNDS
-        or settings.agent_max_tool_calls
-        != CANONICAL_AGENT_MAX_TOOL_CALLS
+        or settings.deepseek_max_retries != CANONICAL_DEEPSEEK_MAX_RETRIES
+        or settings.agent_max_tool_rounds != CANONICAL_AGENT_MAX_TOOL_ROUNDS
+        or settings.agent_max_tool_calls != CANONICAL_AGENT_MAX_TOOL_CALLS
     ):
-        raise ValueError(
-            "Paid Eval requires the canonical read-only Eval runtime."
-        )
+        raise ValueError("Paid Eval requires the canonical read-only Eval runtime.")
 
 
 def build_deepseek_budget_guard(
@@ -624,10 +570,11 @@ def _validate_args(
         or args.calibration_review is not None
         or args.regression_bundle is not None
     ):
-        parser.error(
-            "formal attestations are only valid for holdout_formal"
-        )
-    if args.split == "holdout" and args.case_dir.resolve() == DEFAULT_CASE_DIR.resolve():
+        parser.error("formal attestations are only valid for holdout_formal")
+    if (
+        args.split == "holdout"
+        and args.case_dir.resolve() == DEFAULT_CASE_DIR.resolve()
+    ):
         parser.error("holdout runs require an explicit non-development --case-dir")
     if not re.fullmatch(
         r"[a-z0-9][a-z0-9_-]{2,79}",
@@ -652,9 +599,7 @@ def run_eval_suite(
     output_root: Path,
     budget_report_provider: Callable[[], dict] | None = None,
     semantic_judge_model: SemanticJsonModel | None = None,
-    calibration_attestation: (
-        ValidatedCalibrationAttestation | None
-    ) = None,
+    calibration_attestation: (ValidatedCalibrationAttestation | None) = None,
     calibration_review: ValidatedCalibrationReview | None = None,
     formal_holdout_evidence: FormalHoldoutEvidence | None = None,
     frozen_harness: FrozenReadonlyHarness | None = None,
@@ -676,12 +621,9 @@ def run_eval_suite(
                 formal_run_context,
                 ValidatedFormalRunContext,
             )
-            or formal_run_context._sentinel
-            is not _FORMAL_CONTEXT_SENTINEL
+            or formal_run_context._sentinel is not _FORMAL_CONTEXT_SENTINEL
         ):
-            raise ValueError(
-                "holdout_formal requires a validated formal run context"
-            )
+            raise ValueError("holdout_formal requires a validated formal run context")
         _consume_validated_formal_run_context(
             formal_run_context,
             output_root=output_root,
@@ -698,10 +640,8 @@ def run_eval_suite(
             or frozen_harness is None
             or formal_run_context.harness_sha256
             != stable_sha256(dict(frozen_harness.fingerprints))
-            or source_git_commit
-            != formal_run_context.source_git_commit
-            or source_tree_sha256
-            != formal_run_context.source_tree_sha256
+            or source_git_commit != formal_run_context.source_git_commit
+            or source_tree_sha256 != formal_run_context.source_tree_sha256
             or calibration_attestation is None
             or calibration_attestation.report_sha256
             != formal_run_context.calibration_report_sha256
@@ -715,8 +655,7 @@ def run_eval_suite(
             != formal_run_context.lock_start_receipt_sha256
             or formal_holdout_evidence.declared_harness_sha256
             != formal_run_context.harness_sha256
-            or formal_holdout_evidence
-            .regression_bundle_integrity_sha256
+            or formal_holdout_evidence.regression_bundle_integrity_sha256
             != formal_run_context.regression_bundle_integrity_sha256
             or formal_holdout_evidence.regression_gate_sha256
             != formal_run_context.regression_gate_sha256
@@ -731,9 +670,7 @@ def run_eval_suite(
             or formal_holdout_evidence.regression_harness_sha256
             != formal_run_context.regression_harness_sha256
         ):
-            raise ValueError(
-                "holdout_formal requires a validated formal run context"
-            )
+            raise ValueError("holdout_formal requires a validated formal run context")
     elif formal_run_context is not None:
         raise ValueError(
             "validated formal run context is only valid for holdout_formal"
@@ -746,9 +683,7 @@ def run_eval_suite(
             planned_trials=trials,
         )
     started_at = datetime.now(UTC)
-    runtime_harness = frozen_harness or freeze_readonly_harness(
-        settings
-    )
+    runtime_harness = frozen_harness or freeze_readonly_harness(settings)
     results = partial_results if partial_results is not None else []
     if results:
         raise ValueError("partial_results must be empty before a new Eval")
@@ -773,9 +708,7 @@ def run_eval_suite(
     model.close()
     completed_at = datetime.now(UTC)
     budget_report = (
-        budget_report_provider()
-        if budget_report_provider is not None
-        else None
+        budget_report_provider() if budget_report_provider is not None else None
     )
     summary = summarize_results(
         run_id=run_id,
@@ -801,10 +734,7 @@ def run_eval_suite(
         harness_fingerprints=dict(runtime_harness.fingerprints),
         source_git_commit=source_git_commit,
     )
-    records = [
-        result_to_record(result, split=split)
-        for result in results
-    ]
+    records = [result_to_record(result, split=split) for result in results]
     if pre_write_check is not None:
         pre_write_check()
     bundle_path = write_eval_bundle(
@@ -845,17 +775,14 @@ def _print_results(
             status = "PASS" if item.passed else "FAIL"
             tools = ", ".join(item.tool_names) or "-"
             state_changed = bool(
-                item.business_state_delta
-                and item.business_state_delta.changed
+                item.business_state_delta and item.business_state_delta.changed
             )
             print(
                 f"| {item.case_id} | {item.trial} | {status} | "
                 f"{tools} | {state_changed} |"
             )
             for failure in item.failures:
-                print(
-                    f"  - {item.case_id} trial {item.trial}: {failure}"
-                )
+                print(f"  - {item.case_id} trial {item.trial}: {failure}")
     else:
         print("Formal holdout completed; private case details withheld.")
 
@@ -872,10 +799,7 @@ def _print_results(
         print(f"Verified evidence bundle: {bundle_path}")
     else:
         print("Verified private evidence bundle.")
-    print(
-        "This is a versioned harness result, not a production safety "
-        "certification."
-    )
+    print("This is a versioned harness result, not a production safety certification.")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -885,8 +809,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     run_id = args.run_id or create_server_run_id()
     if (args.output_root / run_id).exists():
         print(
-            "EVIDENCE ERROR: output bundle already exists; "
-            "use a fresh server run ID."
+            "EVIDENCE ERROR: output bundle already exists; use a fresh server run ID."
         )
         return 3
 
@@ -951,9 +874,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 planned_trials=args.trials,
             )
         except ValueError:
-            print(
-                "CASE ERROR: non-formal paid case identity is invalid."
-            )
+            print("CASE ERROR: non-formal paid case identity is invalid.")
             return 2
     settings = Settings()
     bundle_target = args.output_root / run_id
@@ -969,18 +890,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             source_git_commit = require_clean_git_worktree()
             frozen_harness = freeze_readonly_harness(settings)
             formal_source_tree_sha256 = current_source_tree_sha256()
-            require_clean_git_worktree(
-                expected_commit=source_git_commit
-            )
+            require_clean_git_worktree(expected_commit=source_git_commit)
             calibration_attestation = validate_calibration_attestation(
                 report_path=args.calibration_report,
                 settings=settings,
-                fixture_snapshot=(
-                    frozen_harness.calibration_fixture_snapshot
-                ),
-                harness_fingerprints=dict(
-                    frozen_harness.fingerprints
-                ),
+                fixture_snapshot=(frozen_harness.calibration_fixture_snapshot),
+                harness_fingerprints=dict(frozen_harness.fingerprints),
             )
             calibration_review = validate_calibration_review(
                 review_path=args.calibration_review,
@@ -990,15 +905,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 bundle_path=args.regression_bundle,
                 private_root=PRIVATE_ARTIFACT_ROOT,
                 source_git_commit=source_git_commit,
-                harness_sha256=stable_sha256(
-                    dict(frozen_harness.fingerprints)
-                ),
-                expected_source_tree_sha256=(
-                    formal_source_tree_sha256
-                ),
-                expected_harness_fingerprints=dict(
-                    frozen_harness.fingerprints
-                ),
+                harness_sha256=stable_sha256(dict(frozen_harness.fingerprints)),
+                expected_source_tree_sha256=(formal_source_tree_sha256),
+                expected_harness_fingerprints=dict(frozen_harness.fingerprints),
                 settings=settings,
             )
             declaration = validate_holdout_declaration(
@@ -1009,9 +918,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 calibration_attestation=calibration_attestation,
                 calibration_review=calibration_review,
                 regression_gate=regression_gate,
-                harness_fingerprints=dict(
-                    frozen_harness.fingerprints
-                ),
+                harness_fingerprints=dict(frozen_harness.fingerprints),
                 source_git_commit=source_git_commit,
             )
         except (
@@ -1021,17 +928,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             ValueError,
         ):
             print(
-                "FORMAL PRECHECK ERROR: calibration or holdout "
-                "declaration is invalid."
+                "FORMAL PRECHECK ERROR: calibration or holdout declaration is invalid."
             )
             return 2
     if frozen_harness is None:
         try:
             frozen_harness = freeze_readonly_harness(settings)
         except (FileSnapshotError, CanonicalPricingError, ValueError):
-            print(
-                "CONFIGURATION ERROR: runtime inputs are invalid."
-            )
+            print("CONFIGURATION ERROR: runtime inputs are invalid.")
             return 2
     budget_guard = None
     assert frozen_harness is not None
@@ -1044,10 +948,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
     except (BudgetError, CanonicalPricingError, ValueError) as exc:
         if args.purpose == "holdout_formal":
-            print(
-                "FORMAL PRECHECK ERROR: budget or model configuration "
-                "is invalid."
-            )
+            print("FORMAL PRECHECK ERROR: budget or model configuration is invalid.")
         else:
             print(f"BUDGET OR CONFIGURATION ERROR: {exc}")
         return 2
@@ -1060,10 +961,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     except (BudgetError, ValueError) as exc:
         budget_guard.close()
         if args.purpose == "holdout_formal":
-            print(
-                "FORMAL PRECHECK ERROR: budget or model configuration "
-                "is invalid."
-            )
+            print("FORMAL PRECHECK ERROR: budget or model configuration is invalid.")
         else:
             print(f"CONFIGURATION ERROR: {exc}")
             print(
@@ -1089,9 +987,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             assert calibration_attestation is not None
             assert calibration_review is not None
             assert regression_gate is not None
-            require_clean_git_worktree(
-                expected_commit=source_git_commit
-            )
+            require_clean_git_worktree(expected_commit=source_git_commit)
             formal_attempt_started_at = datetime.now(UTC)
             acquired_lock = acquire_holdout_run_lock_with_hash(
                 lock_root=DEFAULT_HOLDOUT_LOCK_ROOT,
@@ -1101,32 +997,18 @@ def main(argv: Sequence[str] | None = None) -> int:
             holdout_lock_path = acquired_lock.path
             holdout_start_receipt_sha256 = acquired_lock.receipt_sha256
             formal_holdout_evidence = FormalHoldoutEvidence(
-                declaration_manifest_sha256=(
-                    declaration.manifest_sha256
-                ),
+                declaration_manifest_sha256=(declaration.manifest_sha256),
                 lock_start_receipt_sha256=holdout_start_receipt_sha256,
-                declared_harness_sha256=(
-                    declaration.harness_sha256
-                ),
+                declared_harness_sha256=(declaration.harness_sha256),
                 regression_bundle_integrity_sha256=(
                     declaration.regression_bundle_integrity_sha256
                 ),
-                regression_gate_sha256=(
-                    declaration.regression_gate_sha256
-                ),
+                regression_gate_sha256=(declaration.regression_gate_sha256),
                 regression_run_id=declaration.regression_run_id,
-                regression_source_git_commit=(
-                    declaration.regression_source_git_commit
-                ),
-                regression_case_set_name=(
-                    declaration.regression_case_set_name
-                ),
-                regression_case_set_sha256=(
-                    declaration.regression_case_set_sha256
-                ),
-                regression_harness_sha256=(
-                    declaration.regression_harness_sha256
-                ),
+                regression_source_git_commit=(declaration.regression_source_git_commit),
+                regression_case_set_name=(declaration.regression_case_set_name),
+                regression_case_set_sha256=(declaration.regression_case_set_sha256),
+                regression_harness_sha256=(declaration.regression_harness_sha256),
             )
             formal_run_context = _create_validated_formal_run_context(
                 run_id=run_id,
@@ -1152,30 +1034,19 @@ def main(argv: Sequence[str] | None = None) -> int:
                     pass
             if acquired_lock is not None:
                 holdout_lock_path = acquired_lock.path
-                holdout_start_receipt_sha256 = (
-                    acquired_lock.receipt_sha256
-                )
-            elif (
-                holdout_start_receipt_sha256 is None
-                and holdout_lock_path.exists()
-            ):
-                holdout_start_receipt_sha256 = (
-                    _recover_owned_start_receipt_sha256(
-                        lock_path=holdout_lock_path,
-                        run_id=run_id,
-                    )
+                holdout_start_receipt_sha256 = acquired_lock.receipt_sha256
+            elif holdout_start_receipt_sha256 is None and holdout_lock_path.exists():
+                holdout_start_receipt_sha256 = _recover_owned_start_receipt_sha256(
+                    lock_path=holdout_lock_path,
+                    run_id=run_id,
                 )
             if holdout_start_receipt_sha256 is not None:
                 try:
-                    _, interrupted_terminal = (
-                        _finalize_terminal_with_retry(
-                            lock_path=holdout_lock_path,
-                            status="failed",
-                            run_id=run_id,
-                            start_receipt_sha256=(
-                                holdout_start_receipt_sha256
-                            ),
-                        )
+                    _, interrupted_terminal = _finalize_terminal_with_retry(
+                        lock_path=holdout_lock_path,
+                        status="failed",
+                        run_id=run_id,
+                        start_receipt_sha256=(holdout_start_receipt_sha256),
                     )
                     if isinstance(
                         interrupted_terminal,
@@ -1183,9 +1054,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     ):
                         raise interrupted_terminal
                 except BaseException as terminal_exc:
-                    print(
-                        "HOLDOUT LOCK ERROR: terminal evidence is invalid."
-                    )
+                    print("HOLDOUT LOCK ERROR: terminal evidence is invalid.")
                     if isinstance(
                         terminal_exc,
                         (KeyboardInterrupt, SystemExit),
@@ -1209,10 +1078,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     partial_results: list[ReadonlyEvalResult] = []
     pre_write_check: Callable[[], None] | None = None
     if source_git_commit is not None:
+
         def check_source_before_write() -> None:
-            require_clean_git_worktree(
-                expected_commit=source_git_commit
-            )
+            require_clean_git_worktree(expected_commit=source_git_commit)
 
         pre_write_check = check_source_before_write
     try:
@@ -1274,8 +1142,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             except BaseException:
                 failed_budget_report = None
             failure_records = [
-                result_to_record(result, split="holdout")
-                for result in partial_results
+                result_to_record(result, split="holdout") for result in partial_results
             ]
             failed_attempt_bundle = write_formal_failure_bundle(
                 output_root=failure_root,
@@ -1286,18 +1153,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                         "failed_at": datetime.now(UTC),
                         "failure_stage": failure_stage,
                         "failure_code": _stable_failure_code(
-                            run_error
-                            or RuntimeError("formal attempt failed")
+                            run_error or RuntimeError("formal attempt failed")
                         ),
-                        "max_output_tokens": (
-                            settings.deepseek_max_tokens
-                        ),
+                        "max_output_tokens": (settings.deepseek_max_tokens),
                         "source": {
                             "git_commit": source_git_commit,
                             "git_dirty": False,
-                            "source_tree_sha256": (
-                                formal_source_tree_sha256
-                            ),
+                            "source_tree_sha256": (formal_source_tree_sha256),
                         },
                         "case_set": {
                             "name": declaration.case_set_name,
@@ -1307,46 +1169,35 @@ def main(argv: Sequence[str] | None = None) -> int:
                         },
                         "formal_holdout": {
                             "declaration_manifest_sha256": (
-                                formal_holdout_evidence
-                                .declaration_manifest_sha256
+                                formal_holdout_evidence.declaration_manifest_sha256
                             ),
-                            "lock_start_receipt_sha256": (
-                                holdout_start_receipt_sha256
-                            ),
+                            "lock_start_receipt_sha256": (holdout_start_receipt_sha256),
                             "declared_harness_sha256": (
-                                formal_holdout_evidence
-                                .declared_harness_sha256
+                                formal_holdout_evidence.declared_harness_sha256
                             ),
                             "runtime_harness_sha256": (
-                                formal_holdout_evidence
-                                .declared_harness_sha256
+                                formal_holdout_evidence.declared_harness_sha256
                             ),
                             "regression_bundle_integrity_sha256": (
-                                formal_holdout_evidence
-                                .regression_bundle_integrity_sha256
+                                formal_holdout_evidence.regression_bundle_integrity_sha256
                             ),
                             "regression_gate_sha256": (
-                                formal_holdout_evidence
-                                .regression_gate_sha256
+                                formal_holdout_evidence.regression_gate_sha256
                             ),
                             "regression_run_id": (
                                 formal_holdout_evidence.regression_run_id
                             ),
                             "regression_source_git_commit": (
-                                formal_holdout_evidence
-                                .regression_source_git_commit
+                                formal_holdout_evidence.regression_source_git_commit
                             ),
                             "regression_case_set_name": (
-                                formal_holdout_evidence
-                                .regression_case_set_name
+                                formal_holdout_evidence.regression_case_set_name
                             ),
                             "regression_case_set_sha256": (
-                                formal_holdout_evidence
-                                .regression_case_set_sha256
+                                formal_holdout_evidence.regression_case_set_sha256
                             ),
                             "regression_harness_sha256": (
-                                formal_holdout_evidence
-                                .regression_harness_sha256
+                                formal_holdout_evidence.regression_harness_sha256
                             ),
                         },
                     }
@@ -1373,36 +1224,22 @@ def main(argv: Sequence[str] | None = None) -> int:
         terminal_write_error: BaseException | None = None
         try:
             completed_integrity_sha256 = (
-                read_file_snapshot(
-                    bundle_path / "integrity.json"
-                ).sha256
-                if lock_status == "completed"
-                and bundle_path is not None
+                read_file_snapshot(bundle_path / "integrity.json").sha256
+                if lock_status == "completed" and bundle_path is not None
                 else None
             )
             failed_integrity_sha256 = (
-                read_file_snapshot(
-                    failed_attempt_bundle / "integrity.json"
-                ).sha256
-                if lock_status == "failed"
-                and failed_attempt_bundle is not None
+                read_file_snapshot(failed_attempt_bundle / "integrity.json").sha256
+                if lock_status == "failed" and failed_attempt_bundle is not None
                 else None
             )
-            terminal_path, terminal_write_error = (
-                _finalize_terminal_with_retry(
-                    lock_path=holdout_lock_path,
-                    status=lock_status,
-                    run_id=run_id,
-                    start_receipt_sha256=(
-                        holdout_start_receipt_sha256
-                    ),
-                    bundle_integrity_sha256=(
-                        completed_integrity_sha256
-                    ),
-                    attempt_bundle_integrity_sha256=(
-                        failed_integrity_sha256
-                    ),
-                )
+            terminal_path, terminal_write_error = _finalize_terminal_with_retry(
+                lock_path=holdout_lock_path,
+                status=lock_status,
+                run_id=run_id,
+                start_receipt_sha256=(holdout_start_receipt_sha256),
+                bundle_integrity_sha256=(completed_integrity_sha256),
+                attempt_bundle_integrity_sha256=(failed_integrity_sha256),
             )
             if lock_status == "completed" and bundle_path is not None:
                 assert args.holdout_manifest is not None
@@ -1415,10 +1252,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     regression_bundle_path=args.regression_bundle,
                     private_root=PRIVATE_ARTIFACT_ROOT,
                 )
-            elif (
-                lock_status == "failed"
-                and failed_attempt_bundle is not None
-            ):
+            elif lock_status == "failed" and failed_attempt_bundle is not None:
                 assert args.holdout_manifest is not None
                 assert args.regression_bundle is not None
                 verify_failed_holdout_receipt_chain(
@@ -1451,10 +1285,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "evidence and terminal status were recorded when possible."
             )
         else:
-            print(
-                f"EVIDENCE ERROR: {type(run_error).__name__}: "
-                f"{run_error}"
-            )
+            print(f"EVIDENCE ERROR: {type(run_error).__name__}: {run_error}")
         return 3
     if bundle_path is None:
         print("EVIDENCE ERROR: completed run has no verified bundle.")

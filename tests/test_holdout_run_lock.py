@@ -44,10 +44,7 @@ def _attestation() -> ValidatedCalibrationAttestation:
         contract_set_sha256="d" * 64,
         harness_sha256="e" * 64,
         result_count=49,
-        fixture_ids=tuple(
-            f"canonical-fixture-{index:02d}"
-            for index in range(49)
-        ),
+        fixture_ids=tuple(f"canonical-fixture-{index:02d}" for index in range(49)),
         fixture_kinds=tuple(
             (
                 f"canonical-fixture-{index:02d}",
@@ -89,12 +86,8 @@ def _regression_gate(**overrides: object) -> SimpleNamespace:
         "case_set_sha256": (
             "6340394c8edd5d95c2756f3f4753d4e224682b7f84a445c76b3abb675bad2edb"
         ),
-        "harness_sha256": stable_sha256(
-            current_readonly_harness_fingerprints()
-        ),
-        "source_tree_sha256": source_snapshot[
-            "source_tree_sha256"
-        ],
+        "harness_sha256": stable_sha256(current_readonly_harness_fingerprints()),
+        "source_tree_sha256": source_snapshot["source_tree_sha256"],
         "source_identity_sha256": stable_sha256(source_snapshot),
         "source_snapshot": source_snapshot,
         "runtime_identity_sha256": "5" * 64,
@@ -119,18 +112,10 @@ def _manifest_with_regression(
             ),
             "public_regression_gate_sha256": regression.gate_sha256,
             "public_regression_run_id": regression.run_id,
-            "public_regression_source_git_commit": (
-                regression.source_git_commit
-            ),
-            "public_regression_case_set_name": (
-                regression.case_set_name
-            ),
-            "public_regression_case_set_sha256": (
-                regression.case_set_sha256
-            ),
-            "public_regression_harness_sha256": (
-                regression.harness_sha256
-            ),
+            "public_regression_source_git_commit": (regression.source_git_commit),
+            "public_regression_case_set_name": (regression.case_set_name),
+            "public_regression_case_set_sha256": (regression.case_set_sha256),
+            "public_regression_harness_sha256": (regression.harness_sha256),
         }
     )
     manifest_path.write_text(
@@ -223,18 +208,12 @@ def _manifest(
         "semantic_calibration_report_sha256": "a" * 64,
         "semantic_calibration_review_sha256": "b" * 64,
         "semantic_calibration_run_id": _attestation().run_id,
-        "semantic_calibration_source_git_commit": (
-            _attestation().source_git_commit
-        ),
-        "semantic_calibration_fixture_sha256": (
-            _attestation().fixture_sha256
-        ),
+        "semantic_calibration_source_git_commit": (_attestation().source_git_commit),
+        "semantic_calibration_fixture_sha256": (_attestation().fixture_sha256),
         "semantic_calibration_contract_set_sha256": (
             _attestation().contract_set_sha256
         ),
-        "semantic_calibration_harness_sha256": (
-            _attestation().harness_sha256
-        ),
+        "semantic_calibration_harness_sha256": (_attestation().harness_sha256),
         "semantic_calibration_reviewer_id": _review().reviewer_id,
         "semantic_calibration_reviewed_count": _review().reviewed_count,
         "public_regression_bundle_integrity_sha256": (
@@ -242,18 +221,10 @@ def _manifest(
         ),
         "public_regression_gate_sha256": _regression_gate().gate_sha256,
         "public_regression_run_id": _regression_gate().run_id,
-        "public_regression_source_git_commit": (
-            _regression_gate().source_git_commit
-        ),
-        "public_regression_case_set_name": (
-            _regression_gate().case_set_name
-        ),
-        "public_regression_case_set_sha256": (
-            _regression_gate().case_set_sha256
-        ),
-        "public_regression_harness_sha256": (
-            _regression_gate().harness_sha256
-        ),
+        "public_regression_source_git_commit": (_regression_gate().source_git_commit),
+        "public_regression_case_set_name": (_regression_gate().case_set_name),
+        "public_regression_case_set_sha256": (_regression_gate().case_set_sha256),
+        "public_regression_harness_sha256": (_regression_gate().harness_sha256),
         "formal_runs_allowed": formal_runs_allowed,
         "formal_runs_completed": formal_runs_completed,
         "lifecycle_status": "sealed",
@@ -311,18 +282,13 @@ def test_holdout_lock_is_exclusive_and_final_status_is_persisted(
         now=datetime(2026, 7, 29, 10, 5, tzinfo=UTC),
     )
     lock_payload = json.loads(lock_path.read_text(encoding="utf-8"))
-    terminal_payload = json.loads(
-        terminal_path.read_text(encoding="utf-8")
-    )
+    terminal_payload = json.loads(terminal_path.read_text(encoding="utf-8"))
     assert holdout_lock_receipt_sha256(lock_path) == start_receipt_sha256
     assert lock_payload["status"] == "started"
     assert lock_payload["run_id"] == "eval-20260729-holdout-v2"
     assert "case_set_sha256" in lock_payload
     assert terminal_payload["status"] == "completed"
-    assert (
-        terminal_payload["lock_start_receipt_sha256"]
-        == start_receipt_sha256
-    )
+    assert terminal_payload["lock_start_receipt_sha256"] == start_receipt_sha256
     assert terminal_payload["bundle_integrity_sha256"] == "f" * 64
     assert terminal_payload["attempt_bundle_integrity_sha256"] is None
     assert terminal_payload["failure_evidence_status"] is None
@@ -393,9 +359,10 @@ def test_lock_acquisition_returns_exact_receipt_hash_without_reread(
         run_id="eval-20260729-atomic-start-hash",
     )
 
-    assert acquired.receipt_sha256 == hashlib.sha256(
-        acquired.path.read_bytes()
-    ).hexdigest()
+    assert (
+        acquired.receipt_sha256
+        == hashlib.sha256(acquired.path.read_bytes()).hexdigest()
+    )
 
 
 def test_holdout_declaration_requires_calibration_from_same_source_commit(
@@ -457,8 +424,7 @@ def test_holdout_declaration_binds_verified_public_regression(
     )
 
     assert (
-        declaration.regression_bundle_integrity_sha256
-        == gate.bundle_integrity_sha256
+        declaration.regression_bundle_integrity_sha256 == gate.bundle_integrity_sha256
     )
     assert declaration.regression_gate_sha256 == gate.gate_sha256
     assert declaration.regression_run_id == gate.run_id
@@ -621,9 +587,7 @@ def test_failed_terminal_binds_only_failed_attempt_evidence(
             lock_path=other_lock,
             status="failed",
             run_id="eval-20260729-conflicting-attempt",
-            expected_start_receipt_sha256=(
-                holdout_lock_receipt_sha256(other_lock)
-            ),
+            expected_start_receipt_sha256=(holdout_lock_receipt_sha256(other_lock)),
             bundle_integrity_sha256="f" * 64,
             attempt_bundle_integrity_sha256="e" * 64,
         )
@@ -678,29 +642,19 @@ def test_failed_holdout_chain_binds_private_attempt_bundle(
                     "planned_trials": 4,
                 },
                 "formal_holdout": {
-                    "declaration_manifest_sha256": (
-                        declaration.manifest_sha256
-                    ),
+                    "declaration_manifest_sha256": (declaration.manifest_sha256),
                     "lock_start_receipt_sha256": start_sha256,
-                    "declared_harness_sha256": (
-                        declaration.harness_sha256
-                    ),
-                    "runtime_harness_sha256": (
-                        declaration.harness_sha256
-                    ),
+                    "declared_harness_sha256": (declaration.harness_sha256),
+                    "runtime_harness_sha256": (declaration.harness_sha256),
                     "regression_bundle_integrity_sha256": (
                         declaration.regression_bundle_integrity_sha256
                     ),
-                    "regression_gate_sha256": (
-                        declaration.regression_gate_sha256
-                    ),
+                    "regression_gate_sha256": (declaration.regression_gate_sha256),
                     "regression_run_id": declaration.regression_run_id,
                     "regression_source_git_commit": (
                         declaration.regression_source_git_commit
                     ),
-                    "regression_case_set_name": (
-                        declaration.regression_case_set_name
-                    ),
+                    "regression_case_set_name": (declaration.regression_case_set_name),
                     "regression_case_set_sha256": (
                         declaration.regression_case_set_sha256
                     ),
@@ -722,9 +676,7 @@ def test_failed_holdout_chain_binds_private_attempt_bundle(
         status="failed",
         run_id=run_id,
         expected_start_receipt_sha256=start_sha256,
-        attempt_bundle_integrity_sha256=(
-            failure_integrity_sha256
-        ),
+        attempt_bundle_integrity_sha256=(failure_integrity_sha256),
     )
     monkeypatch.setattr(
         holdout_protocol,
@@ -780,9 +732,7 @@ def test_completed_holdout_chain_links_manifest_start_bundle_and_terminal(
     )
     start_sha256 = holdout_lock_receipt_sha256(start_path)
     source_snapshot = dict(regression_gate.source_snapshot)
-    source_snapshot["package_versions"] = dict(
-        source_snapshot["package_versions"]
-    )
+    source_snapshot["package_versions"] = dict(source_snapshot["package_versions"])
     if source_runtime_attack:
         source_snapshot["package_versions"]["httpx"] = "forged"
     bundle_manifest = {
@@ -793,51 +743,31 @@ def test_completed_holdout_chain_links_manifest_start_bundle_and_terminal(
         },
         "eval": {
             "formal_holdout": {
-                "declaration_manifest_sha256": (
-                    declaration.manifest_sha256
-                ),
+                "declaration_manifest_sha256": (declaration.manifest_sha256),
                 "lock_start_receipt_sha256": start_sha256,
                 "declared_harness_sha256": declaration.harness_sha256,
                 "regression_bundle_integrity_sha256": (
                     declaration.regression_bundle_integrity_sha256
                 ),
-                "regression_gate_sha256": (
-                    declaration.regression_gate_sha256
-                ),
+                "regression_gate_sha256": (declaration.regression_gate_sha256),
                 "regression_run_id": declaration.regression_run_id,
                 "regression_source_git_commit": (
                     declaration.regression_source_git_commit
                 ),
-                "regression_case_set_name": (
-                    declaration.regression_case_set_name
-                ),
-                "regression_case_set_sha256": (
-                    declaration.regression_case_set_sha256
-                ),
-                "regression_harness_sha256": (
-                    declaration.regression_harness_sha256
-                ),
+                "regression_case_set_name": (declaration.regression_case_set_name),
+                "regression_case_set_sha256": (declaration.regression_case_set_sha256),
+                "regression_harness_sha256": (declaration.regression_harness_sha256),
             },
             "semantic_calibration": {
                 "report_sha256": declaration.calibration_report_sha256,
                 "review_sha256": declaration.calibration_review_sha256,
                 "run_id": declaration.calibration_run_id,
-                "source_git_commit": (
-                    declaration.calibration_source_git_commit
-                ),
-                "fixture_sha256": (
-                    declaration.calibration_fixture_sha256
-                ),
-                "contract_set_sha256": (
-                    declaration.calibration_contract_set_sha256
-                ),
-                "harness_sha256": (
-                    declaration.calibration_harness_sha256
-                ),
+                "source_git_commit": (declaration.calibration_source_git_commit),
+                "fixture_sha256": (declaration.calibration_fixture_sha256),
+                "contract_set_sha256": (declaration.calibration_contract_set_sha256),
+                "harness_sha256": (declaration.calibration_harness_sha256),
                 "reviewer_id": declaration.calibration_reviewer_id,
-                "reviewed_count": (
-                    declaration.calibration_reviewed_count
-                ),
+                "reviewed_count": (declaration.calibration_reviewed_count),
             },
             "case_set_name": declaration.case_set_name,
             "case_set_sha256": declaration.case_set_sha256,
@@ -853,9 +783,7 @@ def test_completed_holdout_chain_links_manifest_start_bundle_and_terminal(
     )
     bundle_manifest_path = bundle_path / "manifest.json"
     integrity_path = bundle_path / "integrity.json"
-    integrity_sha256 = hashlib.sha256(
-        integrity_path.read_bytes()
-    ).hexdigest()
+    integrity_sha256 = hashlib.sha256(integrity_path.read_bytes()).hexdigest()
     validation_calls = 0
 
     def accept_minimal_schema(payload):
@@ -918,9 +846,7 @@ def test_completed_holdout_chain_links_manifest_start_bundle_and_terminal(
             private_root=outside_private_root,
         )
 
-    terminal_payload = json.loads(
-        terminal_path.read_text(encoding="utf-8")
-    )
+    terminal_payload = json.loads(terminal_path.read_text(encoding="utf-8"))
     terminal_payload["unreviewed_escape_hatch"] = True
     terminal_path.write_text(
         json.dumps(terminal_payload, ensure_ascii=False, sort_keys=True),
@@ -997,9 +923,7 @@ def test_completed_holdout_chain_links_manifest_start_bundle_and_terminal(
     summary_path.unlink()
     real_summary_path.rename(summary_path)
 
-    bundle_manifest["eval"]["formal_holdout"][
-        "declared_harness_sha256"
-    ] = "0" * 64
+    bundle_manifest["eval"]["formal_holdout"]["declared_harness_sha256"] = "0" * 64
     bundle_manifest_path.write_text(
         json.dumps(bundle_manifest, sort_keys=True),
         encoding="utf-8",
@@ -1059,18 +983,14 @@ def test_completed_chain_cross_checks_every_declared_evidence_field(
         "run_id": declaration.calibration_run_id,
         "source_git_commit": declaration.calibration_source_git_commit,
         "fixture_sha256": declaration.calibration_fixture_sha256,
-        "contract_set_sha256": (
-            declaration.calibration_contract_set_sha256
-        ),
+        "contract_set_sha256": (declaration.calibration_contract_set_sha256),
         "harness_sha256": declaration.calibration_harness_sha256,
         "reviewer_id": declaration.calibration_reviewer_id,
         "reviewed_count": declaration.calibration_reviewed_count,
     }
     bundle_eval = {
         "formal_holdout": {
-            "declaration_manifest_sha256": (
-                declaration.manifest_sha256
-            ),
+            "declaration_manifest_sha256": (declaration.manifest_sha256),
             "lock_start_receipt_sha256": start_sha256,
             "declared_harness_sha256": declaration.harness_sha256,
             "regression_bundle_integrity_sha256": (
@@ -1078,18 +998,10 @@ def test_completed_chain_cross_checks_every_declared_evidence_field(
             ),
             "regression_gate_sha256": declaration.regression_gate_sha256,
             "regression_run_id": declaration.regression_run_id,
-            "regression_source_git_commit": (
-                declaration.regression_source_git_commit
-            ),
-            "regression_case_set_name": (
-                declaration.regression_case_set_name
-            ),
-            "regression_case_set_sha256": (
-                declaration.regression_case_set_sha256
-            ),
-            "regression_harness_sha256": (
-                declaration.regression_harness_sha256
-            ),
+            "regression_source_git_commit": (declaration.regression_source_git_commit),
+            "regression_case_set_name": (declaration.regression_case_set_name),
+            "regression_case_set_sha256": (declaration.regression_case_set_sha256),
+            "regression_harness_sha256": (declaration.regression_harness_sha256),
         },
         "semantic_calibration": calibration,
         "case_set_name": declaration.case_set_name,
@@ -1109,9 +1021,7 @@ def test_completed_chain_cross_checks_every_declared_evidence_field(
                 "git_commit": declaration.source_git_commit,
             },
             "harness": {
-                "runtime_harness_sha256": (
-                    declaration.harness_sha256
-                ),
+                "runtime_harness_sha256": (declaration.harness_sha256),
             },
             "eval": bundle_eval,
         },
@@ -1295,10 +1205,9 @@ def test_holdout_declaration_freezes_paid_model_runtime(
         agent_max_tool_calls=1,
     )
 
-    assert (
-        current_readonly_harness_fingerprints(sealed_settings)
-        != current_readonly_harness_fingerprints(changed_settings)
-    )
+    assert current_readonly_harness_fingerprints(
+        sealed_settings
+    ) != current_readonly_harness_fingerprints(changed_settings)
     with pytest.raises(HoldoutLockError, match="frozen harness"):
         validate_holdout_declaration(
             manifest_path=manifest_path,
@@ -1309,9 +1218,7 @@ def test_holdout_declaration_freezes_paid_model_runtime(
             calibration_review=_review(),
             regression_gate=_regression_gate(
                 harness_sha256=stable_sha256(
-                    current_readonly_harness_fingerprints(
-                        changed_settings
-                    )
+                    current_readonly_harness_fingerprints(changed_settings)
                 )
             ),
         )

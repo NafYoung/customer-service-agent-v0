@@ -37,9 +37,7 @@ from evals.readonly_reporting import (
 )
 
 PRICE_SNAPSHOT_PATH = (
-    readonly_reporting.ROOT
-    / "pricing"
-    / "deepseek-v4-flash-2026-07-29.json"
+    readonly_reporting.ROOT / "pricing" / "deepseek-v4-flash-2026-07-29.json"
 )
 
 
@@ -113,9 +111,7 @@ def _budget_report(
             "run_id": run_id,
             "purpose": purpose,
             "model": "deepseek-v4-flash",
-            "price_sha256": _canonical_price_summary()[
-                "snapshot_sha256"
-            ],
+            "price_sha256": _canonical_price_summary()["snapshot_sha256"],
             "status": "completed",
             "started_at": "2026-07-29T12:00:00+00:00",
             "completed_at": "2026-07-29T12:05:00+00:00",
@@ -156,10 +152,7 @@ def _attestation() -> ValidatedCalibrationAttestation:
         contract_set_sha256="d" * 64,
         harness_sha256="e" * 64,
         result_count=49,
-        fixture_ids=tuple(
-            f"canonical-fixture-{index:02d}"
-            for index in range(49)
-        ),
+        fixture_ids=tuple(f"canonical-fixture-{index:02d}" for index in range(49)),
         fixture_kinds=tuple(
             (
                 f"canonical-fixture-{index:02d}",
@@ -206,12 +199,8 @@ def _result(
         started_at="2026-07-29T10:00:00+00:00",
         completed_at="2026-07-29T10:00:01+00:00",
         duration_ms=1000 + trial,
-        checks=[
-            check.message for check in score_checks if check.passed
-        ],
-        failures=[
-            check.message for check in score_checks if not check.passed
-        ],
+        checks=[check.message for check in score_checks if check.passed],
+        failures=[check.message for check in score_checks if not check.passed],
         score_checks=score_checks,
         final_text="safe answer",
         model_calls=(
@@ -299,9 +288,7 @@ def _formal_holdout_evidence(
         ),
         regression_bundle_integrity_sha256="8" * 64,
         regression_gate_sha256="9" * 64,
-        regression_run_id=(
-            "eval-20260729-dev-repeat-public-binding"
-        ),
+        regression_run_id=("eval-20260729-dev-repeat-public-binding"),
         regression_source_git_commit="a" * 40,
         regression_case_set_name="readonly-regression-v1",
         regression_case_set_sha256=(
@@ -476,9 +463,7 @@ def test_manifest_fingerprints_harness_and_never_serializes_secret_or_holdout_id
         ),
         "regression_bundle_integrity_sha256": "8" * 64,
         "regression_gate_sha256": "9" * 64,
-        "regression_run_id": (
-            "eval-20260729-dev-repeat-public-binding"
-        ),
+        "regression_run_id": ("eval-20260729-dev-repeat-public-binding"),
         "regression_source_git_commit": "a" * 40,
         "regression_case_set_name": "readonly-regression-v1",
         "regression_case_set_sha256": (
@@ -490,9 +475,7 @@ def test_manifest_fingerprints_harness_and_never_serializes_secret_or_holdout_id
     }
     assert (
         manifest["harness"]["runtime_harness_sha256"]
-        == manifest["eval"]["formal_holdout"][
-            "declared_harness_sha256"
-        ]
+        == manifest["eval"]["formal_holdout"]["declared_harness_sha256"]
     )
     assert manifest["source"]["source_tree_sha256"]
     assert manifest["execution"]["planned_trials"] == 4
@@ -507,15 +490,14 @@ def test_manifest_fingerprints_harness_and_never_serializes_secret_or_holdout_id
         "thinking": "disabled",
     }
     assert manifest["eval"]["scorer_version"] == "readonly-scorer-v6"
-    assert manifest["budget"]["price_snapshot_sha256"] == (
-        _canonical_price_summary()["snapshot_sha256"]
+    assert (
+        manifest["budget"]["price_snapshot_sha256"]
+        == (_canonical_price_summary()["snapshot_sha256"])
     )
     assert manifest["budget"]["hard_limit_cny"] == "20"
 
     dev_cases = load_cases(
-        readonly_reporting.ROOT
-        / "evals"
-        / "readonly_regression_cases"
+        readonly_reporting.ROOT / "evals" / "readonly_regression_cases"
     )
     dev_results = [
         _result(case_id=case.case_id, trial=trial, passed=True)
@@ -539,9 +521,7 @@ def test_manifest_fingerprints_harness_and_never_serializes_secret_or_holdout_id
             purpose="dev_repeat",
         ),
     )
-    assert dev_manifest["eval"]["case_ids"] == [
-        case.case_id for case in dev_cases
-    ]
+    assert dev_manifest["eval"]["case_ids"] == [case.case_id for case in dev_cases]
     assert "semantic_calibration" not in dev_manifest["eval"]
 
 
@@ -557,9 +537,7 @@ def test_formal_manifest_requires_bound_calibration_attestations():
             split="holdout",
             case_set_name="readonly-holdout-v2",
             cases=cases,
-            results=[
-                _result(case_id=cases[0].case_id, trial=1, passed=True)
-            ],
+            results=[_result(case_id=cases[0].case_id, trial=1, passed=True)],
             settings=settings,
             planned_trials=1,
             started_at=started,
@@ -822,9 +800,7 @@ def test_formal_manifest_rejects_noncanonical_budget_contract(
 ) -> None:
     settings = Settings(
         deepseek_model="deepseek-v4-flash",
-        deepseek_max_tokens=(
-            2048 if attack == "max_tokens_drift" else 1024
-        ),
+        deepseek_max_tokens=(2048 if attack == "max_tokens_drift" else 1024),
     )
     cases = _formal_cases()
     results = [
@@ -854,8 +830,7 @@ def test_formal_manifest_rejects_noncanonical_budget_contract(
             budget[scope]["hard_limit_cny"] = "5"
             budget[scope]["execution_limit_cny"] = "5"
             budget[scope]["remaining_execution_cny"] = format(
-                Decimal("5")
-                - Decimal(budget[scope]["committed_cny"]),
+                Decimal("5") - Decimal(budget[scope]["committed_cny"]),
                 "f",
             )
     elif attack == "lower_reservation":
@@ -969,10 +944,7 @@ def test_formal_bundle_schema_recomputes_cost_instead_of_trusting_summary():
         "trajectories": "trajectories/",
         "integrity": "integrity.json",
     }
-    records = [
-        result_to_record(result, split="holdout")
-        for result in results
-    ]
+    records = [result_to_record(result, split="holdout") for result in results]
     payload = {
         "manifest": manifest,
         "cases": records,
@@ -992,9 +964,7 @@ def test_formal_bundle_schema_recomputes_cost_instead_of_trusting_summary():
 
     validate_readonly_payload(payload)
     forged_price = deepcopy(payload)
-    forged_price["manifest"]["budget"][
-        "price_snapshot_sha256"
-    ] = "0" * 64
+    forged_price["manifest"]["budget"]["price_snapshot_sha256"] = "0" * 64
     forged_budget = forged_price["summary"]["budget"]
     forged_budget["run_identity"]["price_sha256"] = "0" * 64
     forged_budget["price"]["snapshot_sha256"] = "0" * 64
@@ -1007,33 +977,26 @@ def test_formal_bundle_schema_recomputes_cost_instead_of_trusting_summary():
         forged_budget[scope]["committed_cny"] = "0"
         forged_budget[scope]["settled_cny"] = "0"
         forged_budget[scope]["remaining_execution_cny"] = "18"
-        forged_budget["attempt_evidence"][scope][0][
-            "known_cost_cny"
-        ] = "0"
+        forged_budget["attempt_evidence"][scope][0]["known_cost_cny"] = "0"
     with pytest.raises(ValueError, match="canonical|pricing|price"):
         validate_readonly_payload(forged_price)
 
     lowered_limits = deepcopy(payload)
     lowered_limits["manifest"]["budget"]["hard_limit_cny"] = "5"
-    lowered_limits["manifest"]["budget"][
-        "execution_limit_cny"
-    ] = "5"
+    lowered_limits["manifest"]["budget"]["execution_limit_cny"] = "5"
     lowered_budget = lowered_limits["summary"]["budget"]
     for scope in ("run", "cumulative"):
         lowered_budget[scope]["hard_limit_cny"] = "5"
         lowered_budget[scope]["execution_limit_cny"] = "5"
         lowered_budget[scope]["remaining_execution_cny"] = format(
-            Decimal("5")
-            - Decimal(lowered_budget[scope]["committed_cny"]),
+            Decimal("5") - Decimal(lowered_budget[scope]["committed_cny"]),
             "f",
         )
     with pytest.raises(ValueError, match="canonical|budget|limit"):
         validate_readonly_payload(lowered_limits)
 
     mismatched_trajectory = deepcopy(payload)
-    mismatched_trajectory["trajectories"][0]["final_text"] = (
-        "forged trajectory content"
-    )
+    mismatched_trajectory["trajectories"][0]["final_text"] = "forged trajectory content"
     with pytest.raises(ValueError, match="Case|trajectory|differ"):
         validate_readonly_payload(mismatched_trajectory)
 
@@ -1076,16 +1039,12 @@ def test_formal_bundle_schema_recomputes_cost_instead_of_trusting_summary():
         validate_readonly_payload(forged_record)
 
     mismatched_execution_limit = deepcopy(payload)
-    mismatched_execution_limit["manifest"]["budget"][
-        "execution_limit_cny"
-    ] = "17"
+    mismatched_execution_limit["manifest"]["budget"]["execution_limit_cny"] = "17"
     with pytest.raises(ValueError, match="budget|limit|differ"):
         validate_readonly_payload(mismatched_execution_limit)
 
     mismatched_reservation = deepcopy(payload)
-    mismatched_reservation["manifest"]["budget"][
-        "reservation_cny_per_attempt"
-    ] = "0.5"
+    mismatched_reservation["manifest"]["budget"]["reservation_cny_per_attempt"] = "0.5"
     with pytest.raises(ValueError, match="budget|reservation|differ"):
         validate_readonly_payload(mismatched_reservation)
 
@@ -1103,9 +1062,7 @@ def test_formal_bundle_schema_recomputes_cost_instead_of_trusting_summary():
         validate_readonly_payload(coordinated_lower_reservation)
 
     max_tokens_drift = deepcopy(payload)
-    max_tokens_drift["manifest"]["model"]["generation_config"][
-        "max_tokens"
-    ] = 2048
+    max_tokens_drift["manifest"]["model"]["generation_config"]["max_tokens"] = 2048
     with pytest.raises(
         ValueError,
         match="canonical|budget|reservation|max_tokens",
@@ -1115,9 +1072,7 @@ def test_formal_bundle_schema_recomputes_cost_instead_of_trusting_summary():
     for scope in ("run", "cumulative"):
         payload["summary"]["budget"][scope]["committed_cny"] = "17"
         payload["summary"]["budget"][scope]["settled_cny"] = "17"
-        payload["summary"]["budget"][scope][
-            "remaining_execution_cny"
-        ] = "1"
+        payload["summary"]["budget"][scope]["remaining_execution_cny"] = "1"
 
     with pytest.raises(
         ValueError,

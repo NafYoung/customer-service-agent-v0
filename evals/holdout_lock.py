@@ -106,9 +106,7 @@ class HoldoutTerminalReceipt(_StrictReceiptModel):
     @model_validator(mode="after")
     def validate_terminal_state(self) -> HoldoutTerminalReceipt:
         if self.completed_at.tzinfo is None:
-            raise ValueError(
-                "Holdout terminal timestamp must be timezone-aware."
-            )
+            raise ValueError("Holdout terminal timestamp must be timezone-aware.")
         if self.status == "completed":
             valid = (
                 self.bundle_integrity_sha256 is not None
@@ -116,17 +114,14 @@ class HoldoutTerminalReceipt(_StrictReceiptModel):
                 and self.failure_evidence_status is None
             )
         else:
-            valid = (
-                self.bundle_integrity_sha256 is None
-                and (
-                    (
-                        self.attempt_bundle_integrity_sha256 is not None
-                        and self.failure_evidence_status == "captured"
-                    )
-                    or (
-                        self.attempt_bundle_integrity_sha256 is None
-                        and self.failure_evidence_status == "unavailable"
-                    )
+            valid = self.bundle_integrity_sha256 is None and (
+                (
+                    self.attempt_bundle_integrity_sha256 is not None
+                    and self.failure_evidence_status == "captured"
+                )
+                or (
+                    self.attempt_bundle_integrity_sha256 is None
+                    and self.failure_evidence_status == "unavailable"
                 )
             )
         if not valid:
@@ -224,9 +219,7 @@ def validate_regression_gate(
         verify_private_eval_bundle_permissions(absolute_bundle)
         payload = verify_eval_bundle(absolute_bundle)
         evidence = validate_readonly_payload(payload)
-        integrity_sha256 = read_file_snapshot(
-            absolute_bundle / "integrity.json"
-        ).sha256
+        integrity_sha256 = read_file_snapshot(absolute_bundle / "integrity.json").sha256
     except (
         ArtifactIntegrityError,
         FileSnapshotError,
@@ -246,14 +239,10 @@ def validate_regression_gate(
             expected_commit=source_git_commit
         )
         source_tree_before = current_source_tree_sha256()
-        harness_fingerprints = current_readonly_harness_fingerprints(
-            runtime_settings
-        )
+        harness_fingerprints = current_readonly_harness_fingerprints(runtime_settings)
         source_snapshot = current_readonly_source_snapshot()
         source_tree_after = current_source_tree_sha256()
-        require_clean_git_worktree(
-            expected_commit=trusted_source_git_commit
-        )
+        require_clean_git_worktree(expected_commit=trusted_source_git_commit)
     except CalibrationAttestationError as exc:
         raise HoldoutLockError(
             "The formal public regression runtime is not canonical."
@@ -269,19 +258,15 @@ def validate_regression_gate(
         or source_snapshot["git_commit"] != source_git_commit
         or (
             expected_source_tree_sha256 is not None
-            and source_snapshot["source_tree_sha256"]
-            != expected_source_tree_sha256
+            and source_snapshot["source_tree_sha256"] != expected_source_tree_sha256
         )
         or (
             expected_harness_fingerprints is not None
-            and dict(expected_harness_fingerprints)
-            != harness_fingerprints
+            and dict(expected_harness_fingerprints) != harness_fingerprints
         )
         or harness_sha256 != current_harness_sha256
     ):
-        raise HoldoutLockError(
-            "The formal public regression trusted runtime changed."
-        )
+        raise HoldoutLockError("The formal public regression trusted runtime changed.")
 
     expected_source = {
         **source_snapshot,
@@ -290,18 +275,12 @@ def validate_regression_gate(
     expected_harness = {
         "runtime_harness_sha256": current_harness_sha256,
         "prompt_sha256": harness_fingerprints["prompt_sha256"],
-        "tool_contracts_sha256": harness_fingerprints[
-            "tool_contracts_sha256"
-        ],
+        "tool_contracts_sha256": harness_fingerprints["tool_contracts_sha256"],
         "policies_sha256": harness_fingerprints["policies_sha256"],
         "seed_data_sha256": harness_fingerprints["seed_sha256"],
         "agent_loop_sha256": harness_fingerprints["agent_loop_sha256"],
-        "model_runtime_sha256": harness_fingerprints[
-            "model_runtime_sha256"
-        ],
-        "semantic_judge_version": harness_fingerprints[
-            "semantic_judge_version"
-        ],
+        "model_runtime_sha256": harness_fingerprints["model_runtime_sha256"],
+        "semantic_judge_version": harness_fingerprints["semantic_judge_version"],
         "semantic_judge_prompt_sha256": harness_fingerprints[
             "semantic_judge_prompt_sha256"
         ],
@@ -320,9 +299,7 @@ def validate_regression_gate(
         "semantic_calibration_corpus_sha256": harness_fingerprints[
             "semantic_calibration_corpus_sha256"
         ],
-        "evidence_protocol_sha256": harness_fingerprints[
-            "evidence_protocol_sha256"
-        ],
+        "evidence_protocol_sha256": harness_fingerprints["evidence_protocol_sha256"],
         "canonical_price_snapshot_sha256": harness_fingerprints[
             "canonical_price_snapshot_sha256"
         ],
@@ -382,10 +359,8 @@ def validate_regression_gate(
         or summary.business_state.all_trials_unchanged is not True
         or summary.errors
         or manifest.source.model_dump(mode="json") != expected_source
-        or manifest.eval.scorer_version
-        != harness_fingerprints["scorer_version"]
-        or manifest.eval.scorer_sha256
-        != harness_fingerprints["scorer_sha256"]
+        or manifest.eval.scorer_version != harness_fingerprints["scorer_version"]
+        or manifest.eval.scorer_sha256 != harness_fingerprints["scorer_sha256"]
         or manifest.harness.model_dump(mode="json") != expected_harness
         or manifest.model.model_dump(mode="json") != expected_model
     ):
@@ -467,9 +442,7 @@ def validate_holdout_declaration(
     case_set_name: str,
     cases: Sequence[ReadonlyEvalCase],
     settings: Settings | None = None,
-    calibration_attestation: (
-        ValidatedCalibrationAttestation | None
-    ) = None,
+    calibration_attestation: (ValidatedCalibrationAttestation | None) = None,
     calibration_review: ValidatedCalibrationReview | None = None,
     regression_gate: ValidatedRegressionGate | None = None,
     harness_fingerprints: Mapping[str, str] | None = None,
@@ -477,9 +450,7 @@ def validate_holdout_declaration(
 ) -> HoldoutDeclaration:
     """Bind a sealed case set to the exact current read-only harness."""
 
-    manifest, manifest_sha256 = _read_manifest_with_sha256(
-        manifest_path
-    )
+    manifest, manifest_sha256 = _read_manifest_with_sha256(manifest_path)
     if (
         type(manifest.get("formal_runs_allowed")) is not int
         or manifest.get("formal_runs_allowed") != 1
@@ -488,16 +459,13 @@ def validate_holdout_declaration(
         or manifest.get("lifecycle_status") != "sealed"
         or manifest.get("rerun_policy") != "prohibited"
     ):
-        raise HoldoutLockError(
-            "The declared formal run is no longer available."
-        )
+        raise HoldoutLockError("The declared formal run is no longer available.")
     if manifest.get("case_set_name") != case_set_name:
         raise HoldoutLockError(
             "The declared holdout name does not match the requested case set."
         )
     if len(cases) != 20 or any(
-        case.expected.semantic_contract is None
-        for case in cases
+        case.expected.semantic_contract is None for case in cases
     ):
         raise HoldoutLockError(
             "A formal holdout requires exactly 20 semantic-scored cases."
@@ -513,12 +481,9 @@ def validate_holdout_declaration(
         )
     if (
         source_git_commit is not None
-        and calibration_attestation.source_git_commit
-        != source_git_commit
+        and calibration_attestation.source_git_commit != source_git_commit
     ):
-        raise HoldoutLockError(
-            "The calibration and holdout source commits must match."
-        )
+        raise HoldoutLockError("The calibration and holdout source commits must match.")
     current_harness = (
         dict(harness_fingerprints)
         if harness_fingerprints is not None
@@ -574,31 +539,19 @@ def validate_holdout_declaration(
         )
 
     expected_calibration_fields: dict[str, object] = {
-        "semantic_calibration_report_sha256": (
-            calibration_attestation.report_sha256
-        ),
-        "semantic_calibration_review_sha256": (
-            calibration_review.review_sha256
-        ),
+        "semantic_calibration_report_sha256": (calibration_attestation.report_sha256),
+        "semantic_calibration_review_sha256": (calibration_review.review_sha256),
         "semantic_calibration_run_id": calibration_attestation.run_id,
         "semantic_calibration_source_git_commit": (
             calibration_attestation.source_git_commit
         ),
-        "semantic_calibration_fixture_sha256": (
-            calibration_attestation.fixture_sha256
-        ),
+        "semantic_calibration_fixture_sha256": (calibration_attestation.fixture_sha256),
         "semantic_calibration_contract_set_sha256": (
             calibration_attestation.contract_set_sha256
         ),
-        "semantic_calibration_harness_sha256": (
-            calibration_attestation.harness_sha256
-        ),
-        "semantic_calibration_reviewer_id": (
-            calibration_review.reviewer_id
-        ),
-        "semantic_calibration_reviewed_count": (
-            calibration_review.reviewed_count
-        ),
+        "semantic_calibration_harness_sha256": (calibration_attestation.harness_sha256),
+        "semantic_calibration_reviewer_id": (calibration_review.reviewer_id),
+        "semantic_calibration_reviewed_count": (calibration_review.reviewed_count),
     }
     if any(
         manifest.get(field_name) != expected
@@ -614,24 +567,14 @@ def validate_holdout_declaration(
         ),
         "public_regression_gate_sha256": regression_gate.gate_sha256,
         "public_regression_run_id": regression_gate.run_id,
-        "public_regression_source_git_commit": (
-            regression_gate.source_git_commit
-        ),
-        "public_regression_case_set_name": (
-            regression_gate.case_set_name
-        ),
-        "public_regression_case_set_sha256": (
-            regression_gate.case_set_sha256
-        ),
-        "public_regression_harness_sha256": (
-            regression_gate.harness_sha256
-        ),
+        "public_regression_source_git_commit": (regression_gate.source_git_commit),
+        "public_regression_case_set_name": (regression_gate.case_set_name),
+        "public_regression_case_set_sha256": (regression_gate.case_set_sha256),
+        "public_regression_harness_sha256": (regression_gate.harness_sha256),
     }
     if (
-        regression_gate.source_git_commit
-        != str(manifest.get("source_git_commit"))
-        or regression_gate.harness_sha256
-        != stable_sha256(current_harness)
+        regression_gate.source_git_commit != str(manifest.get("source_git_commit"))
+        or regression_gate.harness_sha256 != stable_sha256(current_harness)
         or any(
             manifest.get(field_name) != expected
             for field_name, expected in expected_regression_fields.items()
@@ -673,29 +616,17 @@ def validate_holdout_declaration(
         calibration_report_sha256=calibration_attestation.report_sha256,
         calibration_review_sha256=calibration_review.review_sha256,
         calibration_run_id=calibration_attestation.run_id,
-        calibration_source_git_commit=(
-            calibration_attestation.source_git_commit
-        ),
-        calibration_fixture_sha256=(
-            calibration_attestation.fixture_sha256
-        ),
-        calibration_contract_set_sha256=(
-            calibration_attestation.contract_set_sha256
-        ),
-        calibration_harness_sha256=(
-            calibration_attestation.harness_sha256
-        ),
+        calibration_source_git_commit=(calibration_attestation.source_git_commit),
+        calibration_fixture_sha256=(calibration_attestation.fixture_sha256),
+        calibration_contract_set_sha256=(calibration_attestation.contract_set_sha256),
+        calibration_harness_sha256=(calibration_attestation.harness_sha256),
         calibration_reviewer_id=calibration_review.reviewer_id,
         calibration_reviewed_count=calibration_review.reviewed_count,
         harness_sha256=stable_sha256(current_harness),
-        regression_bundle_integrity_sha256=(
-            regression_gate.bundle_integrity_sha256
-        ),
+        regression_bundle_integrity_sha256=(regression_gate.bundle_integrity_sha256),
         regression_gate_sha256=regression_gate.gate_sha256,
         regression_run_id=regression_gate.run_id,
-        regression_source_git_commit=(
-            regression_gate.source_git_commit
-        ),
+        regression_source_git_commit=(regression_gate.source_git_commit),
         regression_case_set_name=regression_gate.case_set_name,
         regression_case_set_sha256=regression_gate.case_set_sha256,
         regression_harness_sha256=regression_gate.harness_sha256,
@@ -797,31 +728,23 @@ def acquire_holdout_run_lock_with_hash(
             "semantic_calibration_harness_sha256": (
                 declaration.calibration_harness_sha256
             ),
-            "semantic_calibration_reviewer_id": (
-                declaration.calibration_reviewer_id
-            ),
+            "semantic_calibration_reviewer_id": (declaration.calibration_reviewer_id),
             "semantic_calibration_reviewed_count": (
                 declaration.calibration_reviewed_count
             ),
             "public_regression_bundle_integrity_sha256": (
                 declaration.regression_bundle_integrity_sha256
             ),
-            "public_regression_gate_sha256": (
-                declaration.regression_gate_sha256
-            ),
+            "public_regression_gate_sha256": (declaration.regression_gate_sha256),
             "public_regression_run_id": declaration.regression_run_id,
             "public_regression_source_git_commit": (
                 declaration.regression_source_git_commit
             ),
-            "public_regression_case_set_name": (
-                declaration.regression_case_set_name
-            ),
+            "public_regression_case_set_name": (declaration.regression_case_set_name),
             "public_regression_case_set_sha256": (
                 declaration.regression_case_set_sha256
             ),
-            "public_regression_harness_sha256": (
-                declaration.regression_harness_sha256
-            ),
+            "public_regression_harness_sha256": (declaration.regression_harness_sha256),
             "run_id": run_id,
             "status": "started",
             "created_at": created_at,
@@ -946,9 +869,7 @@ def finalize_holdout_run_lock(
 ) -> Path:
     """Append an immutable terminal receipt while preserving the start hash."""
 
-    payload, start_receipt_sha256 = _read_manifest_with_sha256(
-        lock_path
-    )
+    payload, start_receipt_sha256 = _read_manifest_with_sha256(lock_path)
     start_receipt = _validate_start_receipt(payload)
     if (
         not _is_sha256(expected_start_receipt_sha256)
@@ -961,12 +882,9 @@ def finalize_holdout_run_lock(
         raise HoldoutLockError(
             "The formal holdout lock cannot be finalized in its current state."
         )
-    if (
-        status == "completed"
-        and (
-            not _is_sha256(bundle_integrity_sha256)
-            or attempt_bundle_integrity_sha256 is not None
-        )
+    if status == "completed" and (
+        not _is_sha256(bundle_integrity_sha256)
+        or attempt_bundle_integrity_sha256 is not None
     ):
         raise HoldoutLockError(
             "A completed holdout requires the bundle integrity hash."
@@ -981,9 +899,7 @@ def finalize_holdout_run_lock(
         raise HoldoutLockError(
             "A failed holdout has invalid or conflicting bundle evidence."
         )
-    terminal_path = lock_path.with_name(
-        "readonly-holdout-v2.terminal.json"
-    )
+    terminal_path = lock_path.with_name("readonly-holdout-v2.terminal.json")
     terminal_payload = HoldoutTerminalReceipt.model_validate(
         {
             "schema_version": "2.0",
@@ -991,9 +907,7 @@ def finalize_holdout_run_lock(
             "status": status,
             "lock_start_receipt_sha256": start_receipt_sha256,
             "bundle_integrity_sha256": bundle_integrity_sha256,
-            "attempt_bundle_integrity_sha256": (
-                attempt_bundle_integrity_sha256
-            ),
+            "attempt_bundle_integrity_sha256": (attempt_bundle_integrity_sha256),
             "failure_evidence_status": (
                 (
                     "captured"
@@ -1003,9 +917,7 @@ def finalize_holdout_run_lock(
                 if status == "failed"
                 else None
             ),
-            "completed_at": (
-                now or datetime.now(UTC)
-            ).astimezone(UTC).isoformat(),
+            "completed_at": (now or datetime.now(UTC)).astimezone(UTC).isoformat(),
         },
     )
     _write_exclusive_json(
@@ -1033,9 +945,7 @@ def verify_holdout_receipt_chain(
         bundle_path=bundle_path,
         private_root=private_root,
     )
-    manifest, manifest_sha256 = _read_manifest_with_sha256(
-        manifest_path
-    )
+    manifest, manifest_sha256 = _read_manifest_with_sha256(manifest_path)
     start, start_sha256 = _read_manifest_with_sha256(start_path)
     terminal, _ = _read_manifest_with_sha256(terminal_path)
     start_receipt = _validate_start_receipt(start)
@@ -1044,19 +954,13 @@ def verify_holdout_receipt_chain(
         terminal_receipt.status != "completed"
         or terminal_receipt.completed_at < start_receipt.created_at
     ):
-        raise HoldoutLockError(
-            "The completed holdout receipt timestamps are invalid."
-        )
+        raise HoldoutLockError("The completed holdout receipt timestamps are invalid.")
     try:
         regression_gate = validate_regression_gate(
             bundle_path=regression_bundle_path,
             private_root=private_root,
-            source_git_commit=str(
-                start.get("public_regression_source_git_commit")
-            ),
-            harness_sha256=str(
-                start.get("public_regression_harness_sha256")
-            ),
+            source_git_commit=str(start.get("public_regression_source_git_commit")),
+            harness_sha256=str(start.get("public_regression_harness_sha256")),
         )
     except HoldoutLockError as exc:
         raise HoldoutLockError(
@@ -1065,9 +969,7 @@ def verify_holdout_receipt_chain(
     try:
         verified_bundle = verify_eval_bundle(bundle_path)
         validate_readonly_payload(verified_bundle)
-        integrity_sha256 = read_file_snapshot(
-            bundle_path / "integrity.json"
-        ).sha256
+        integrity_sha256 = read_file_snapshot(bundle_path / "integrity.json").sha256
     except (
         ArtifactIntegrityError,
         FileSnapshotError,
@@ -1090,9 +992,7 @@ def verify_holdout_receipt_chain(
             bundle_harness,
         )
     ):
-        raise HoldoutLockError(
-            "The formal holdout bundle chain is incomplete."
-        )
+        raise HoldoutLockError("The formal holdout bundle chain is incomplete.")
     assert isinstance(bundle_eval, dict)
     assert isinstance(bundle_source, dict)
     assert isinstance(bundle_harness, dict)
@@ -1102,9 +1002,7 @@ def verify_holdout_receipt_chain(
         calibration,
         dict,
     ):
-        raise HoldoutLockError(
-            "The formal holdout bundle chain is incomplete."
-        )
+        raise HoldoutLockError("The formal holdout bundle chain is incomplete.")
 
     run_id = start.get("run_id")
     harness_sha256 = start.get("harness_sha256")
@@ -1113,13 +1011,9 @@ def verify_holdout_receipt_chain(
         "semantic_calibration_report_sha256": "report_sha256",
         "semantic_calibration_review_sha256": "review_sha256",
         "semantic_calibration_run_id": "run_id",
-        "semantic_calibration_source_git_commit": (
-            "source_git_commit"
-        ),
+        "semantic_calibration_source_git_commit": ("source_git_commit"),
         "semantic_calibration_fixture_sha256": "fixture_sha256",
-        "semantic_calibration_contract_set_sha256": (
-            "contract_set_sha256"
-        ),
+        "semantic_calibration_contract_set_sha256": ("contract_set_sha256"),
         "semantic_calibration_harness_sha256": "harness_sha256",
         "semantic_calibration_reviewer_id": "reviewer_id",
         "semantic_calibration_reviewed_count": "reviewed_count",
@@ -1130,65 +1024,40 @@ def verify_holdout_receipt_chain(
         ),
         "public_regression_gate_sha256": "regression_gate_sha256",
         "public_regression_run_id": "regression_run_id",
-        "public_regression_source_git_commit": (
-            "regression_source_git_commit"
-        ),
-        "public_regression_case_set_name": (
-            "regression_case_set_name"
-        ),
-        "public_regression_case_set_sha256": (
-            "regression_case_set_sha256"
-        ),
-        "public_regression_harness_sha256": (
-            "regression_harness_sha256"
-        ),
+        "public_regression_source_git_commit": ("regression_source_git_commit"),
+        "public_regression_case_set_name": ("regression_case_set_name"),
+        "public_regression_case_set_sha256": ("regression_case_set_sha256"),
+        "public_regression_harness_sha256": ("regression_harness_sha256"),
     }
     if (
         start.get("status") != "started"
         or terminal.get("status") != "completed"
-        or terminal.get("attempt_bundle_integrity_sha256")
-        is not None
+        or terminal.get("attempt_bundle_integrity_sha256") is not None
         or terminal.get("failure_evidence_status") is not None
         or not _is_sha256(harness_sha256)
         or start.get("manifest_sha256") != manifest_sha256
         or terminal.get("run_id") != run_id
         or bundle_manifest.get("run_id") != run_id
-        or terminal.get("lock_start_receipt_sha256")
-        != start_sha256
-        or terminal.get("bundle_integrity_sha256")
-        != integrity_sha256
-        or formal.get("declaration_manifest_sha256")
-        != manifest_sha256
-        or formal.get("lock_start_receipt_sha256")
-        != start_sha256
-        or formal.get("declared_harness_sha256")
-        != harness_sha256
+        or terminal.get("lock_start_receipt_sha256") != start_sha256
+        or terminal.get("bundle_integrity_sha256") != integrity_sha256
+        or formal.get("declaration_manifest_sha256") != manifest_sha256
+        or formal.get("lock_start_receipt_sha256") != start_sha256
+        or formal.get("declared_harness_sha256") != harness_sha256
         or regression_gate.bundle_integrity_sha256
         != start.get("public_regression_bundle_integrity_sha256")
-        or regression_gate.gate_sha256
-        != start.get("public_regression_gate_sha256")
-        or regression_gate.run_id
-        != start.get("public_regression_run_id")
-        or regression_gate.case_set_name
-        != start.get("public_regression_case_set_name")
+        or regression_gate.gate_sha256 != start.get("public_regression_gate_sha256")
+        or regression_gate.run_id != start.get("public_regression_run_id")
+        or regression_gate.case_set_name != start.get("public_regression_case_set_name")
         or regression_gate.case_set_sha256
         != start.get("public_regression_case_set_sha256")
-        or bundle_harness.get("runtime_harness_sha256")
-        != harness_sha256
-        or manifest.get("case_set_name")
-        != start.get("case_set_name")
-        or manifest.get("case_set_sha256")
-        != start.get("case_set_sha256")
-        or bundle_eval.get("case_set_name")
-        != start.get("case_set_name")
-        or bundle_eval.get("case_set_sha256")
-        != start.get("case_set_sha256")
-        or manifest.get("scorer_version")
-        != start.get("scorer_version")
-        or bundle_eval.get("scorer_version")
-        != start.get("scorer_version")
-        or manifest.get("source_git_commit")
-        != source_git_commit
+        or bundle_harness.get("runtime_harness_sha256") != harness_sha256
+        or manifest.get("case_set_name") != start.get("case_set_name")
+        or manifest.get("case_set_sha256") != start.get("case_set_sha256")
+        or bundle_eval.get("case_set_name") != start.get("case_set_name")
+        or bundle_eval.get("case_set_sha256") != start.get("case_set_sha256")
+        or manifest.get("scorer_version") != start.get("scorer_version")
+        or bundle_eval.get("scorer_version") != start.get("scorer_version")
+        or manifest.get("source_git_commit") != source_git_commit
         or bundle_source.get("git_commit") != source_git_commit
         or any(
             manifest.get(start_field) != start.get(start_field)
@@ -1229,9 +1098,7 @@ def verify_failed_holdout_receipt_chain(
         bundle_path=bundle_path,
         private_root=private_root,
     )
-    manifest, manifest_sha256 = _read_manifest_with_sha256(
-        manifest_path
-    )
+    manifest, manifest_sha256 = _read_manifest_with_sha256(manifest_path)
     start, start_sha256 = _read_manifest_with_sha256(start_path)
     terminal, _ = _read_manifest_with_sha256(terminal_path)
     start_receipt = _validate_start_receipt(start)
@@ -1240,19 +1107,13 @@ def verify_failed_holdout_receipt_chain(
         terminal_receipt.status != "failed"
         or terminal_receipt.completed_at < start_receipt.created_at
     ):
-        raise HoldoutLockError(
-            "The failed holdout receipt timestamps are invalid."
-        )
+        raise HoldoutLockError("The failed holdout receipt timestamps are invalid.")
     try:
         regression_gate = validate_regression_gate(
             bundle_path=regression_bundle_path,
             private_root=private_root,
-            source_git_commit=str(
-                start.get("public_regression_source_git_commit")
-            ),
-            harness_sha256=str(
-                start.get("public_regression_harness_sha256")
-            ),
+            source_git_commit=str(start.get("public_regression_source_git_commit")),
+            harness_sha256=str(start.get("public_regression_harness_sha256")),
         )
     except HoldoutLockError as exc:
         raise HoldoutLockError(
@@ -1260,9 +1121,7 @@ def verify_failed_holdout_receipt_chain(
         ) from exc
     try:
         failed_bundle = validate_formal_failure_bundle(bundle_path)
-        integrity_sha256 = read_file_snapshot(
-            bundle_path / "integrity.json"
-        ).sha256
+        integrity_sha256 = read_file_snapshot(bundle_path / "integrity.json").sha256
     except (
         ArtifactIntegrityError,
         FileSnapshotError,
@@ -1270,9 +1129,7 @@ def verify_failed_holdout_receipt_chain(
         OSError,
         ValueError,
     ) as exc:
-        raise HoldoutLockError(
-            "The failed formal attempt bundle is invalid."
-        ) from exc
+        raise HoldoutLockError("The failed formal attempt bundle is invalid.") from exc
 
     failure_manifest = failed_bundle.manifest
     failure_bindings = failure_manifest.formal_holdout
@@ -1301,33 +1158,21 @@ def verify_failed_holdout_receipt_chain(
         or terminal.get("status") != "failed"
         or terminal.get("bundle_integrity_sha256") is not None
         or terminal.get("failure_evidence_status") != "captured"
-        or terminal.get("attempt_bundle_integrity_sha256")
-        != integrity_sha256
-        or terminal.get("lock_start_receipt_sha256")
-        != start_sha256
+        or terminal.get("attempt_bundle_integrity_sha256") != integrity_sha256
+        or terminal.get("lock_start_receipt_sha256") != start_sha256
         or terminal.get("run_id") != start.get("run_id")
         or failure_manifest.run_id != start.get("run_id")
         or start.get("manifest_sha256") != manifest_sha256
-        or failure_bindings.declaration_manifest_sha256
-        != manifest_sha256
-        or failure_bindings.lock_start_receipt_sha256
-        != start_sha256
-        or failure_bindings.declared_harness_sha256
-        != start.get("harness_sha256")
-        or failure_bindings.runtime_harness_sha256
-        != start.get("harness_sha256")
-        or failure_manifest.source.git_commit
-        != start.get("source_git_commit")
-        or manifest.get("source_git_commit")
-        != start.get("source_git_commit")
-        or failure_manifest.case_set.name
-        != start.get("case_set_name")
-        or failure_manifest.case_set.sha256
-        != start.get("case_set_sha256")
-        or manifest.get("case_set_name")
-        != start.get("case_set_name")
-        or manifest.get("case_set_sha256")
-        != start.get("case_set_sha256")
+        or failure_bindings.declaration_manifest_sha256 != manifest_sha256
+        or failure_bindings.lock_start_receipt_sha256 != start_sha256
+        or failure_bindings.declared_harness_sha256 != start.get("harness_sha256")
+        or failure_bindings.runtime_harness_sha256 != start.get("harness_sha256")
+        or failure_manifest.source.git_commit != start.get("source_git_commit")
+        or manifest.get("source_git_commit") != start.get("source_git_commit")
+        or failure_manifest.case_set.name != start.get("case_set_name")
+        or failure_manifest.case_set.sha256 != start.get("case_set_sha256")
+        or manifest.get("case_set_name") != start.get("case_set_name")
+        or manifest.get("case_set_sha256") != start.get("case_set_sha256")
         or any(
             manifest.get(field_name) != start.get(field_name)
             for field_name in calibration_fields
@@ -1340,8 +1185,7 @@ def verify_failed_holdout_receipt_chain(
         != start.get("public_regression_bundle_integrity_sha256")
         or failure_bindings.regression_gate_sha256
         != start.get("public_regression_gate_sha256")
-        or failure_bindings.regression_run_id
-        != start.get("public_regression_run_id")
+        or failure_bindings.regression_run_id != start.get("public_regression_run_id")
         or failure_bindings.regression_source_git_commit
         != start.get("public_regression_source_git_commit")
         or failure_bindings.regression_case_set_name
@@ -1352,12 +1196,9 @@ def verify_failed_holdout_receipt_chain(
         != start.get("public_regression_harness_sha256")
         or regression_gate.bundle_integrity_sha256
         != start.get("public_regression_bundle_integrity_sha256")
-        or regression_gate.gate_sha256
-        != start.get("public_regression_gate_sha256")
-        or regression_gate.run_id
-        != start.get("public_regression_run_id")
-        or regression_gate.case_set_name
-        != start.get("public_regression_case_set_name")
+        or regression_gate.gate_sha256 != start.get("public_regression_gate_sha256")
+        or regression_gate.run_id != start.get("public_regression_run_id")
+        or regression_gate.case_set_name != start.get("public_regression_case_set_name")
         or regression_gate.case_set_sha256
         != start.get("public_regression_case_set_sha256")
     ):

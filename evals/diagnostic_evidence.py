@@ -33,11 +33,7 @@ _SETTLED_STATUSES = {
 
 def _as_datetime(value: Any, *, label: str) -> datetime:
     try:
-        parsed = (
-            value
-            if isinstance(value, datetime)
-            else datetime.fromisoformat(value)
-        )
+        parsed = value if isinstance(value, datetime) else datetime.fromisoformat(value)
     except (TypeError, ValueError) as exc:
         raise ValueError(f"{label} timestamp is invalid") from exc
     if parsed.tzinfo is None:
@@ -59,9 +55,7 @@ def _counted_attempts(value: Any, *, label: str) -> int:
 
 def _require_offline_attempt_count(value: Any, *, label: str) -> None:
     if value is not None and (type(value) is not int or value != 0):
-        raise ValueError(
-            f"{label} offline call cannot claim a provider attempt"
-        )
+        raise ValueError(f"{label} offline call cannot claim a provider attempt")
 
 
 def _require_call_protocol(
@@ -94,11 +88,9 @@ def _require_call_protocol(
         ]
         if (
             any(call["phase"] != "agent" for call in calls)
-            or [call["sequence"] for call in calls]
-            != list(range(1, len(calls) + 1))
+            or [call["sequence"] for call in calls] != list(range(1, len(calls) + 1))
             or any(
-                call["tool_contract_count"]
-                != expected_tool_contract_count
+                call["tool_contract_count"] != expected_tool_contract_count
                 for call in calls
             )
         ):
@@ -112,8 +104,7 @@ def _require_call_protocol(
                 or record["error_code"] not in _LOCAL_ZERO_CALL_ERRORS
             ):
                 raise ValueError(
-                    f"{label} zero-call records require an explicit "
-                    "local failure"
+                    f"{label} zero-call records require an explicit local failure"
                 )
             continue
         record_successes = 0
@@ -124,9 +115,7 @@ def _require_call_protocol(
                 label=f"{label} model call",
             )
             if not record_started <= call_started <= record_completed:
-                raise ValueError(
-                    f"{label} model call is outside its record window"
-                )
+                raise ValueError(f"{label} model call is outside its record window")
             if call["status"] == "success":
                 provider_attempts = call["provider_attempts"]
                 if paid:
@@ -136,8 +125,7 @@ def _require_call_protocol(
                     )
                     if attempts < 1:
                         raise ValueError(
-                            f"{label} paid success call requires a "
-                            "provider attempt"
+                            f"{label} paid success call requires a provider attempt"
                         )
                 else:
                     _require_offline_attempt_count(
@@ -150,14 +138,10 @@ def _require_call_protocol(
                     or call["error_code"] is not None
                     or call["http_status"] is not None
                 ):
-                    raise ValueError(
-                        f"{label} success call protocol is inconsistent"
-                    )
+                    raise ValueError(f"{label} success call protocol is inconsistent")
                 observed_model = call["observed_model"]
                 if not isinstance(observed_model, str):
-                    raise ValueError(
-                        f"{label} observed model is invalid"
-                    )
+                    raise ValueError(f"{label} observed model is invalid")
                 if paid and observed_model != requested_model:
                     raise ValueError(
                         f"{label} paid success call observed the wrong model"
@@ -166,9 +150,7 @@ def _require_call_protocol(
                     observed_model == requested_model
                     or "deepseek" in observed_model.casefold()
                 ):
-                    raise ValueError(
-                        f"{label} offline evidence cannot claim DeepSeek"
-                    )
+                    raise ValueError(f"{label} offline evidence cannot claim DeepSeek")
                 record_successes += 1
                 observed_models.add(observed_model)
                 success_calls.append(call)
@@ -192,9 +174,7 @@ def _require_call_protocol(
                 or call["tool_calls"]
                 or call["error_code"] is None
             ):
-                raise ValueError(
-                    f"{label} error call protocol is inconsistent"
-                )
+                raise ValueError(f"{label} error call protocol is inconsistent")
             record_error_codes.add(call["error_code"])
             error_calls.append(call)
         if record["status"] == "passed":
@@ -206,16 +186,10 @@ def _require_call_protocol(
                 raise ValueError(
                     f"{label} passed record requires successful calls only"
                 )
-        elif (
-            record_successes == 0
-            and not record_error_codes
-        ) or (
-            record_error_codes
-            and record["error_code"] not in record_error_codes
+        elif (record_successes == 0 and not record_error_codes) or (
+            record_error_codes and record["error_code"] not in record_error_codes
         ):
-            raise ValueError(
-                f"{label} failed record does not match its model calls"
-            )
+            raise ValueError(f"{label} failed record does not match its model calls")
     return success_calls, error_calls, observed_models
 
 
@@ -246,14 +220,11 @@ def _require_offline_diagnostic(
             for field in zero_fields
         )
         or any(
-            call["provider_attempts"] is not None
-            and call["provider_attempts"] != 0
+            call["provider_attempts"] is not None and call["provider_attempts"] != 0
             for call in (*success_calls, *error_calls)
         )
     ):
-        raise ValueError(
-            f"{label} offline evidence contains paid provider attempts"
-        )
+        raise ValueError(f"{label} offline evidence contains paid provider attempts")
 
 
 def _require_paid_diagnostic(
@@ -302,9 +273,7 @@ def _require_paid_diagnostic(
         or Decimal(run["committed_cny"]) > Decimal("18")
         or Decimal(cumulative["committed_cny"]) > Decimal("18")
     ):
-        raise ValueError(
-            f"{label} paid budget identity or lifecycle is inconsistent"
-        )
+        raise ValueError(f"{label} paid budget identity or lifecycle is inconsistent")
     try:
         canonical_price = require_canonical_paid_budget(
             price=price,
@@ -312,21 +281,15 @@ def _require_paid_diagnostic(
             run_hard_limit_cny=run["hard_limit_cny"],
             run_execution_limit_cny=run["execution_limit_cny"],
             cumulative_hard_limit_cny=cumulative["hard_limit_cny"],
-            cumulative_execution_limit_cny=(
-                cumulative["execution_limit_cny"]
-            ),
+            cumulative_execution_limit_cny=(cumulative["execution_limit_cny"]),
         )
         require_canonical_attempt_reservation(
             canonical_price=canonical_price,
             max_output_tokens=max_output_tokens,
-            reservation_cny_per_attempt=(
-                budget["reservation_cny_per_attempt"]
-            ),
+            reservation_cny_per_attempt=(budget["reservation_cny_per_attempt"]),
         )
     except CanonicalPricingError as exc:
-        raise ValueError(
-            f"{label} pricing or reservation is not canonical"
-        ) from exc
+        raise ValueError(f"{label} pricing or reservation is not canonical") from exc
     identity_started = _as_datetime(
         identity["started_at"],
         label=f"{label} budget identity",
@@ -336,19 +299,14 @@ def _require_paid_diagnostic(
         label=f"{label} budget identity",
     )
     if (
-        canonical_price_snapshot_sha256
-        != canonical_price_file_sha256()
+        canonical_price_snapshot_sha256 != canonical_price_file_sha256()
         or started_at < canonical_price.captured_at
         or completed_at > canonical_price.valid_until
         or identity_started > started_at
         or identity_completed > completed_at
     ):
-        raise ValueError(
-            f"{label} run is outside its canonical paid window"
-        )
-    expected_settled: Counter[
-        tuple[str, str, str, str]
-    ] = Counter()
+        raise ValueError(f"{label} run is outside its canonical paid window")
+    expected_settled: Counter[tuple[str, str, str, str]] = Counter()
     settled_units = 0
     try:
         for call in success_calls:
@@ -358,9 +316,7 @@ def _require_paid_diagnostic(
             )
             cost = calculate_usage_cost_from_rates(
                 rates_cny=canonical_price.rates_cny.model_dump(),
-                tokens_per_price_unit=(
-                    canonical_price.tokens_per_price_unit
-                ),
+                tokens_per_price_unit=(canonical_price.tokens_per_price_unit),
                 usage=usage,
             )
             settled_units += cost.units
@@ -377,23 +333,14 @@ def _require_paid_diagnostic(
                 )
             ] += 1
     except BudgetUsageError as exc:
-        raise ValueError(
-            f"{label} success usage cannot be priced"
-        ) from exc
-    actual_settled: Counter[
-        tuple[str, str, str, str]
-    ] = Counter()
+        raise ValueError(f"{label} success usage cannot be priced") from exc
+    actual_settled: Counter[tuple[str, str, str, str]] = Counter()
     actual_uncertain = 0
     for bucket in run_buckets:
         count = bucket["count"]
         if bucket["status"] in _SETTLED_STATUSES:
-            if (
-                bucket["settlement_mode"] is None
-                or bucket["known_cost_cny"] is None
-            ):
-                raise ValueError(
-                    f"{label} settled attempt bucket is incomplete"
-                )
+            if bucket["settlement_mode"] is None or bucket["known_cost_cny"] is None:
+                raise ValueError(f"{label} settled attempt bucket is incomplete")
             actual_settled[
                 (
                     bucket["status"],
@@ -405,9 +352,7 @@ def _require_paid_diagnostic(
         elif bucket["status"] == "uncertain":
             actual_uncertain += count
         else:
-            raise ValueError(
-                f"{label} completed diagnostic retains a reserved attempt"
-            )
+            raise ValueError(f"{label} completed diagnostic retains a reserved attempt")
     expected_uncertain = sum(
         _counted_attempts(
             call["provider_attempts"],
@@ -434,12 +379,9 @@ def _require_paid_diagnostic(
         or actual_uncertain != expected_uncertain
         or run["attempt_count"] != provider_attempts
         or run["uncertain_count"] != expected_uncertain
-        or cny_to_units(Decimal(run["settled_cny"]))
-        != settled_units
+        or cny_to_units(Decimal(run["settled_cny"])) != settled_units
     ):
-        raise ValueError(
-            f"{label} attempt buckets or usage costs differ from records"
-        )
+        raise ValueError(f"{label} attempt buckets or usage costs differ from records")
 
 
 def require_completed_diagnostic_evidence(
@@ -460,26 +402,19 @@ def require_completed_diagnostic_evidence(
     contract = nonformal_paid_contract("diagnostic")
     if (
         len(records) != contract.case_count
-        or tuple(record["case_id"] for record in records)
-        != contract.case_ids
+        or tuple(record["case_id"] for record in records) != contract.case_ids
         or any(record["trial"] != 1 for record in records)
     ):
-        raise ValueError(
-            f"{label} records do not match the canonical diagnostic cases"
-        )
+        raise ValueError(f"{label} records do not match the canonical diagnostic cases")
     paid = budget["enforcement_mode"] == "persistent_sqlite"
-    success_calls, error_calls, recomputed_models = (
-        _require_call_protocol(
-            label=label,
-            records=records,
-            requested_model=requested_model,
-            paid=paid,
-        )
+    success_calls, error_calls, recomputed_models = _require_call_protocol(
+        label=label,
+        records=records,
+        requested_model=requested_model,
+        paid=paid,
     )
     if list(observed_models) != sorted(recomputed_models):
-        raise ValueError(
-            f"{label} observed models differ from successful calls"
-        )
+        raise ValueError(f"{label} observed models differ from successful calls")
     if paid:
         _require_paid_diagnostic(
             label=label,
@@ -491,9 +426,7 @@ def require_completed_diagnostic_evidence(
             run_id=run_id,
             started_at=started_at,
             completed_at=completed_at,
-            canonical_price_snapshot_sha256=(
-                canonical_price_snapshot_sha256
-            ),
+            canonical_price_snapshot_sha256=(canonical_price_snapshot_sha256),
         )
     else:
         _require_offline_diagnostic(

@@ -68,9 +68,7 @@ class FormalFailureHoldoutBindings(StrictFailureModel):
     runtime_harness_sha256: Sha256
     regression_bundle_integrity_sha256: Sha256
     regression_gate_sha256: Sha256
-    regression_run_id: str = Field(
-        pattern=r"^[a-z0-9][a-z0-9._-]{7,79}$"
-    )
+    regression_run_id: str = Field(pattern=r"^[a-z0-9][a-z0-9._-]{7,79}$")
     regression_source_git_commit: GitCommit
     regression_case_set_name: Literal["readonly-regression-v1"]
     regression_case_set_sha256: Sha256
@@ -79,16 +77,9 @@ class FormalFailureHoldoutBindings(StrictFailureModel):
     @model_validator(mode="after")
     def require_declared_runtime_harness(self) -> FormalFailureHoldoutBindings:
         if self.declared_harness_sha256 != self.runtime_harness_sha256:
-            raise ValueError(
-                "Declared and runtime harness fingerprints differ"
-            )
-        if (
-            self.regression_harness_sha256
-            != self.runtime_harness_sha256
-        ):
-            raise ValueError(
-                "Regression and runtime harness fingerprints differ"
-            )
+            raise ValueError("Declared and runtime harness fingerprints differ")
+        if self.regression_harness_sha256 != self.runtime_harness_sha256:
+            raise ValueError("Regression and runtime harness fingerprints differ")
         return self
 
 
@@ -112,9 +103,7 @@ class FormalFailureContext(StrictFailureModel):
             or self.failed_at.tzinfo is None
             or self.failed_at < self.created_at
         ):
-            raise ValueError(
-                "Failed-attempt timestamps must be aware and ordered"
-            )
+            raise ValueError("Failed-attempt timestamps must be aware and ordered")
         return self
 
 
@@ -141,9 +130,7 @@ class FormalFailureManifest(StrictFailureModel):
             or self.failed_at.tzinfo is None
             or self.failed_at < self.created_at
         ):
-            raise ValueError(
-                "Failed-attempt timestamps must be aware and ordered"
-            )
+            raise ValueError("Failed-attempt timestamps must be aware and ordered")
         return self
 
 
@@ -166,8 +153,7 @@ class FormalFailurePartialSummary(StrictFailureModel):
             != self.completed_record_count
             or self.unique_case_count > self.completed_record_count
             or (
-                self.business_state_changed_count
-                + self.business_state_unknown_count
+                self.business_state_changed_count + self.business_state_unknown_count
                 > self.completed_record_count
             )
         ):
@@ -194,30 +180,17 @@ class FormalFailureSummary(StrictFailureModel):
     def validate_capture_states(self) -> FormalFailureSummary:
         if self.record_capture_status == "captured":
             if self.partial is None:
-                raise ValueError(
-                    "Captured records require a partial summary"
-                )
-        elif (
-            self.partial is not None
-            or self.completed_record_count != 0
-        ):
-            raise ValueError(
-                "Unavailable records cannot claim partial results"
-            )
-        if (self.budget_capture_status == "captured") != (
-            self.budget is not None
-        ):
-            raise ValueError(
-                "Budget capture status does not match budget evidence"
-            )
+                raise ValueError("Captured records require a partial summary")
+        elif self.partial is not None or self.completed_record_count != 0:
+            raise ValueError("Unavailable records cannot claim partial results")
+        if (self.budget_capture_status == "captured") != (self.budget is not None):
+            raise ValueError("Budget capture status does not match budget evidence")
         if self.budget is None:
             if (
                 self.budget_attempt_delta is not None
                 or self.budget_limit_breached is not None
             ):
-                raise ValueError(
-                    "Unavailable budget cannot claim derived evidence"
-                )
+                raise ValueError("Unavailable budget cannot claim derived evidence")
             return self
         if (
             self.budget.enforcement_mode != "persistent_sqlite"
@@ -230,31 +203,20 @@ class FormalFailureSummary(StrictFailureModel):
                 "attempt evidence"
             )
         captured_provider_attempts = (
-            self.partial.provider_attempt_count
-            if self.partial is not None
-            else 0
+            self.partial.provider_attempt_count if self.partial is not None else 0
         )
         budget_attempts = self.budget.run.attempt_count
         if budget_attempts < captured_provider_attempts:
-            raise ValueError(
-                "Captured budget underreports provider attempts"
-            )
-        expected_attempt_delta = (
-            budget_attempts - captured_provider_attempts
-        )
+            raise ValueError("Captured budget underreports provider attempts")
+        expected_attempt_delta = budget_attempts - captured_provider_attempts
         expected_limit_breached = Decimal(
             self.budget.cumulative.committed_cny
-        ) > Decimal(
-            self.budget.cumulative.execution_limit_cny
-        )
+        ) > Decimal(self.budget.cumulative.execution_limit_cny)
         if (
             self.budget_attempt_delta != expected_attempt_delta
-            or self.budget_limit_breached
-            is not expected_limit_breached
+            or self.budget_limit_breached is not expected_limit_breached
         ):
-            raise ValueError(
-                "Failed-attempt budget derivations are inconsistent"
-            )
+            raise ValueError("Failed-attempt budget derivations are inconsistent")
         return self
 
 
@@ -276,9 +238,7 @@ def _recompute_attempt_amounts(
     reserved_count = 0
     uncertain_count = 0
     for bucket in buckets:
-        reserved_units = cny_to_units(
-            Decimal(bucket.reserved_cny)
-        )
+        reserved_units = cny_to_units(Decimal(bucket.reserved_cny))
         known_units = (
             cny_to_units(Decimal(bucket.known_cost_cny))
             if bucket.known_cost_cny is not None
@@ -298,10 +258,13 @@ def _recompute_attempt_amounts(
             committed_units += known_units * count
             settled_units += known_units * count
         else:
-            committed_units += max(
-                reserved_units,
-                known_units or reserved_units,
-            ) * count
+            committed_units += (
+                max(
+                    reserved_units,
+                    known_units or reserved_units,
+                )
+                * count
+            )
     return {
         "committed_units": committed_units,
         "settled_units": settled_units,
@@ -326,29 +289,21 @@ def _require_attempt_totals(
         )
     recomputed = _recompute_attempt_amounts(buckets)
     if (
-        cny_to_units(Decimal(amount.committed_cny))
-        != recomputed["committed_units"]
-        or cny_to_units(Decimal(amount.settled_cny))
-        != recomputed["settled_units"]
+        cny_to_units(Decimal(amount.committed_cny)) != recomputed["committed_units"]
+        or cny_to_units(Decimal(amount.settled_cny)) != recomputed["settled_units"]
         or amount.attempt_count != recomputed["attempt_count"]
         or amount.reserved_count != recomputed["reserved_count"]
         or amount.uncertain_count != recomputed["uncertain_count"]
     ):
-        raise ValueError(
-            "Failed-attempt budget totals differ from attempt evidence"
-        )
+        raise ValueError("Failed-attempt budget totals differ from attempt evidence")
     if cumulative:
         expected_remaining = max(
             0,
             cny_to_units(Decimal(amount.execution_limit_cny))
             - recomputed["committed_units"],
         )
-        if cny_to_units(
-            Decimal(amount.remaining_execution_cny)
-        ) != expected_remaining:
-            raise ValueError(
-                "Failed-attempt remaining budget is inconsistent"
-            )
+        if cny_to_units(Decimal(amount.remaining_execution_cny)) != expected_remaining:
+            raise ValueError("Failed-attempt remaining budget is inconsistent")
 
 
 class FormalFailureEvidenceBundle(StrictFailureModel):
@@ -367,16 +322,12 @@ class FormalFailureEvidenceBundle(StrictFailureModel):
             or manifest.failure_stage != summary.failure_stage
             or manifest.failure_code != summary.failure_code
         ):
-            raise ValueError(
-                "Failed-attempt manifest and summary identity differ"
-            )
+            raise ValueError("Failed-attempt manifest and summary identity differ")
         if (
             manifest.formal_holdout.regression_source_git_commit
             != manifest.source.git_commit
         ):
-            raise ValueError(
-                "Failed-attempt regression source differs from the run"
-            )
+            raise ValueError("Failed-attempt regression source differs from the run")
         if summary.budget is not None:
             budget_identity = summary.budget.run_identity
             budget_price = summary.budget.price
@@ -386,19 +337,13 @@ class FormalFailureEvidenceBundle(StrictFailureModel):
                 or budget_identity.run_id != manifest.run_id
                 or budget_identity.purpose != "holdout_formal"
             ):
-                raise ValueError(
-                    "Failed-attempt budget identity differs from the run"
-                )
+                raise ValueError("Failed-attempt budget identity differs from the run")
             try:
                 canonical_price = require_canonical_paid_budget(
                     price=budget_price,
                     expected_model=budget_identity.model,
-                    run_hard_limit_cny=(
-                        summary.budget.run.hard_limit_cny
-                    ),
-                    run_execution_limit_cny=(
-                        summary.budget.run.execution_limit_cny
-                    ),
+                    run_hard_limit_cny=(summary.budget.run.hard_limit_cny),
+                    run_execution_limit_cny=(summary.budget.run.execution_limit_cny),
                     cumulative_hard_limit_cny=(
                         summary.budget.cumulative.hard_limit_cny
                     ),
@@ -419,20 +364,14 @@ class FormalFailureEvidenceBundle(StrictFailureModel):
                     ),
                 )
             except CanonicalPricingError as exc:
-                raise ValueError(
-                    "Failed-attempt reservation is not canonical"
-                ) from exc
+                raise ValueError("Failed-attempt reservation is not canonical") from exc
             attempt_evidence = summary.budget.attempt_evidence
             if attempt_evidence is None:
-                raise ValueError(
-                    "Failed-attempt budget lacks attempt evidence"
-                )
+                raise ValueError("Failed-attempt budget lacks attempt evidence")
             _require_attempt_totals(
                 buckets=attempt_evidence.run,
                 amount=summary.budget.run,
-                reservation_cny=(
-                    summary.budget.reservation_cny_per_attempt
-                ),
+                reservation_cny=(summary.budget.reservation_cny_per_attempt),
                 cumulative=False,
             )
             _require_attempt_totals(
@@ -441,18 +380,16 @@ class FormalFailureEvidenceBundle(StrictFailureModel):
                 reservation_cny=None,
                 cumulative=True,
             )
-            run_bucket_counts: Counter[
-                tuple[str, str | None, str, str | None]
-            ] = Counter()
+            run_bucket_counts: Counter[tuple[str, str | None, str, str | None]] = (
+                Counter()
+            )
             cumulative_bucket_counts: Counter[
                 tuple[str, str | None, str, str | None]
             ] = Counter()
             for bucket in attempt_evidence.run:
                 run_bucket_counts[_bucket_key(bucket)] += bucket.count
             for bucket in attempt_evidence.cumulative:
-                cumulative_bucket_counts[_bucket_key(bucket)] += (
-                    bucket.count
-                )
+                cumulative_bucket_counts[_bucket_key(bucket)] += bucket.count
             if any(
                 count > cumulative_bucket_counts[key]
                 for key, count in run_bucket_counts.items()
@@ -461,9 +398,7 @@ class FormalFailureEvidenceBundle(StrictFailureModel):
                     "Failed-attempt run buckets are absent from cumulative "
                     "attempt evidence"
                 )
-            available_settled_attempts: Counter[
-                tuple[str, str, int]
-            ] = Counter()
+            available_settled_attempts: Counter[tuple[str, str, int]] = Counter()
             for bucket in attempt_evidence.run:
                 if bucket.status not in {
                     "settled_exact",
@@ -476,9 +411,7 @@ class FormalFailureEvidenceBundle(StrictFailureModel):
                     (
                         bucket.status,
                         bucket.settlement_mode,
-                        cny_to_units(
-                            Decimal(bucket.known_cost_cny)
-                        ),
+                        cny_to_units(Decimal(bucket.known_cost_cny)),
                     )
                 ] += bucket.count
             observable_usage_units = 0
@@ -495,8 +428,7 @@ class FormalFailureEvidenceBundle(StrictFailureModel):
                             or provider_attempts < 1
                             or call.error_code is not None
                             or call.http_status is not None
-                            or call.observed_model
-                            != budget_identity.model
+                            or call.observed_model != budget_identity.model
                         ):
                             raise ValueError(
                                 "Failed-attempt success model-call "
@@ -509,8 +441,7 @@ class FormalFailureEvidenceBundle(StrictFailureModel):
                             )
                         except BudgetUsageError as exc:
                             raise ValueError(
-                                "Failed-attempt observable usage "
-                                "cannot be priced"
+                                "Failed-attempt observable usage cannot be priced"
                             ) from exc
                         bucket_key = (
                             (
@@ -539,14 +470,10 @@ class FormalFailureEvidenceBundle(StrictFailureModel):
                         or call.observed_model is not None
                     ):
                         raise ValueError(
-                            "Failed-attempt error model-call "
-                            "protocol is inconsistent"
+                            "Failed-attempt error model-call protocol is inconsistent"
                         )
                     elif provider_attempts is not None:
-                        if (
-                            isinstance(provider_attempts, bool)
-                            or provider_attempts < 0
-                        ):
+                        if isinstance(provider_attempts, bool) or provider_attempts < 0:
                             raise ValueError(
                                 "Failed-attempt error model-call "
                                 "attempt count is invalid"
@@ -555,16 +482,12 @@ class FormalFailureEvidenceBundle(StrictFailureModel):
             run_committed_units = cny_to_units(
                 Decimal(summary.budget.run.committed_cny)
             )
-            run_settled_units = cny_to_units(
-                Decimal(summary.budget.run.settled_cny)
-            )
+            run_settled_units = cny_to_units(Decimal(summary.budget.run.settled_cny))
             if (
                 run_committed_units < observable_usage_units
                 or run_settled_units < observable_usage_units
             ):
-                raise ValueError(
-                    "Failed-attempt budget hides observable usage cost"
-                )
+                raise ValueError("Failed-attempt budget hides observable usage cost")
             unknown_observed_attempts = (
                 captured_provider_attempts - priced_attempt_count
             )
@@ -578,15 +501,11 @@ class FormalFailureEvidenceBundle(StrictFailureModel):
                     "Failed-attempt retries or errors lack reserved or "
                     "uncertain ledger evidence"
                 )
-            if (
-                summary.budget.run.attempt_count
-                == priced_attempt_count
-                and (
-                    run_committed_units != observable_usage_units
-                    or run_settled_units != observable_usage_units
-                    or summary.budget.run.reserved_count != 0
-                    or summary.budget.run.uncertain_count != 0
-                )
+            if summary.budget.run.attempt_count == priced_attempt_count and (
+                run_committed_units != observable_usage_units
+                or run_settled_units != observable_usage_units
+                or summary.budget.run.reserved_count != 0
+                or summary.budget.run.uncertain_count != 0
             ):
                 raise ValueError(
                     "Fully observed failed-attempt budget commitment "
@@ -594,30 +513,22 @@ class FormalFailureEvidenceBundle(StrictFailureModel):
                 )
 
         case_keys = [(item.case_id, item.trial) for item in self.cases]
-        trajectory_keys = [
-            (item.case_id, item.trial) for item in self.trajectories
-        ]
-        if (
-            len(case_keys) != len(set(case_keys))
-            or len(trajectory_keys) != len(set(trajectory_keys))
+        trajectory_keys = [(item.case_id, item.trial) for item in self.trajectories]
+        if len(case_keys) != len(set(case_keys)) or len(trajectory_keys) != len(
+            set(trajectory_keys)
         ):
             raise ValueError("Duplicate failed-attempt case/trial records")
         if sorted(case_keys) != sorted(trajectory_keys):
-            raise ValueError(
-                "Failed-attempt case index and trajectories differ"
-            )
+            raise ValueError("Failed-attempt case index and trajectories differ")
         trajectories_by_key = {
-            (item.case_id, item.trial): item
-            for item in self.trajectories
+            (item.case_id, item.trial): item for item in self.trajectories
         }
         if any(
             item.model_dump(mode="json")
             != trajectories_by_key[key].model_dump(mode="json")
             for key, item in zip(case_keys, self.cases, strict=True)
         ):
-            raise ValueError(
-                "Failed-attempt case records and trajectories differ"
-            )
+            raise ValueError("Failed-attempt case records and trajectories differ")
 
         completed_record_count = len(self.cases)
         unique_case_count = len({item.case_id for item in self.cases})
@@ -625,19 +536,12 @@ class FormalFailureEvidenceBundle(StrictFailureModel):
             manifest.completed_record_count != completed_record_count
             or summary.completed_record_count != completed_record_count
             or completed_record_count
-            > (
-                manifest.case_set.planned_case_count
-                * manifest.case_set.planned_trials
-            )
+            > (manifest.case_set.planned_case_count * manifest.case_set.planned_trials)
             or unique_case_count > manifest.case_set.planned_case_count
         ):
-            raise ValueError(
-                "Failed-attempt completed record counts differ"
-            )
+            raise ValueError("Failed-attempt completed record counts differ")
         if summary.record_capture_status == "unavailable" and self.cases:
-            raise ValueError(
-                "Unavailable record capture cannot contain records"
-            )
+            raise ValueError("Unavailable record capture cannot contain records")
         if any(
             item.split != "holdout"
             or item.trial > manifest.case_set.planned_trials
@@ -647,9 +551,7 @@ class FormalFailureEvidenceBundle(StrictFailureModel):
             or item.completed_at > manifest.failed_at
             for item in (*self.cases, *self.trajectories)
         ):
-            raise ValueError(
-                "Failed-attempt records violate holdout or time bounds"
-            )
+            raise ValueError("Failed-attempt records violate holdout or time bounds")
 
         expected_partial = (
             _summarize_partial_records(self.cases)
@@ -657,9 +559,7 @@ class FormalFailureEvidenceBundle(StrictFailureModel):
             else None
         )
         if summary.partial != expected_partial:
-            raise ValueError(
-                "Failed-attempt partial summary differs from records"
-            )
+            raise ValueError("Failed-attempt partial summary differs from records")
         return self
 
 
@@ -681,12 +581,8 @@ def _summarize_partial_records(
     return FormalFailurePartialSummary(
         completed_record_count=len(records),
         unique_case_count=len({item.case_id for item in records}),
-        passed_record_count=sum(
-            item.status == "passed" for item in records
-        ),
-        failed_record_count=sum(
-            item.status == "failed" for item in records
-        ),
+        passed_record_count=sum(item.status == "passed" for item in records),
+        failed_record_count=sum(item.status == "failed" for item in records),
         model_call_count=model_call_count,
         provider_attempt_count=provider_attempt_count,
         usage=dict(sorted(usage.items())),
@@ -765,24 +661,15 @@ def write_formal_failure_bundle(
     """Atomically write one private formal failed-attempt evidence bundle."""
 
     frozen_context = FormalFailureContext.model_validate(context)
-    records = [
-        ReadonlyCaseRecord.model_validate(record)
-        for record in case_records
-    ]
+    records = [ReadonlyCaseRecord.model_validate(record) for record in case_records]
     if not records_captured and records:
-        raise ValueError(
-            "Unavailable record capture cannot contain case records"
-        )
+        raise ValueError("Unavailable record capture cannot contain case records")
     budget = (
         BudgetSummary.model_validate(budget_summary)
         if budget_summary is not None
         else None
     )
-    partial_summary = (
-        _summarize_partial_records(records)
-        if records_captured
-        else None
-    )
+    partial_summary = _summarize_partial_records(records) if records_captured else None
     completed_record_count = len(records)
     manifest = FormalFailureManifest(
         schema_version="1.0",
@@ -800,13 +687,9 @@ def write_formal_failure_bundle(
         failure_stage=frozen_context.failure_stage,
         failure_code=frozen_context.failure_code,
         completed_record_count=completed_record_count,
-        record_capture_status=(
-            "captured" if records_captured else "unavailable"
-        ),
+        record_capture_status=("captured" if records_captured else "unavailable"),
         partial=partial_summary,
-        budget_capture_status=(
-            "captured" if budget is not None else "unavailable"
-        ),
+        budget_capture_status=("captured" if budget is not None else "unavailable"),
         budget=budget,
         budget_attempt_delta=(
             budget.run.attempt_count
@@ -820,17 +703,13 @@ def write_formal_failure_bundle(
         ),
         budget_limit_breached=(
             Decimal(budget.cumulative.committed_cny)
-            > Decimal(
-                budget.cumulative.execution_limit_cny
-            )
+            > Decimal(budget.cumulative.execution_limit_cny)
             if budget is not None
             else None
         ),
     )
 
-    record_payloads = [
-        record.model_dump(mode="json") for record in records
-    ]
+    record_payloads = [record.model_dump(mode="json") for record in records]
     validate_formal_failure_payload(
         {
             "manifest": manifest.model_dump(mode="json"),

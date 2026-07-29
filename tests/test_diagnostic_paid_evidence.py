@@ -135,16 +135,10 @@ def _result(
         completed_at="2026-07-29T12:00:01+00:00",
         duration_ms=1,
         checks=[check.message for check in checks if check.passed],
-        failures=[
-            check.message for check in checks if not check.passed
-        ],
+        failures=[check.message for check in checks if not check.passed],
         score_checks=checks,
         final_text="" if error_code else "safe answer",
-        model_calls=(
-            model_calls
-            if model_calls is not None
-            else (_success_call(),)
-        ),
+        model_calls=(model_calls if model_calls is not None else (_success_call(),)),
         business_state_delta=BusinessStateDelta(
             changed=False,
             changed_tables=(),
@@ -157,10 +151,7 @@ def _result(
 
 def _diagnostic_inputs() -> tuple[list, list[ReadonlyEvalResult]]:
     cases = load_cases(DEFAULT_CASE_DIR)
-    return cases, [
-        _result(case_id=case.case_id)
-        for case in cases
-    ]
+    return cases, [_result(case_id=case.case_id) for case in cases]
 
 
 def _paid_budget(
@@ -194,9 +185,7 @@ def _paid_budget(
             else:
                 uncertain_count += attempts
     reservation_units = cny_to_units(Decimal(reservation))
-    committed_units = (
-        settled_units + reservation_units * uncertain_count
-    )
+    committed_units = settled_units + reservation_units * uncertain_count
     remaining_units = cny_to_units(Decimal("18")) - committed_units
     amount = {
         "currency": "CNY",
@@ -211,11 +200,7 @@ def _paid_budget(
     }
     buckets = [
         {
-            "status": (
-                "settled_exact"
-                if mode == "exact"
-                else "settled_upper_bound"
-            ),
+            "status": ("settled_exact" if mode == "exact" else "settled_upper_bound"),
             "settlement_mode": mode,
             "reserved_cny": reservation,
             "known_cost_cny": cost_cny,
@@ -260,9 +245,7 @@ def _paid_budget(
 def test_paid_budget_identity_cannot_start_before_price_window() -> None:
     _, results = _diagnostic_inputs()
     budget = _paid_budget(results)
-    budget["run_identity"]["started_at"] = (
-        "2026-07-28T00:00:00+00:00"
-    )
+    budget["run_identity"]["started_at"] = "2026-07-28T00:00:00+00:00"
 
     with pytest.raises(
         ValueError,
@@ -304,10 +287,7 @@ def _payload(
     results: list[ReadonlyEvalResult],
     budget: dict,
 ) -> dict:
-    records = [
-        result_to_record(result, split="dev")
-        for result in results
-    ]
+    records = [result_to_record(result, split="dev") for result in results]
     return {
         "manifest": _build_manifest(results=results, budget=budget),
         "cases": records,
@@ -336,24 +316,14 @@ def _manifest_budget(budget: dict) -> dict:
         "currency": run["currency"],
         "hard_limit_cny": run["hard_limit_cny"],
         "execution_limit_cny": run["execution_limit_cny"],
-        "reservation_cny_per_attempt": (
-            budget["reservation_cny_per_attempt"]
-        ),
+        "reservation_cny_per_attempt": (budget["reservation_cny_per_attempt"]),
         "price_snapshot_sha256": (
             price["snapshot_sha256"] if price is not None else None
         ),
-        "price_source_url": (
-            price["source_url"] if price is not None else None
-        ),
-        "usage_source_url": (
-            price["usage_source_url"] if price is not None else None
-        ),
-        "price_captured_at": (
-            price["captured_at"] if price is not None else None
-        ),
-        "price_valid_until": (
-            price["valid_until"] if price is not None else None
-        ),
+        "price_source_url": (price["source_url"] if price is not None else None),
+        "usage_source_url": (price["usage_source_url"] if price is not None else None),
+        "price_captured_at": (price["captured_at"] if price is not None else None),
+        "price_valid_until": (price["valid_until"] if price is not None else None),
     }
 
 
@@ -391,9 +361,7 @@ def _attack_retry_without_uncertain(
     results: list[ReadonlyEvalResult],
     budget: dict,
 ) -> None:
-    results[0].model_calls = (
-        replace(results[0].model_calls[0], provider_attempts=2),
-    )
+    results[0].model_calls = (replace(results[0].model_calls[0], provider_attempts=2),)
 
 
 def _attack_error_without_uncertain(
@@ -423,13 +391,11 @@ def _attack_extra_uncertain(
     }
     for scope in ("run", "cumulative"):
         budget[scope]["committed_cny"] = format(
-            Decimal(budget[scope]["committed_cny"])
-            + reservation_amount,
+            Decimal(budget[scope]["committed_cny"]) + reservation_amount,
             "f",
         )
         budget[scope]["remaining_execution_cny"] = format(
-            Decimal(budget[scope]["remaining_execution_cny"])
-            - reservation_amount,
+            Decimal(budget[scope]["remaining_execution_cny"]) - reservation_amount,
             "f",
         )
         budget[scope]["attempt_count"] += 1
@@ -496,10 +462,7 @@ def test_public_schema_rejects_unbound_diagnostic_model_and_budget_evidence(
     attacked_results = deepcopy(valid_results)
     attacked_budget = _paid_budget(attacked_results)
     ATTACKS[attack](attacked_results, attacked_budget)
-    records = [
-        result_to_record(result, split="dev")
-        for result in attacked_results
-    ]
+    records = [result_to_record(result, split="dev") for result in attacked_results]
     payload["cases"] = records
     payload["trajectories"] = deepcopy(records)
     payload["summary"] = summarize_results(
@@ -564,9 +527,7 @@ def test_diagnostic_offline_evidence_cannot_claim_deepseek_observation() -> None
 
 def test_diagnostic_accepts_retry_and_error_when_uncertain_is_exact() -> None:
     _, results = _diagnostic_inputs()
-    results[0].model_calls = (
-        replace(results[0].model_calls[0], provider_attempts=2),
-    )
+    results[0].model_calls = (replace(results[0].model_calls[0], provider_attempts=2),)
     results[1] = _result(
         case_id=results[1].case_id,
         model_calls=(_success_call(), _error_call(sequence=2)),

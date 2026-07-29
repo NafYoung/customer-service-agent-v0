@@ -69,15 +69,9 @@ MODEL_ADAPTER_PATH = ROOT / "app" / "agent" / "openai_compatible.py"
 MODEL_FACTORY_PATH = ROOT / "app" / "agent" / "factory.py"
 EVAL_RUNNER_PATH = ROOT / "evals" / "run_readonly_agent_evals.py"
 SEMANTIC_JUDGE_SOURCE_PATH = ROOT / "evals" / "semantic_judge.py"
-SEMANTIC_CALIBRATION_SOURCE_PATH = (
-    ROOT / "evals" / "semantic_calibration.py"
-)
-SEMANTIC_CALIBRATION_VALIDATOR_PATH = (
-    ROOT / "evals" / "calibration_attestation.py"
-)
-SEMANTIC_CALIBRATION_RUNNER_PATH = (
-    ROOT / "evals" / "run_semantic_judge_calibration.py"
-)
+SEMANTIC_CALIBRATION_SOURCE_PATH = ROOT / "evals" / "semantic_calibration.py"
+SEMANTIC_CALIBRATION_VALIDATOR_PATH = ROOT / "evals" / "calibration_attestation.py"
+SEMANTIC_CALIBRATION_RUNNER_PATH = ROOT / "evals" / "run_semantic_judge_calibration.py"
 SEMANTIC_CALIBRATION_FIXTURE_PATH = (
     ROOT / "evals" / "semantic_judge_calibration_cases.jsonl"
 )
@@ -87,12 +81,8 @@ EVIDENCE_SCHEMA_PATH = ROOT / "evals" / "evidence_schema.py"
 READONLY_REPORTING_PATH = ROOT / "evals" / "readonly_reporting.py"
 EVIDENCE_SOURCE_PATH = ROOT / "evals" / "evidence.py"
 PRIVATE_PATHS_SOURCE_PATH = ROOT / "evals" / "private_paths.py"
-FORMAL_FAILURE_SOURCE_PATH = (
-    ROOT / "evals" / "formal_failure_evidence.py"
-)
-CANONICAL_PRICING_SOURCE_PATH = (
-    ROOT / "evals" / "canonical_pricing.py"
-)
+FORMAL_FAILURE_SOURCE_PATH = ROOT / "evals" / "formal_failure_evidence.py"
+CANONICAL_PRICING_SOURCE_PATH = ROOT / "evals" / "canonical_pricing.py"
 BUDGET_GUARD_PATH = ROOT / "app" / "agent" / "deepseek_budget.py"
 POLICY_DIR = ROOT / "policies"
 _SOURCE_SUFFIXES = {".py", ".md", ".json", ".toml", ".txt", ".yml", ".yaml"}
@@ -157,14 +147,9 @@ def _source_fingerprints() -> dict[str, str]:
             and path.suffix in _SOURCE_SUFFIXES
             and "__pycache__" not in path.parts
         )
-    paths.update(
-        path
-        for name in _TOP_LEVEL_SOURCES
-        if (path := ROOT / name).is_file()
-    )
+    paths.update(path for name in _TOP_LEVEL_SOURCES if (path := ROOT / name).is_file())
     return {
-        path.relative_to(ROOT).as_posix(): _file_sha256(path)
-        for path in sorted(paths)
+        path.relative_to(ROOT).as_posix(): _file_sha256(path) for path in sorted(paths)
     }
 
 
@@ -207,17 +192,11 @@ def require_clean_git_worktree(
 
     commit, dirty = _git_snapshot()
     if commit is None:
-        raise ValueError(
-            "A resolved Git commit is required for formal evidence."
-        )
+        raise ValueError("A resolved Git commit is required for formal evidence.")
     if dirty is not False:
-        raise ValueError(
-            "A clean Git worktree is required for formal evidence."
-        )
+        raise ValueError("A clean Git worktree is required for formal evidence.")
     if expected_commit is not None and commit != expected_commit:
-        raise ValueError(
-            "The Git commit changed during formal evidence collection."
-        )
+        raise ValueError("The Git commit changed during formal evidence collection.")
     return commit
 
 
@@ -284,30 +263,21 @@ def freeze_readonly_harness(
     runtime_settings = settings or Settings()
     frozen_canonical_price = freeze_canonical_price_snapshot()
     prompt_snapshot = read_file_snapshot(PROMPT_PATH)
-    semantic_prompt_snapshot = read_file_snapshot(
-        SEMANTIC_JUDGE_PROMPT_PATH
-    )
-    calibration_fixture_snapshot = read_file_snapshot(
-        SEMANTIC_CALIBRATION_FIXTURE_PATH
-    )
+    semantic_prompt_snapshot = read_file_snapshot(SEMANTIC_JUDGE_PROMPT_PATH)
+    calibration_fixture_snapshot = read_file_snapshot(SEMANTIC_CALIBRATION_FIXTURE_PATH)
     policy_snapshots = {
         path.name: read_file_snapshot(path)
         for path in sorted(POLICY_DIR.iterdir())
         if path.is_file()
     }
     policy_documents = MappingProxyType(
-        {
-            name: snapshot.text()
-            for name, snapshot in policy_snapshots.items()
-        }
+        {name: snapshot.text() for name, snapshot in policy_snapshots.items()}
     )
     policy_fingerprints = {
         f"policies/{name}": snapshot.sha256
         for name, snapshot in policy_snapshots.items()
     }
-    tool_contracts = tuple(
-        deepcopy(get_read_only_tool_contracts())
-    )
+    tool_contracts = tuple(deepcopy(get_read_only_tool_contracts()))
     evidence_protocol_paths = (
         FILE_SNAPSHOT_PATH,
         HOLDOUT_LOCK_PATH,
@@ -328,9 +298,7 @@ def freeze_readonly_harness(
     ] = frozen_canonical_price.file_snapshot.sha256
     fingerprints = {
         "prompt_sha256": prompt_snapshot.sha256,
-        "tool_contracts_sha256": stable_sha256(
-            tool_contracts
-        ),
+        "tool_contracts_sha256": stable_sha256(tool_contracts),
         "policies_sha256": stable_sha256(policy_fingerprints),
         "seed_sha256": _file_sha256(SEED_PATH),
         "agent_loop_sha256": _file_sha256(AGENT_LOOP_PATH),
@@ -338,9 +306,7 @@ def freeze_readonly_harness(
         "scorer_sha256": _file_sha256(SCORER_PATH),
         "semantic_judge_version": SEMANTIC_JUDGE_VERSION,
         "semantic_judge_prompt_sha256": semantic_prompt_snapshot.sha256,
-        "semantic_judge_source_sha256": _file_sha256(
-            SEMANTIC_JUDGE_SOURCE_PATH
-        ),
+        "semantic_judge_source_sha256": _file_sha256(SEMANTIC_JUDGE_SOURCE_PATH),
         "semantic_calibration_source_sha256": _file_sha256(
             SEMANTIC_CALIBRATION_SOURCE_PATH
         ),
@@ -350,12 +316,8 @@ def freeze_readonly_harness(
         "semantic_calibration_runner_sha256": _file_sha256(
             SEMANTIC_CALIBRATION_RUNNER_PATH
         ),
-        "semantic_calibration_corpus_sha256": (
-            calibration_fixture_snapshot.sha256
-        ),
-        "evidence_protocol_sha256": stable_sha256(
-            evidence_protocol_fingerprints
-        ),
+        "semantic_calibration_corpus_sha256": (calibration_fixture_snapshot.sha256),
+        "evidence_protocol_sha256": stable_sha256(evidence_protocol_fingerprints),
         "canonical_price_snapshot_sha256": (
             frozen_canonical_price.file_snapshot.sha256
         ),
@@ -377,20 +339,12 @@ def freeze_readonly_harness(
                 "max_tokens": runtime_settings.deepseek_max_tokens,
                 "timeout_seconds": runtime_settings.deepseek_timeout_seconds,
                 "max_retries": runtime_settings.deepseek_max_retries,
-                "agent_max_tool_rounds": (
-                    runtime_settings.agent_max_tool_rounds
-                ),
+                "agent_max_tool_rounds": (runtime_settings.agent_max_tool_rounds),
                 "agent_max_tool_calls": runtime_settings.agent_max_tool_calls,
-                "auth_session_minutes": (
-                    runtime_settings.auth_session_minutes
-                ),
-                "approval_ttl_minutes": (
-                    runtime_settings.approval_ttl_minutes
-                ),
+                "auth_session_minutes": (runtime_settings.auth_session_minutes),
+                "approval_ttl_minutes": (runtime_settings.approval_ttl_minutes),
                 "eval_database_url": EVAL_DATABASE_URL,
-                "eval_host_confirmation_token": (
-                    EVAL_HOST_CONFIRMATION_TOKEN
-                ),
+                "eval_host_confirmation_token": (EVAL_HOST_CONFIRMATION_TOKEN),
                 "eval_verification_code": EVAL_VERIFICATION_CODE,
             }
         ),
@@ -474,24 +428,14 @@ def _budget_manifest(report: dict[str, Any]) -> dict[str, Any]:
         "currency": run["currency"],
         "hard_limit_cny": run["hard_limit_cny"],
         "execution_limit_cny": run["execution_limit_cny"],
-        "reservation_cny_per_attempt": report[
-            "reservation_cny_per_attempt"
-        ],
+        "reservation_cny_per_attempt": report["reservation_cny_per_attempt"],
         "price_snapshot_sha256": (
             price["snapshot_sha256"] if price is not None else None
         ),
-        "price_source_url": (
-            price["source_url"] if price is not None else None
-        ),
-        "usage_source_url": (
-            price["usage_source_url"] if price is not None else None
-        ),
-        "price_captured_at": (
-            price["captured_at"] if price is not None else None
-        ),
-        "price_valid_until": (
-            price["valid_until"] if price is not None else None
-        ),
+        "price_source_url": (price["source_url"] if price is not None else None),
+        "usage_source_url": (price["usage_source_url"] if price is not None else None),
+        "price_captured_at": (price["captured_at"] if price is not None else None),
+        "price_valid_until": (price["valid_until"] if price is not None else None),
     }
 
 
@@ -518,10 +462,7 @@ def summarize_results(
 
     layer_summary: dict[str, dict[str, int | float]] = {}
     for category in SCORE_CATEGORIES:
-        passed = sum(
-            result.score_status[category]
-            for result in results
-        )
+        passed = sum(result.score_status[category] for result in results)
         layer_summary[category] = {
             "passed": passed,
             "failed": total - passed,
@@ -538,25 +479,16 @@ def summarize_results(
             if call.usage:
                 usage_totals.update(call.usage)
 
-    security_passed = sum(
-        result.score_status["security"]
-        for result in results
-    )
+    security_passed = sum(result.score_status["security"] for result in results)
     changed_trials = sum(
-        bool(
-            result.business_state_delta
-            and result.business_state_delta.changed
-        )
+        bool(result.business_state_delta and result.business_state_delta.changed)
         for result in results
     )
     unknown_state_trials = sum(
-        result.business_state_delta is None
-        for result in results
+        result.business_state_delta is None for result in results
     )
     error_counts = Counter(
-        result.error_code
-        for result in results
-        if result.error_code is not None
+        result.error_code for result in results if result.error_code is not None
     )
 
     return {
@@ -588,23 +520,16 @@ def summarize_results(
         "score_layers": layer_summary,
         "usage": {
             "model_calls": model_call_count,
-            **{
-                key: usage_totals[key]
-                for key in sorted(usage_totals)
-            },
+            **{key: usage_totals[key] for key in sorted(usage_totals)},
         },
         "latency_ms": {
-            "case": _distribution(
-                [result.duration_ms for result in results]
-            ),
+            "case": _distribution([result.duration_ms for result in results]),
             "model_call": _distribution(model_call_latencies),
         },
         "business_state": {
             "changed_trials": changed_trials,
             "unknown_trials": unknown_state_trials,
-            "all_trials_unchanged": (
-                changed_trials == 0 and unknown_state_trials == 0
-            ),
+            "all_trials_unchanged": (changed_trials == 0 and unknown_state_trials == 0),
         },
         "errors": dict(sorted(error_counts.items())),
         "budget": budget_report or offline_budget_report(),
@@ -640,21 +565,12 @@ def result_to_record(
         "termination_reason": result.error_code or "completed",
         "error_code": result.error_code,
         "final_text": result.final_text,
-        "model_calls": [
-            asdict(call)
-            for call in result.model_calls
-        ],
-        "tool_trace": [
-            asdict(item)
-            for item in result.tool_trace
-        ],
+        "model_calls": [asdict(call) for call in result.model_calls],
+        "tool_trace": [asdict(item) for item in result.tool_trace],
         "business_state": business_state,
         "counted_action_records": result.business_write_count,
         "scores": result.score_status,
-        "score_checks": [
-            asdict(check)
-            for check in result.score_checks
-        ],
+        "score_checks": [asdict(check) for check in result.score_checks],
         "checks": list(result.checks),
         "failures": list(result.failures),
     }
@@ -666,11 +582,7 @@ def _paid_evidence_datetime(
     label: str,
 ) -> datetime:
     try:
-        parsed = (
-            value
-            if isinstance(value, datetime)
-            else datetime.fromisoformat(value)
-        )
+        parsed = value if isinstance(value, datetime) else datetime.fromisoformat(value)
     except (TypeError, ValueError) as exc:
         raise ValueError(f"{label} timestamp is invalid") from exc
     if parsed.tzinfo is None:
@@ -685,9 +597,7 @@ def _require_completed_paid_trial_calls(
     expected_model: str,
 ) -> None:
     observed_models: set[str] = set()
-    expected_agent_contract_count = len(
-        get_read_only_tool_contracts()
-    )
+    expected_agent_contract_count = len(get_read_only_tool_contracts())
     for result in results:
         trial_started = _paid_evidence_datetime(
             result.started_at,
@@ -698,14 +608,8 @@ def _require_completed_paid_trial_calls(
             label=f"{label} trial",
         )
         calls = list(result.model_calls)
-        agent_calls = [
-            call for call in calls if call.phase == "agent"
-        ]
-        judge_calls = [
-            call
-            for call in calls
-            if call.phase == "semantic_judge"
-        ]
+        agent_calls = [call for call in calls if call.phase == "agent"]
+        judge_calls = [call for call in calls if call.phase == "semantic_judge"]
         if (
             not agent_calls
             or len(judge_calls) != 1
@@ -716,8 +620,7 @@ def _require_completed_paid_trial_calls(
             or judge_calls[0].tool_contract_count != 0
             or bool(judge_calls[0].tool_calls)
             or any(
-                call.tool_contract_count
-                != expected_agent_contract_count
+                call.tool_contract_count != expected_agent_contract_count
                 for call in agent_calls
             )
         ):
@@ -731,9 +634,7 @@ def _require_completed_paid_trial_calls(
                 label=f"{label} model call",
             )
             if not trial_started <= call_started <= trial_completed:
-                raise ValueError(
-                    f"{label} model-call time is outside its trial record"
-                )
+                raise ValueError(f"{label} model-call time is outside its trial record")
             if (
                 call.status != "success"
                 or call.usage is None
@@ -743,14 +644,11 @@ def _require_completed_paid_trial_calls(
                 or call.http_status is not None
             ):
                 raise ValueError(
-                    f"{label} calls require the exact model and "
-                    "single-attempt usage"
+                    f"{label} calls require the exact model and single-attempt usage"
                 )
             observed_models.add(call.observed_model)
     if observed_models != {expected_model}:
-        raise ValueError(
-            f"{label} observed models differ from completed trial calls"
-        )
+        raise ValueError(f"{label} observed models differ from completed trial calls")
 
 
 def _require_completed_paid_evidence(
@@ -774,67 +672,46 @@ def _require_completed_paid_evidence(
         or cumulative_budget.reserved_count != 0
         or cumulative_budget.uncertain_count != 0
         or run_budget.committed_cny != run_budget.settled_cny
-        or cumulative_budget.committed_cny
-        != cumulative_budget.settled_cny
+        or cumulative_budget.committed_cny != cumulative_budget.settled_cny
         or Decimal(run_budget.committed_cny) > Decimal("18")
         or Decimal(cumulative_budget.committed_cny) > Decimal("18")
     ):
-        raise ValueError(
-            f"{label} budget must be completed, settled, and within limit"
-        )
+        raise ValueError(f"{label} budget must be completed, settled, and within limit")
     try:
         canonical_price = require_canonical_paid_budget(
             price=validated_budget.price,
             expected_model=settings.deepseek_model,
             run_hard_limit_cny=run_budget.hard_limit_cny,
             run_execution_limit_cny=run_budget.execution_limit_cny,
-            cumulative_hard_limit_cny=(
-                cumulative_budget.hard_limit_cny
-            ),
-            cumulative_execution_limit_cny=(
-                cumulative_budget.execution_limit_cny
-            ),
+            cumulative_hard_limit_cny=(cumulative_budget.hard_limit_cny),
+            cumulative_execution_limit_cny=(cumulative_budget.execution_limit_cny),
         )
         require_canonical_attempt_reservation(
             canonical_price=canonical_price,
             max_output_tokens=settings.deepseek_max_tokens,
-            reservation_cny_per_attempt=(
-                validated_budget.reservation_cny_per_attempt
-            ),
+            reservation_cny_per_attempt=(validated_budget.reservation_cny_per_attempt),
         )
     except CanonicalPricingError as exc:
-        raise ValueError(
-            f"{label} pricing or reservation is not canonical"
-        ) from exc
+        raise ValueError(f"{label} pricing or reservation is not canonical") from exc
     if (
         started_at < canonical_price.captured_at
         or completed_at > canonical_price.valid_until
     ):
-        raise ValueError(
-            f"{label} run is outside the canonical price window"
-        )
+        raise ValueError(f"{label} run is outside the canonical price window")
     _require_completed_paid_trial_calls(
         label=label,
         results=results,
         expected_model=settings.deepseek_model,
     )
-    model_calls = [
-        call
-        for result in results
-        for call in result.model_calls
-    ]
-    expected_buckets: Counter[
-        tuple[str, str, str, str]
-    ] = Counter()
+    model_calls = [call for result in results for call in result.model_calls]
+    expected_buckets: Counter[tuple[str, str, str, str]] = Counter()
     recomputed_cost_units = 0
     try:
         for call in model_calls:
             assert call.usage is not None
             cost = calculate_usage_cost_from_rates(
                 rates_cny=canonical_price.rates_cny.model_dump(),
-                tokens_per_price_unit=(
-                    canonical_price.tokens_per_price_unit
-                ),
+                tokens_per_price_unit=(canonical_price.tokens_per_price_unit),
                 usage=call.usage,
             )
             recomputed_cost_units += cost.units
@@ -851,22 +728,15 @@ def _require_completed_paid_evidence(
                 )
             ] += 1
     except BudgetUsageError as exc:
-        raise ValueError(
-            f"{label} call usage could not be priced"
-        ) from exc
-    actual_buckets: Counter[
-        tuple[str, str, str, str]
-    ] = Counter()
+        raise ValueError(f"{label} call usage could not be priced") from exc
+    actual_buckets: Counter[tuple[str, str, str, str]] = Counter()
     for bucket in validated_budget.attempt_evidence.run:
         if (
-            bucket.status
-            not in {"settled_exact", "settled_upper_bound"}
+            bucket.status not in {"settled_exact", "settled_upper_bound"}
             or bucket.settlement_mode is None
             or bucket.known_cost_cny is None
         ):
-            raise ValueError(
-                f"{label} current-run attempt evidence is unsettled"
-            )
+            raise ValueError(f"{label} current-run attempt evidence is unsettled")
         actual_buckets[
             (
                 bucket.status,
@@ -875,18 +745,13 @@ def _require_completed_paid_evidence(
                 bucket.known_cost_cny,
             )
         ] += bucket.count
-    provider_attempts = sum(
-        call.provider_attempts or 0 for call in model_calls
-    )
+    provider_attempts = sum(call.provider_attempts or 0 for call in model_calls)
     if (
         actual_buckets != expected_buckets
         or run_budget.attempt_count != provider_attempts
-        or cny_to_units(Decimal(run_budget.settled_cny))
-        != recomputed_cost_units
+        or cny_to_units(Decimal(run_budget.settled_cny)) != recomputed_cost_units
     ):
-        raise ValueError(
-            f"{label} budget attempts or usage costs differ from records"
-        )
+        raise ValueError(f"{label} budget attempts or usage costs differ from records")
 
 
 def build_readonly_manifest(
@@ -902,9 +767,7 @@ def build_readonly_manifest(
     started_at: datetime,
     completed_at: datetime,
     budget_report: dict[str, Any] | None = None,
-    calibration_attestation: (
-        ValidatedCalibrationAttestation | None
-    ) = None,
+    calibration_attestation: (ValidatedCalibrationAttestation | None) = None,
     calibration_review: ValidatedCalibrationReview | None = None,
     formal_holdout_evidence: FormalHoldoutEvidence | None = None,
     harness_fingerprints: dict[str, str] | None = None,
@@ -917,14 +780,10 @@ def build_readonly_manifest(
     if planned_trials < 1:
         raise ValueError("planned_trials must be at least 1")
     effective_budget_report = (
-        budget_report
-        if budget_report is not None
-        else offline_budget_report()
+        budget_report if budget_report is not None else offline_budget_report()
     )
     try:
-        validated_budget = BudgetSummary.model_validate(
-            effective_budget_report
-        )
+        validated_budget = BudgetSummary.model_validate(effective_budget_report)
     except ValueError as exc:
         raise ValueError("Eval budget evidence is invalid") from exc
     if validated_budget.enforcement_mode == "persistent_sqlite":
@@ -934,9 +793,7 @@ def build_readonly_manifest(
             or budget_identity.run_id != run_id
             or budget_identity.purpose != purpose
         ):
-            raise ValueError(
-                "Eval budget identity does not match the run"
-            )
+            raise ValueError("Eval budget identity does not match the run")
     runtime_harness_fingerprints = (
         dict(harness_fingerprints)
         if harness_fingerprints is not None
@@ -956,9 +813,7 @@ def build_readonly_manifest(
             or set(result_counts) != {case.case_id for case in cases}
             or any(count != 4 for count in result_counts.values())
         ):
-            raise ValueError(
-                "dev_repeat evidence requires exactly 7 cases by 4 trials"
-            )
+            raise ValueError("dev_repeat evidence requires exactly 7 cases by 4 trials")
         _require_completed_paid_evidence(
             label="dev_repeat",
             validated_budget=validated_budget,
@@ -976,8 +831,7 @@ def build_readonly_manifest(
             or formal_holdout_evidence is None
         ):
             raise ValueError(
-                "formal holdout evidence requires calibration and lock "
-                "attestations"
+                "formal holdout evidence requires calibration and lock attestations"
             )
         if (
             formal_holdout_evidence.declared_harness_sha256
@@ -986,8 +840,7 @@ def build_readonly_manifest(
             != stable_sha256(runtime_harness_fingerprints)
             or (
                 source_git_commit is not None
-                and formal_holdout_evidence
-                .regression_source_git_commit
+                and formal_holdout_evidence.regression_source_git_commit
                 != source_git_commit
             )
             or formal_holdout_evidence.regression_case_set_name
@@ -999,23 +852,16 @@ def build_readonly_manifest(
         if (
             len(cases) != 20
             or planned_trials != 4
-            or any(
-                case.expected.semantic_contract is None
-                for case in cases
-            )
+            or any(case.expected.semantic_contract is None for case in cases)
         ):
-            raise ValueError(
-                "formal holdout requires 20 semantic cases and 4 trials"
-            )
+            raise ValueError("formal holdout requires 20 semantic cases and 4 trials")
         result_counts = Counter(result.case_id for result in results)
         if (
             len(results) != 80
             or set(result_counts) != {case.case_id for case in cases}
             or any(count != 4 for count in result_counts.values())
         ):
-            raise ValueError(
-                "formal holdout evidence is missing case trials"
-            )
+            raise ValueError("formal holdout evidence is missing case trials")
         _require_completed_paid_evidence(
             label="formal holdout",
             validated_budget=validated_budget,
@@ -1031,41 +877,24 @@ def build_readonly_manifest(
             or validated_budget.run.uncertain_count != 0
             or validated_budget.cumulative.reserved_count != 0
             or validated_budget.cumulative.uncertain_count != 0
-            or (
-                validated_budget.run.committed_cny
-                != validated_budget.run.settled_cny
-            )
+            or (validated_budget.run.committed_cny != validated_budget.run.settled_cny)
             or (
                 validated_budget.cumulative.committed_cny
                 != validated_budget.cumulative.settled_cny
             )
-            or Decimal(
-                validated_budget.cumulative.committed_cny
-            )
-            > Decimal(
-                validated_budget.cumulative.execution_limit_cny
-            )
+            or Decimal(validated_budget.cumulative.committed_cny)
+            > Decimal(validated_budget.cumulative.execution_limit_cny)
         ):
-            raise ValueError(
-                "formal holdout budget must be completed and settled"
-            )
+            raise ValueError("formal holdout budget must be completed and settled")
         if validated_budget.price is None:
-            raise ValueError(
-                "formal holdout budget is missing canonical pricing"
-            )
+            raise ValueError("formal holdout budget is missing canonical pricing")
         try:
             canonical_price = require_canonical_paid_budget(
                 price=validated_budget.price,
                 expected_model=settings.deepseek_model,
-                run_hard_limit_cny=(
-                    validated_budget.run.hard_limit_cny
-                ),
-                run_execution_limit_cny=(
-                    validated_budget.run.execution_limit_cny
-                ),
-                cumulative_hard_limit_cny=(
-                    validated_budget.cumulative.hard_limit_cny
-                ),
+                run_hard_limit_cny=(validated_budget.run.hard_limit_cny),
+                run_execution_limit_cny=(validated_budget.run.execution_limit_cny),
+                cumulative_hard_limit_cny=(validated_budget.cumulative.hard_limit_cny),
                 cumulative_execution_limit_cny=(
                     validated_budget.cumulative.execution_limit_cny
                 ),
@@ -1086,59 +915,39 @@ def build_readonly_manifest(
             started_at < canonical_price.captured_at
             or completed_at > canonical_price.valid_until
         ):
-            raise ValueError(
-                "formal holdout run is outside the canonical price window"
-            )
+            raise ValueError("formal holdout run is outside the canonical price window")
         provider_attempts = sum(
             call.provider_attempts or 0
             for result in results
             for call in result.model_calls
         )
         if validated_budget.run.attempt_count != provider_attempts:
-            raise ValueError(
-                "formal holdout budget attempts do not match evidence"
-            )
-        model_calls = [
-            call
-            for result in results
-            for call in result.model_calls
-        ]
-        if (
-            validated_budget.price is None
-            or any(
-                call.status != "success"
-                or call.usage is None
-                or call.provider_attempts != 1
-                for call in model_calls
-            )
+            raise ValueError("formal holdout budget attempts do not match evidence")
+        model_calls = [call for result in results for call in result.model_calls]
+        if validated_budget.price is None or any(
+            call.status != "success"
+            or call.usage is None
+            or call.provider_attempts != 1
+            for call in model_calls
         ):
-            raise ValueError(
-                "formal holdout calls require exact single-attempt usage"
-            )
+            raise ValueError("formal holdout calls require exact single-attempt usage")
         try:
             recomputed_cost_units = sum(
                 calculate_usage_cost_from_rates(
-                    rates_cny=(
-                        canonical_price.rates_cny.model_dump()
-                    ),
-                    tokens_per_price_unit=(
-                        canonical_price.tokens_per_price_unit
-                    ),
+                    rates_cny=(canonical_price.rates_cny.model_dump()),
+                    tokens_per_price_unit=(canonical_price.tokens_per_price_unit),
                     usage=call.usage,
                 ).units
                 for call in model_calls
                 if call.usage is not None
             )
         except BudgetUsageError as exc:
-            raise ValueError(
-                "formal holdout call usage could not be priced"
-            ) from exc
-        if cny_to_units(
-            Decimal(validated_budget.run.settled_cny)
-        ) != recomputed_cost_units:
-            raise ValueError(
-                "formal holdout settled cost does not match call usage"
-            )
+            raise ValueError("formal holdout call usage could not be priced") from exc
+        if (
+            cny_to_units(Decimal(validated_budget.run.settled_cny))
+            != recomputed_cost_units
+        ):
+            raise ValueError("formal holdout settled cost does not match call usage")
         drifted_models = {
             call.observed_model
             for result in results
@@ -1152,10 +961,7 @@ def build_readonly_manifest(
             for call in result.model_calls
             if call.observed_model is not None
         }
-        if (
-            drifted_models
-            or observed_formal_models != {settings.deepseek_model}
-        ):
+        if drifted_models or observed_formal_models != {settings.deepseek_model}:
             raise ValueError(
                 "formal holdout observed model does not match requested model"
             )
@@ -1164,9 +970,7 @@ def build_readonly_manifest(
         or calibration_review is not None
         or formal_holdout_evidence is not None
     ):
-        raise ValueError(
-            "formal attestations are only valid for holdout_formal"
-        )
+        raise ValueError("formal attestations are only valid for holdout_formal")
 
     commit, dirty = _git_snapshot()
     if source_git_commit is not None:
@@ -1198,10 +1002,7 @@ def build_readonly_manifest(
         require_completed_diagnostic_evidence(
             label="diagnostic",
             budget=validated_budget.model_dump(mode="json"),
-            records=[
-                result_to_record(result, split=split)
-                for result in results
-            ],
+            records=[result_to_record(result, split=split) for result in results],
             requested_model=settings.deepseek_model,
             observed_models=observed_models,
             max_output_tokens=settings.deepseek_max_tokens,
@@ -1209,9 +1010,7 @@ def build_readonly_manifest(
             started_at=started_at,
             completed_at=completed_at,
             canonical_price_snapshot_sha256=(
-                runtime_harness_fingerprints[
-                    "canonical_price_snapshot_sha256"
-                ]
+                runtime_harness_fingerprints["canonical_price_snapshot_sha256"]
             ),
         )
     harness_fingerprints = runtime_harness_fingerprints
@@ -1232,28 +1031,18 @@ def build_readonly_manifest(
             "report_sha256": calibration_attestation.report_sha256,
             "review_sha256": calibration_review.review_sha256,
             "run_id": calibration_attestation.run_id,
-            "source_git_commit": (
-                calibration_attestation.source_git_commit
-            ),
+            "source_git_commit": (calibration_attestation.source_git_commit),
             "fixture_sha256": calibration_attestation.fixture_sha256,
-            "contract_set_sha256": (
-                calibration_attestation.contract_set_sha256
-            ),
+            "contract_set_sha256": (calibration_attestation.contract_set_sha256),
             "harness_sha256": calibration_attestation.harness_sha256,
             "reviewer_id": calibration_review.reviewer_id,
             "reviewed_count": calibration_review.reviewed_count,
         }
     if formal_holdout_evidence is not None:
-        eval_metadata["formal_holdout"] = asdict(
-            formal_holdout_evidence
-        )
+        eval_metadata["formal_holdout"] = asdict(formal_holdout_evidence)
 
     endpoint = urlparse(settings.deepseek_base_url)
-    status = (
-        "completed"
-        if len(results) == len(cases) * planned_trials
-        else "partial"
-    )
+    status = "completed" if len(results) == len(cases) * planned_trials else "partial"
     return {
         "schema_version": "2.0",
         "run_id": run_id,
@@ -1271,24 +1060,14 @@ def build_readonly_manifest(
         },
         "eval": eval_metadata,
         "harness": {
-            "runtime_harness_sha256": stable_sha256(
-                harness_fingerprints
-            ),
+            "runtime_harness_sha256": stable_sha256(harness_fingerprints),
             "prompt_sha256": harness_fingerprints["prompt_sha256"],
-            "tool_contracts_sha256": harness_fingerprints[
-                "tool_contracts_sha256"
-            ],
+            "tool_contracts_sha256": harness_fingerprints["tool_contracts_sha256"],
             "policies_sha256": harness_fingerprints["policies_sha256"],
             "seed_data_sha256": harness_fingerprints["seed_sha256"],
-            "agent_loop_sha256": harness_fingerprints[
-                "agent_loop_sha256"
-            ],
-            "model_runtime_sha256": harness_fingerprints[
-                "model_runtime_sha256"
-            ],
-            "semantic_judge_version": harness_fingerprints[
-                "semantic_judge_version"
-            ],
+            "agent_loop_sha256": harness_fingerprints["agent_loop_sha256"],
+            "model_runtime_sha256": harness_fingerprints["model_runtime_sha256"],
+            "semantic_judge_version": harness_fingerprints["semantic_judge_version"],
             "semantic_judge_prompt_sha256": harness_fingerprints[
                 "semantic_judge_prompt_sha256"
             ],
@@ -1311,9 +1090,7 @@ def build_readonly_manifest(
                 "evidence_protocol_sha256"
             ],
             "canonical_price_snapshot_sha256": (
-                harness_fingerprints[
-                    "canonical_price_snapshot_sha256"
-                ]
+                harness_fingerprints["canonical_price_snapshot_sha256"]
             ),
             "max_tool_rounds": settings.agent_max_tool_rounds,
             "max_tool_calls": settings.agent_max_tool_calls,
@@ -1349,12 +1126,8 @@ def build_readonly_manifest(
             "seed_policy": "provider_seed_not_configured",
             "concurrency": 1,
             "case_order": (
-                [case.case_id for case in cases]
-                if split == "dev"
-                else "withheld"
+                [case.case_id for case in cases] if split == "dev" else "withheld"
             ),
         },
-        "budget": _budget_manifest(
-            effective_budget_report
-        ),
+        "budget": _budget_manifest(effective_budget_report),
     }

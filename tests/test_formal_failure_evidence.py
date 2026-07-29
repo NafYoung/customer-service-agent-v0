@@ -50,9 +50,7 @@ def _context(*, run_id: str = "formal-failed-20260729-a1") -> FormalFailureConte
                 "runtime_harness_sha256": "6" * 64,
                 "regression_bundle_integrity_sha256": "7" * 64,
                 "regression_gate_sha256": "8" * 64,
-                "regression_run_id": (
-                    "eval-20260729-dev-repeat-public-binding"
-                ),
+                "regression_run_id": ("eval-20260729-dev-repeat-public-binding"),
                 "regression_source_git_commit": "1" * 40,
                 "regression_case_set_name": "readonly-regression-v1",
                 "regression_case_set_sha256": "9" * 64,
@@ -105,14 +103,10 @@ def _case_record(
             for category, passed in scores.items()
         ],
         "checks": [
-            f"{category} check"
-            for category, passed in scores.items()
-            if passed
+            f"{category} check" for category, passed in scores.items() if passed
         ],
         "failures": [
-            f"{category} check"
-            for category, passed in scores.items()
-            if not passed
+            f"{category} check" for category, passed in scores.items() if not passed
         ],
     }
 
@@ -156,8 +150,7 @@ def _persistent_budget_report(
                     "settlement_mode": "exact",
                     "reserved_cny": format(reservation, "f"),
                     "known_cost_cny": format(
-                        committed
-                        - reservation * (attempt_count - 1),
+                        committed - reservation * (attempt_count - 1),
                         "f",
                     ),
                     "count": 1,
@@ -176,9 +169,7 @@ def _persistent_budget_report(
         ),
         "attempt_count": attempt_count,
         "reserved_count": 0,
-        "uncertain_count": (
-            attempt_count if attempt_buckets else 0
-        ),
+        "uncertain_count": (attempt_count if attempt_buckets else 0),
     }
     price = canonical_budget_price_payload()
     return {
@@ -219,11 +210,7 @@ def _budget_report_with_attempt_buckets(
         count = int(bucket["count"])
         reserved = Decimal(str(bucket["reserved_cny"]))
         known_raw = bucket["known_cost_cny"]
-        known = (
-            Decimal(str(known_raw))
-            if known_raw is not None
-            else None
-        )
+        known = Decimal(str(known_raw)) if known_raw is not None else None
         status = bucket["status"]
         attempt_count += count
         if status == "reserved":
@@ -327,8 +314,7 @@ def _refresh_integrity_entry(bundle_path: Path, relative_path: str) -> None:
         "bytes": changed_path.stat().st_size,
     }
     integrity_path.write_text(
-        json.dumps(integrity, ensure_ascii=False, sort_keys=True, indent=2)
-        + "\n",
+        json.dumps(integrity, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
         encoding="utf-8",
     )
 
@@ -406,9 +392,7 @@ def test_partial_failed_attempt_cross_validates_records_and_budget(
     assert bundle.summary.budget is not None
     assert bundle.summary.budget_attempt_delta == 0
     assert bundle.summary.budget_limit_breached is False
-    assert [
-        item.model_dump(mode="json") for item in bundle.cases
-    ] == [
+    assert [item.model_dump(mode="json") for item in bundle.cases] == [
         item.model_dump(mode="json") for item in bundle.trajectories
     ]
 
@@ -421,9 +405,7 @@ def test_failed_attempt_rejects_budget_identity_before_price_window(
         run_id=run_id,
         attempt_count=0,
     )
-    budget["run_identity"]["started_at"] = (
-        "2026-07-28T00:00:00+00:00"
-    )
+    budget["run_identity"]["started_at"] = "2026-07-28T00:00:00+00:00"
 
     with pytest.raises(
         (ValidationError, ValueError),
@@ -582,9 +564,7 @@ def test_failed_attempt_accepts_canonical_usage_matched_to_ledger_bucket(
 ) -> None:
     run_id = "formal-failed-20260729-visible-settled"
     failed_record = _case_record(status="failed")
-    failed_record["model_calls"] = [
-        _successful_model_call_with_usage(prompt_tokens=1)
-    ]
+    failed_record["model_calls"] = [_successful_model_call_with_usage(prompt_tokens=1)]
     budget = _persistent_budget_report(
         run_id=run_id,
         attempt_count=1,
@@ -638,9 +618,7 @@ def test_failed_attempt_rejects_coordinated_underreservation(
 ) -> None:
     run_id = "formal-failed-20260729-underreserved"
     failed_record = _case_record(status="failed")
-    failed_record["model_calls"] = [
-        _successful_model_call_with_usage(prompt_tokens=1)
-    ]
+    failed_record["model_calls"] = [_successful_model_call_with_usage(prompt_tokens=1)]
     budget = _budget_report_with_attempt_buckets(
         run_id=run_id,
         buckets=[
@@ -712,9 +690,7 @@ def test_failed_attempt_matches_retries_to_uncertain_attempt_buckets(
 
     bundle = validate_formal_failure_bundle(bundle_path)
     assert bundle.summary.budget is not None
-    assert bundle.summary.budget.run.uncertain_count == (
-        uncertain_bucket["count"]
-    )
+    assert bundle.summary.budget.run.uncertain_count == (uncertain_bucket["count"])
 
 
 def test_failed_attempt_rejects_usage_on_an_error_model_call(
@@ -799,9 +775,7 @@ def test_logical_content_tampering_is_rejected_after_reindex(
         records_captured=True,
         budget_summary=None,
     )
-    trajectory_path = (
-        bundle_path / "trajectories" / "formal-case-01" / "1.json"
-    )
+    trajectory_path = bundle_path / "trajectories" / "formal-case-01" / "1.json"
     trajectory = json.loads(trajectory_path.read_text(encoding="utf-8"))
     trajectory["final_text"] = "forged divergent trajectory"
     trajectory_path.write_text(

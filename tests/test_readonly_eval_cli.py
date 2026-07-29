@@ -444,17 +444,14 @@ def test_cli_writes_verified_machine_readable_bundle_without_paid_api(
     assert validated.manifest.status == "completed"
     assert verified["manifest"]["execution"]["planned_trials"] == 1
     assert verified["manifest"]["execution"]["completed_trials"] == 1
-    assert verified["manifest"]["model"]["observed_models"] == [
-        "offline-eval-model"
-    ]
+    assert verified["manifest"]["model"]["observed_models"] == ["offline-eval-model"]
     assert len(verified["cases"]) == 10
     assert len(verified["trajectories"]) == 10
     assert verified["summary"]["total_trials"] == 10
     assert verified["summary"]["usage"]["total_tokens"] == 160
     assert verified["summary"]["business_state"]["all_trials_unchanged"] is True
     assert (
-        verified["manifest"]["budget"]["enforcement_mode"]
-        == "offline_no_paid_provider"
+        verified["manifest"]["budget"]["enforcement_mode"] == "offline_no_paid_provider"
     )
     assert verified["summary"]["budget"]["run"]["committed_cny"] == "0"
 
@@ -500,8 +497,7 @@ def test_cli_writes_verified_machine_readable_bundle_without_paid_api(
     assert "VALID" in script_result.stdout
 
 
-def test_run_case_records_isolated_semantic_judge_phase(
-):
+def test_run_case_records_isolated_semantic_judge_phase():
     case = ReadonlyEvalCase.model_validate(
         {
             "case_id": "offline-semantic-case",
@@ -536,10 +532,10 @@ def test_run_case_records_isolated_semantic_judge_phase(
 
     assert model.call_count == 1
     assert model.judge_call_count == 1
-    assert [
-        call["phase"]
-        for call in record["model_calls"]
-    ] == ["agent", "semantic_judge"]
+    assert [call["phase"] for call in record["model_calls"]] == [
+        "agent",
+        "semantic_judge",
+    ]
 
 
 def test_cli_rejects_existing_output_before_model_or_budget_construction(
@@ -634,8 +630,7 @@ def test_formal_cli_validates_calibration_chain_before_budget_or_model(
         result_count=49,
         fixture_ids=tuple(f"fixture-{index:02d}" for index in range(49)),
         fixture_kinds=tuple(
-            (f"fixture-{index:02d}", "safe_canonical")
-            for index in range(49)
+            (f"fixture-{index:02d}", "safe_canonical") for index in range(49)
         ),
         completed_at=datetime(2026, 7, 29, 12, tzinfo=UTC),
     )
@@ -916,9 +911,7 @@ def test_formal_runtime_failure_keeps_partial_evidence_and_terminal(
         )
         for index in range(20)
     ]
-    frozen = run_readonly_agent_evals.freeze_readonly_harness(
-        Settings()
-    )
+    frozen = run_readonly_agent_evals.freeze_readonly_harness(Settings())
     harness_sha256 = stable_sha256(dict(frozen.fingerprints))
     declaration = HoldoutDeclaration(
         case_set_name="readonly-holdout-v2",
@@ -976,12 +969,9 @@ def test_formal_runtime_failure_keeps_partial_evidence_and_terminal(
         contract_set_sha256="d" * 64,
         harness_sha256="e" * 64,
         result_count=49,
-        fixture_ids=tuple(
-            f"fixture-{index:02d}" for index in range(49)
-        ),
+        fixture_ids=tuple(f"fixture-{index:02d}" for index in range(49)),
         fixture_kinds=tuple(
-            (f"fixture-{index:02d}", "safe_canonical")
-            for index in range(49)
+            (f"fixture-{index:02d}", "safe_canonical") for index in range(49)
         ),
         completed_at=datetime(2026, 7, 29, 12, tzinfo=UTC),
     )
@@ -1114,9 +1104,7 @@ def test_formal_runtime_failure_keeps_partial_evidence_and_terminal(
         lambda **kwargs: None,
     )
     if interrupt_stage == "terminal_write":
-        real_finalize = (
-            run_readonly_agent_evals.finalize_holdout_run_lock
-        )
+        real_finalize = run_readonly_agent_evals.finalize_holdout_run_lock
         interrupted = False
 
         def interrupt_terminal_once(**kwargs):
@@ -1135,16 +1123,12 @@ def test_formal_runtime_failure_keeps_partial_evidence_and_terminal(
         monkeypatch.setattr(
             run_readonly_agent_evals,
             "FormalHoldoutEvidence",
-            lambda **kwargs: (_ for _ in ()).throw(
-                KeyboardInterrupt
-            ),
+            lambda **kwargs: (_ for _ in ()).throw(KeyboardInterrupt),
         )
 
     def fail_after_partial_results(*, partial_results, **kwargs):
         partial_results.append(partial_result)
-        raise ArtifactIntegrityError(
-            "PRIVATE-RUNTIME-ERROR-CANARY"
-        )
+        raise ArtifactIntegrityError("PRIVATE-RUNTIME-ERROR-CANARY")
 
     monkeypatch.setattr(
         run_readonly_agent_evals,
@@ -1181,15 +1165,9 @@ def test_formal_runtime_failure_keeps_partial_evidence_and_terminal(
             run_readonly_agent_evals.main(argv)
     else:
         assert run_readonly_agent_evals.main(argv) == 3
-    failed_bundle = (
-        output_root
-        / "failed-attempts"
-        / "eval-20260729-runtime-failure"
-    )
+    failed_bundle = output_root / "failed-attempts" / "eval-20260729-runtime-failure"
     terminal = json.loads(
-        (
-            lock_root / "readonly-holdout-v2.terminal.json"
-        ).read_text(encoding="utf-8")
+        (lock_root / "readonly-holdout-v2.terminal.json").read_text(encoding="utf-8")
     )
     if interrupt_stage == "formal_evidence":
         assert failed_bundle.exists() is False
@@ -1197,9 +1175,7 @@ def test_formal_runtime_failure_keeps_partial_evidence_and_terminal(
         assert terminal["failure_evidence_status"] == "unavailable"
         return
     assert failed_bundle.exists()
-    cases_payload = (
-        failed_bundle / "cases.jsonl"
-    ).read_text(encoding="utf-8")
+    cases_payload = (failed_bundle / "cases.jsonl").read_text(encoding="utf-8")
     assert "private-runtime-case-00" in cases_payload
     assert terminal["status"] == "failed"
     assert terminal["failure_evidence_status"] == "captured"

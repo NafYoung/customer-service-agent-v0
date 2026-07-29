@@ -208,9 +208,7 @@ def _paid_budget(
     )
     bucket = {
         "status": (
-            "settled_exact"
-            if usage_cost.mode == "exact"
-            else "settled_upper_bound"
+            "settled_exact" if usage_cost.mode == "exact" else "settled_upper_bound"
         ),
         "settlement_mode": usage_cost.mode,
         "reserved_cny": reservation,
@@ -224,7 +222,7 @@ def _paid_budget(
         "run_identity": {
             "run_id": run_id,
             "purpose": purpose,
-                "model": runtime_settings.deepseek_model,
+            "model": runtime_settings.deepseek_model,
             "price_sha256": price.sha256,
             "status": "completed",
             "started_at": "2026-07-29T12:00:00+00:00",
@@ -274,10 +272,7 @@ def _dev_repeat_payload(
         "trajectories": "trajectories/",
         "integrity": "integrity.json",
     }
-    records = [
-        result_to_record(result, split="dev")
-        for result in results
-    ]
+    records = [result_to_record(result, split="dev") for result in results]
     return {
         "manifest": manifest,
         "cases": records,
@@ -413,8 +408,7 @@ def test_issued_formal_context_binds_fixed_output_root_before_model_call(
         result_count=49,
         fixture_ids=tuple(f"fixture-{index:02d}" for index in range(49)),
         fixture_kinds=tuple(
-            (f"fixture-{index:02d}", "safe_canonical")
-            for index in range(49)
+            (f"fixture-{index:02d}", "safe_canonical") for index in range(49)
         ),
         completed_at=datetime(2026, 7, 29, 12, tzinfo=UTC),
     )
@@ -451,9 +445,7 @@ def test_issued_formal_context_binds_fixed_output_root_before_model_call(
         calibration_reviewer_id=review.reviewer_id,
         calibration_reviewed_count=review.reviewed_count,
         harness_sha256=harness_sha256,
-        regression_bundle_integrity_sha256=(
-            regression_gate.bundle_integrity_sha256
-        ),
+        regression_bundle_integrity_sha256=(regression_gate.bundle_integrity_sha256),
         regression_gate_sha256=regression_gate.gate_sha256,
         regression_run_id=regression_gate.run_id,
         regression_source_git_commit=regression_gate.source_git_commit,
@@ -523,9 +515,7 @@ def test_issued_formal_context_binds_fixed_output_root_before_model_call(
             calibration_attestation=attestation,
             calibration_review=review,
             formal_holdout_evidence=runner.FormalHoldoutEvidence(
-                declaration_manifest_sha256=(
-                    declaration.manifest_sha256
-                ),
+                declaration_manifest_sha256=(declaration.manifest_sha256),
                 lock_start_receipt_sha256=acquired_lock.receipt_sha256,
                 declared_harness_sha256=harness_sha256,
                 regression_bundle_integrity_sha256=(
@@ -533,16 +523,10 @@ def test_issued_formal_context_binds_fixed_output_root_before_model_call(
                 ),
                 regression_gate_sha256=regression_gate.gate_sha256,
                 regression_run_id=regression_gate.run_id,
-                regression_source_git_commit=(
-                    regression_gate.source_git_commit
-                ),
+                regression_source_git_commit=(regression_gate.source_git_commit),
                 regression_case_set_name=regression_gate.case_set_name,
-                regression_case_set_sha256=(
-                    regression_gate.case_set_sha256
-                ),
-                regression_harness_sha256=(
-                    regression_gate.harness_sha256
-                ),
+                regression_case_set_sha256=(regression_gate.case_set_sha256),
+                regression_harness_sha256=(regression_gate.harness_sha256),
             ),
             frozen_harness=frozen_harness,
             source_git_commit=source_git_commit,
@@ -570,9 +554,7 @@ def test_programmatic_formal_context_rejects_internal_binding_attacks(
         split="holdout",
         case_set_name="readonly-holdout-v2",
         case_set_sha256=(
-            "f" * 64
-            if attack == "case_hash"
-            else runner._formal_case_set_sha256(cases)
+            "f" * 64 if attack == "case_hash" else runner._formal_case_set_sha256(cases)
         ),
         planned_case_count=1,
         planned_trials=4,
@@ -593,9 +575,7 @@ def test_programmatic_formal_context_rejects_internal_binding_attacks(
         lock_start_receipt_sha256="5" * 64,
         output_root=tmp_path,
         _sentinel=(
-            object()
-            if attack == "forged_sentinel"
-            else runner._FORMAL_CONTEXT_SENTINEL
+            object() if attack == "forged_sentinel" else runner._FORMAL_CONTEXT_SENTINEL
         ),
     )
 
@@ -637,9 +617,7 @@ def test_formal_regression_gate_rejects_noncanonical_public_bundle(
     assert isinstance(source_git_commit, str)
     _trust_current_test_source(monkeypatch, source_git_commit)
     payload["manifest"]["source"]["git_dirty"] = False
-    expected_harness = payload["manifest"]["harness"][
-        "runtime_harness_sha256"
-    ]
+    expected_harness = payload["manifest"]["harness"]["runtime_harness_sha256"]
     if attack == "missing_trial":
         payload["cases"].pop()
         payload["trajectories"].pop()
@@ -678,9 +656,7 @@ def test_formal_regression_gate_accepts_only_verified_28_of_28_bundle(
     assert isinstance(source_git_commit, str)
     _trust_current_test_source(monkeypatch, source_git_commit)
     payload["manifest"]["source"]["git_dirty"] = False
-    expected_harness = payload["manifest"]["harness"][
-        "runtime_harness_sha256"
-    ]
+    expected_harness = payload["manifest"]["harness"]["runtime_harness_sha256"]
     bundle_path = _write_dev_repeat_bundle(tmp_path, payload)
 
     gate = holdout_protocol.validate_regression_gate(
@@ -717,9 +693,7 @@ def test_formal_regression_gate_rejects_coordinated_noncanonical_runtime(
     assert isinstance(source_git_commit, str)
     _trust_current_test_source(monkeypatch, source_git_commit)
     payload["manifest"]["source"]["git_dirty"] = False
-    expected_harness = payload["manifest"]["harness"][
-        "runtime_harness_sha256"
-    ]
+    expected_harness = payload["manifest"]["harness"]["runtime_harness_sha256"]
     bundle_path = _write_dev_repeat_bundle(tmp_path, payload)
 
     with pytest.raises(
@@ -757,9 +731,7 @@ def test_formal_regression_gate_rejects_mixed_source_snapshot(
         "current_readonly_source_snapshot",
         lambda: deepcopy(source_snapshot),
     )
-    expected_harness = payload["manifest"]["harness"][
-        "runtime_harness_sha256"
-    ]
+    expected_harness = payload["manifest"]["harness"]["runtime_harness_sha256"]
     bundle_path = _write_dev_repeat_bundle(tmp_path, payload)
 
     with pytest.raises(
@@ -853,9 +825,7 @@ def test_formal_regression_gate_rejects_self_attested_runtime_identity(
     assert isinstance(source_git_commit, str)
     _trust_current_test_source(monkeypatch, source_git_commit)
     payload["manifest"]["source"]["git_dirty"] = False
-    expected_harness = payload["manifest"]["harness"][
-        "runtime_harness_sha256"
-    ]
+    expected_harness = payload["manifest"]["harness"]["runtime_harness_sha256"]
     target = payload["manifest"]
     for field_name in field_path[:-1]:
         nested = target[field_name]
@@ -885,9 +855,7 @@ def test_formal_regression_gate_rejects_renamed_or_replaced_bundle(
     assert isinstance(source_git_commit, str)
     _trust_current_test_source(monkeypatch, source_git_commit)
     payload["manifest"]["source"]["git_dirty"] = False
-    expected_harness = payload["manifest"]["harness"][
-        "runtime_harness_sha256"
-    ]
+    expected_harness = payload["manifest"]["harness"]["runtime_harness_sha256"]
     bundle_path = _write_dev_repeat_bundle(tmp_path, payload)
     renamed_path = bundle_path.with_name("renamed-regression-bundle")
     bundle_path.rename(renamed_path)
@@ -1003,11 +971,7 @@ def test_cli_rejects_unsafe_run_id_before_output_path_probe(
 ) -> None:
     outside = tmp_path / "outside-existing"
     outside.mkdir()
-    run_id = (
-        str(outside)
-        if attack == "absolute"
-        else "../outside-existing"
-    )
+    run_id = str(outside) if attack == "absolute" else "../outside-existing"
 
     with pytest.raises(SystemExit):
         runner.main(
@@ -1088,8 +1052,7 @@ def test_diagnostic_manifest_and_schema_reject_noncanonical_identity() -> None:
 
     canonical_cases = load_cases(DEFAULT_CASE_DIR)
     canonical_results = [
-        _result(case_id=case.case_id, trial=1)
-        for case in canonical_cases
+        _result(case_id=case.case_id, trial=1) for case in canonical_cases
     ]
     for result in canonical_results:
         result.model_calls = (
@@ -1118,10 +1081,7 @@ def test_diagnostic_manifest_and_schema_reject_noncanonical_identity() -> None:
         "trajectories": "trajectories/",
         "integrity": "integrity.json",
     }
-    records = [
-        result_to_record(item, split="dev")
-        for item in canonical_results
-    ]
+    records = [result_to_record(item, split="dev") for item in canonical_results]
     payload = {
         "manifest": manifest,
         "cases": records,
@@ -1200,10 +1160,7 @@ def test_public_validator_recomputes_dev_repeat_bucket_costs() -> None:
         "trajectories": "trajectories/",
         "integrity": "integrity.json",
     }
-    records = [
-        result_to_record(result, split="dev")
-        for result in results
-    ]
+    records = [result_to_record(result, split="dev") for result in results]
     payload = {
         "manifest": manifest,
         "cases": records,
@@ -1226,18 +1183,14 @@ def test_public_validator_recomputes_dev_repeat_bucket_costs() -> None:
     forged_cost = Decimal("0.000013")
     forged_total = forged_cost * _attempt_count(results)
     for scope in ("run", "cumulative"):
-        forged["summary"]["budget"]["attempt_evidence"][scope][0][
-            "known_cost_cny"
-        ] = format(forged_cost, "f")
-        forged["summary"]["budget"][scope][
-            "committed_cny"
-        ] = format(forged_total, "f")
-        forged["summary"]["budget"][scope][
-            "settled_cny"
-        ] = format(forged_total, "f")
-        forged["summary"]["budget"][scope][
-            "remaining_execution_cny"
-        ] = format(Decimal("18") - forged_total, "f")
+        forged["summary"]["budget"]["attempt_evidence"][scope][0]["known_cost_cny"] = (
+            format(forged_cost, "f")
+        )
+        forged["summary"]["budget"][scope]["committed_cny"] = format(forged_total, "f")
+        forged["summary"]["budget"][scope]["settled_cny"] = format(forged_total, "f")
+        forged["summary"]["budget"][scope]["remaining_execution_cny"] = format(
+            Decimal("18") - forged_total, "f"
+        )
 
     with pytest.raises(ValueError, match="attempt|bucket|cost|record"):
         validate_readonly_payload(forged)
@@ -1246,9 +1199,7 @@ def test_public_validator_recomputes_dev_repeat_bucket_costs() -> None:
 def test_dev_repeat_payload_cannot_be_relabelled_as_diagnostic() -> None:
     payload = _dev_repeat_payload()
     payload["manifest"]["purpose"] = "diagnostic"
-    payload["summary"]["budget"]["run_identity"][
-        "purpose"
-    ] = "diagnostic"
+    payload["summary"]["budget"]["run_identity"]["purpose"] = "diagnostic"
 
     with pytest.raises(ValueError, match="diagnostic|canonical|case"):
         validate_readonly_payload(payload)
@@ -1391,9 +1342,9 @@ def test_dev_repeat_manifest_rejects_unsettled_or_unpriced_paid_evidence(
         mismatched_cost = Decimal("0.000013")
         mismatched_total = mismatched_cost * len(results)
         for scope in ("run", "cumulative"):
-            budget["attempt_evidence"][scope][0][
-                "known_cost_cny"
-            ] = format(mismatched_cost, "f")
+            budget["attempt_evidence"][scope][0]["known_cost_cny"] = format(
+                mismatched_cost, "f"
+            )
             budget[scope]["committed_cny"] = format(
                 mismatched_total,
                 "f",
@@ -1452,8 +1403,7 @@ def test_dev_repeat_manifest_binds_calls_to_each_completed_trial(
         results[1].model_calls = (*moved, *results[1].model_calls)
     elif attack == "agent_phase_missing":
         results[0].model_calls = tuple(
-            replace(call, phase="semantic_judge")
-            for call in results[0].model_calls
+            replace(call, phase="semantic_judge") for call in results[0].model_calls
         )
     elif attack == "agent_sequence_gap":
         agent, judge = results[0].model_calls
@@ -1565,21 +1515,15 @@ def test_budget_summary_rejects_contradictory_attempt_evidence(
     elif attack == "totals":
         budget["attempt_evidence"]["run"][0]["count"] = 2
     elif attack == "reservation":
-        budget["attempt_evidence"]["run"][0][
-            "reserved_cny"
-        ] = "1.5"
+        budget["attempt_evidence"]["run"][0]["reserved_cny"] = "1.5"
     elif attack == "run_not_in_cumulative":
-        budget["attempt_evidence"]["cumulative"][0][
-            "known_cost_cny"
-        ] = "0.000013"
+        budget["attempt_evidence"]["cumulative"][0]["known_cost_cny"] = "0.000013"
         budget["cumulative"]["committed_cny"] = "0.000013"
         budget["cumulative"]["settled_cny"] = "0.000013"
         budget["cumulative"]["remaining_execution_cny"] = "17.999987"
         budget["run"]["remaining_execution_cny"] = "17.999987"
     elif attack == "duplicate_run_not_in_cumulative":
-        canonical_bucket = deepcopy(
-            budget["attempt_evidence"]["run"][0]
-        )
+        canonical_bucket = deepcopy(budget["attempt_evidence"]["run"][0])
         canonical_bucket["count"] = 1
         historical_bucket = deepcopy(canonical_bucket)
         historical_bucket["reserved_cny"] = "1.5"
