@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import stat
 from dataclasses import replace
@@ -9,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from app.config import Settings
+from evals import holdout_lock as holdout_protocol
 from evals.calibration_attestation import (
     ValidatedCalibrationAttestation,
     ValidatedCalibrationReview,
@@ -254,6 +256,96 @@ def test_holdout_finalize_rejects_a_replaced_start_receipt(
             status="failed",
             run_id="eval-20260729-replaced-start",
             expected_start_receipt_sha256=expected_start_sha256,
+        )
+
+
+def test_completed_holdout_chain_links_manifest_start_bundle_and_terminal(
+    tmp_path: Path,
+) -> None:
+    manifest_path = _manifest(tmp_path / "manifest.json")
+    declaration = validate_holdout_declaration(
+        manifest_path=manifest_path,
+        case_set_name="readonly-holdout-v2",
+        cases=_cases(),
+        calibration_attestation=_attestation(),
+        calibration_review=_review(),
+    )
+    run_id = "eval-20260729-complete-chain"
+    start_path = acquire_holdout_run_lock(
+        lock_root=tmp_path / "private-locks",
+        declaration=declaration,
+        run_id=run_id,
+    )
+    start_sha256 = holdout_lock_receipt_sha256(start_path)
+    bundle_path = tmp_path / "bundle"
+    bundle_path.mkdir()
+    integrity_path = bundle_path / "integrity.json"
+    integrity_path.write_text(
+        '{"schema_version":"1.0","algorithm":"sha256","files":{}}\n',
+        encoding="utf-8",
+    )
+    integrity_sha256 = hashlib.sha256(
+        integrity_path.read_bytes()
+    ).hexdigest()
+    bundle_manifest = {
+        "run_id": run_id,
+        "source": {
+            "git_commit": declaration.source_git_commit,
+        },
+        "harness": {
+            "runtime_harness_sha256": declaration.harness_sha256,
+        },
+        "eval": {
+            "formal_holdout": {
+                "declaration_manifest_sha256": (
+                    declaration.manifest_sha256
+                ),
+                "lock_start_receipt_sha256": start_sha256,
+                "declared_harness_sha256": declaration.harness_sha256,
+            },
+            "semantic_calibration": {
+                "report_sha256": declaration.calibration_report_sha256,
+                "review_sha256": declaration.calibration_review_sha256,
+                "run_id": declaration.calibration_run_id,
+                "source_git_commit": (
+                    declaration.calibration_source_git_commit
+                ),
+            },
+        },
+    }
+    bundle_manifest_path = bundle_path / "manifest.json"
+    bundle_manifest_path.write_text(
+        json.dumps(bundle_manifest, sort_keys=True),
+        encoding="utf-8",
+    )
+    terminal_path = finalize_holdout_run_lock(
+        lock_path=start_path,
+        status="completed",
+        run_id=run_id,
+        expected_start_receipt_sha256=start_sha256,
+        bundle_integrity_sha256=integrity_sha256,
+    )
+
+    holdout_protocol.verify_holdout_receipt_chain(
+        manifest_path=manifest_path,
+        start_path=start_path,
+        terminal_path=terminal_path,
+        bundle_path=bundle_path,
+    )
+
+    bundle_manifest["eval"]["formal_holdout"][
+        "declared_harness_sha256"
+    ] = "0" * 64
+    bundle_manifest_path.write_text(
+        json.dumps(bundle_manifest, sort_keys=True),
+        encoding="utf-8",
+    )
+    with pytest.raises(HoldoutLockError, match="chain|harness"):
+        holdout_protocol.verify_holdout_receipt_chain(
+            manifest_path=manifest_path,
+            start_path=start_path,
+            terminal_path=terminal_path,
+            bundle_path=bundle_path,
         )
 
 
