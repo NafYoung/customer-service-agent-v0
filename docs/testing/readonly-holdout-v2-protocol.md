@@ -76,12 +76,16 @@ Runner 先取得干净 Git 提交，再冻结实际执行使用的 Prompt、政�
 重新检查价格有效期。锁槽只由案例集哈希决定，改案例集名称、`run_id` 或
 artifact 目录都不能获得第二次机会。`holdout` split 只能与
 `holdout_formal` purpose 配对；模型名、官方 endpoint、temperature、
-thinking、tool choice、token/重试/超时、Agent 限额以及对应实现源码任一
-漂移都会失败关闭。预算摘要必须绑定 SQLite 中持久化的 run ID、purpose、
+thinking、tool choice 以及对应实现源码任一漂移都会失败关闭。批准的
+Eval profile 固定为 30 秒 timeout、1024 output tokens、2 次重试、最多 4 轮
+工具循环和 12 次工具调用；即使调用方配置与 artifact 同步改成另一组数值也
+不能通过。预算摘要必须绑定 SQLite 中持久化的 run ID、purpose、
 model、仓库 canonical 价格快照和完成状态；价格文件进入 frozen harness，
 formal/calibration 固定使用 ¥20/¥18，累计金额、余额和逐调用重算必须一致。
 价格原始文件哈希由代码固定；同一次安全读取的解析对象直接进入预算守卫，
 不能在冻结指纹后另行重读并换成低费率。
+源码身份要求冻结前、runtime snapshot 内部和冻结后的 source-tree SHA-256
+三者相同；package identity 覆盖直接依赖及会影响实际执行的传递依赖。
 成功 summary 必须从 case records 全量重算。失败证据若捕获预算，只接受
 SQLite 持久身份，并显式记录未匹配 attempt 数与是否突破执行上限。
 

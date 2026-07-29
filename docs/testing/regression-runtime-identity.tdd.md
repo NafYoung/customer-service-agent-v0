@@ -33,16 +33,26 @@ The validator now independently:
 
 - requires a clean, stable Git source before and after freezing;
 - recomputes the source tree and Python/platform/package snapshot;
+- records the direct runtime dependencies and the transitive distributions
+  that can affect FastAPI, Pydantic, HTTPX, SQLAlchemy, and Uvicorn behavior;
 - freezes and compares every harness fingerprint and recomputes its aggregate;
 - compares the scorer identity;
 - requires the canonical official DeepSeek runtime and compares its complete
   model, generation, timeout/retry, and semantic-judge snapshot;
+- requires the approved `30 / 1024 / 2 / 4 / 12` timeout, token, retry, tool
+  round, and tool-call profile even if caller settings and bundle agree on a
+  different profile;
+- requires the source-tree hash before the snapshot, inside the snapshot, and
+  after the snapshot to be identical;
 - incorporates the full runtime identity into the regression gate hash.
 
 The formal preflight passes its already frozen source tree, harness, and
 settings into the validator. Completed and failed chain verification continue
 to reopen the actual regression bundle and now repeat the independent runtime
 validation.
+
+The coordinated-runtime, dependency-closure, and mixed-snapshot follow-up used
+RED checkpoint `309f559`. Its focused six-suite run passed 233 tests.
 
 ## Test specification
 

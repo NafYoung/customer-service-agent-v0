@@ -23,9 +23,15 @@ from app.agent.factory import build_deepseek_client
 from app.agent.openai_compatible import ChatModel
 from app.config import Settings
 from evals.calibration_attestation import (
+    CANONICAL_AGENT_MAX_TOOL_CALLS,
+    CANONICAL_AGENT_MAX_TOOL_ROUNDS,
+    CANONICAL_DEEPSEEK_MAX_RETRIES,
+    CANONICAL_DEEPSEEK_MAX_TOKENS,
+    CANONICAL_DEEPSEEK_TIMEOUT_SECONDS,
     CalibrationAttestationError,
     ValidatedCalibrationAttestation,
     ValidatedCalibrationReview,
+    require_canonical_calibration_runtime,
     validate_calibration_attestation,
     validate_calibration_review,
 )
@@ -453,6 +459,20 @@ def validate_paid_eval_settings(settings: Settings) -> None:
         )
     if settings.deepseek_temperature != 0:
         raise ValueError("Paid Eval requires DEEPSEEK_TEMPERATURE=0.")
+    if (
+        settings.deepseek_timeout_seconds
+        != CANONICAL_DEEPSEEK_TIMEOUT_SECONDS
+        or settings.deepseek_max_tokens != CANONICAL_DEEPSEEK_MAX_TOKENS
+        or settings.deepseek_max_retries
+        != CANONICAL_DEEPSEEK_MAX_RETRIES
+        or settings.agent_max_tool_rounds
+        != CANONICAL_AGENT_MAX_TOOL_ROUNDS
+        or settings.agent_max_tool_calls
+        != CANONICAL_AGENT_MAX_TOOL_CALLS
+    ):
+        raise ValueError(
+            "Paid Eval requires the canonical read-only Eval runtime."
+        )
 
 
 def build_deepseek_budget_guard(
@@ -463,6 +483,13 @@ def build_deepseek_budget_guard(
     frozen_harness: FrozenReadonlyHarness,
 ) -> DeepSeekBudgetGuard:
     validate_paid_eval_settings(settings)
+    if purpose in {"dev_repeat", "holdout_formal"}:
+        try:
+            require_canonical_calibration_runtime(settings)
+        except CalibrationAttestationError as exc:
+            raise ValueError(
+                "Formal-eligible Eval requires the canonical runtime."
+            ) from exc
     price_snapshot = require_frozen_canonical_price(
         frozen_harness.canonical_price,
         expected_file_sha256=frozen_harness.fingerprints[

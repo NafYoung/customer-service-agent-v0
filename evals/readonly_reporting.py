@@ -221,9 +221,40 @@ def require_clean_git_worktree(
     return commit
 
 
+_RUNTIME_DISTRIBUTIONS = (
+    "annotated-doc",
+    "annotated-types",
+    "anyio",
+    "certifi",
+    "click",
+    "dnspython",
+    "email-validator",
+    "fastapi",
+    "greenlet",
+    "h11",
+    "httpcore",
+    "httptools",
+    "httpx",
+    "idna",
+    "pydantic",
+    "pydantic-core",
+    "python-dotenv",
+    "pyyaml",
+    "sniffio",
+    "sqlalchemy",
+    "starlette",
+    "typing-extensions",
+    "typing-inspection",
+    "uvicorn",
+    "uvloop",
+    "watchfiles",
+    "websockets",
+)
+
+
 def _package_versions() -> dict[str, str]:
     versions: dict[str, str] = {}
-    for package_name in ("fastapi", "httpx", "pydantic", "sqlalchemy"):
+    for package_name in _RUNTIME_DISTRIBUTIONS:
         try:
             versions[package_name] = metadata.version(package_name)
         except metadata.PackageNotFoundError:

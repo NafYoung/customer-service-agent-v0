@@ -224,7 +224,7 @@ def _paid_budget(
         "run_identity": {
             "run_id": run_id,
             "purpose": purpose,
-            "model": settings.deepseek_model,
+                "model": runtime_settings.deepseek_model,
             "price_sha256": price.sha256,
             "status": "completed",
             "started_at": "2026-07-29T12:00:00+00:00",

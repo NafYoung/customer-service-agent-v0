@@ -55,7 +55,7 @@ Result: both passed.
 |---|---|---|---|
 | Paid calibration rejects diagnostic mode and custom fixture/case paths before settings, budget, or model construction | `tests/test_semantic_calibration_cli.py` preflight tests | integration | PASS |
 | The canonical 49-fixture and seven-case content is loaded and validated before a second clean-source check immediately preceding budget construction | post-load drift test and canonical calibration tests | integration | PASS |
-| Only temperature `0`, canonical model, and official DeepSeek HTTPS endpoint are accepted; a normal trailing slash is allowed | runtime settings attack and positive normalization tests | unit | PASS |
+| Only temperature `0`, canonical model, official DeepSeek HTTPS endpoint, 30-second timeout, 1024 output tokens, 2 retries, 4 tool rounds, and 12 tool calls are accepted; a normal trailing slash is allowed | runtime settings attack and positive normalization tests | unit | PASS |
 | Each fixture has exactly one successful two-message semantic-judge call with `stop`, no tools/errors/HTTP status, one provider attempt, valid usage, and canonical model | model-call protocol attack tests | unit | PASS |
 | Report, budget identity, calls, and canonical price window form one ordered timezone-aware lifecycle | call-time and budget-identity attack tests | unit | PASS |
 | The output remains within the fixed private root and is owner-only | valid CLI report test | integration | PASS |
@@ -94,6 +94,18 @@ The final TOCTOU follow-up used its own checkpoints:
 
 Immediately before returning a validated attestation, the validator now
 recomputes the source-tree hash and rechecks the expected clean commit.
+
+The runtime-identity follow-up used:
+
+- RED: `309f559 test: reproduce coordinated runtime identity drift`
+- GREEN: the canonical profile is now defined by code constants rather than
+  environment-derived defaults.
+
+The validator rejects coordinated changes to timeout, output-token limit,
+retries, tool rounds, or tool calls even when a report and its harness were
+generated with the same changed values. The general application `Settings`
+remain configurable; only holdout-eligible Eval and calibration use this
+approved profile.
 
 ## Coverage and boundary
 

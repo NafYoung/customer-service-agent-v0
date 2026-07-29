@@ -265,6 +265,7 @@ def validate_regression_gate(
     current_harness_sha256 = stable_sha256(harness_fingerprints)
     if (
         source_tree_before != source_tree_after
+        or source_snapshot["source_tree_sha256"] != source_tree_before
         or source_snapshot["git_commit"] != source_git_commit
         or (
             expected_source_tree_sha256 is not None

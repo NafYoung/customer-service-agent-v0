@@ -65,6 +65,11 @@ CANONICAL_FIXTURE_PATH = (
 )
 CANONICAL_CASE_DIR = ROOT / "evals" / "readonly_regression_cases"
 CANONICAL_DEEPSEEK_MODEL = "deepseek-v4-flash"
+CANONICAL_DEEPSEEK_TIMEOUT_SECONDS = 30.0
+CANONICAL_DEEPSEEK_MAX_TOKENS = 1024
+CANONICAL_DEEPSEEK_MAX_RETRIES = 2
+CANONICAL_AGENT_MAX_TOOL_ROUNDS = 4
+CANONICAL_AGENT_MAX_TOOL_CALLS = 12
 _SHA256_PATTERN = r"^[0-9a-f]{64}$"
 
 
@@ -158,10 +163,21 @@ def require_canonical_calibration_runtime(settings: Settings) -> None:
         or endpoint.query
         or endpoint.fragment
         or endpoint.path not in {"", "/"}
+        or settings.deepseek_timeout_seconds
+        != CANONICAL_DEEPSEEK_TIMEOUT_SECONDS
+        or settings.deepseek_max_tokens != CANONICAL_DEEPSEEK_MAX_TOKENS
+        or settings.deepseek_max_retries
+        != CANONICAL_DEEPSEEK_MAX_RETRIES
+        or settings.agent_max_tool_rounds
+        != CANONICAL_AGENT_MAX_TOOL_ROUNDS
+        or settings.agent_max_tool_calls
+        != CANONICAL_AGENT_MAX_TOOL_CALLS
     ):
         raise CalibrationAttestationError(
             "The calibration runtime must use temperature 0, the canonical "
-            "model, and the official DeepSeek HTTPS endpoint."
+            "model, official DeepSeek HTTPS endpoint, 30-second timeout, "
+            "1024 output-token limit, 2 retries, 4 tool rounds, and 12 "
+            "tool calls."
         )
 
 
