@@ -13,12 +13,18 @@ from app.agent.openai_compatible import AssistantTurn
 from app.config import Settings
 from evals import run_readonly_agent_evals
 from evals import verify_eval_bundle as verify_eval_bundle_cli
+from evals.calibration_attestation import (
+    ValidatedCalibrationAttestation,
+    ValidatedCalibrationReview,
+)
 from evals.evidence import verify_eval_bundle
 from evals.evidence_schema import (
     validate_readonly_bundle,
     validate_readonly_payload,
 )
 from evals.readonly_eval import ReadonlyEvalResult
+from evals.readonly_eval import ReadonlyEvalCase
+from evals.holdout_lock import HoldoutLockError
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -443,3 +449,121 @@ def test_cli_rejects_existing_output_before_model_or_budget_construction(
     assert exit_code == 3
     assert constructed == {"budget": 0, "model": 0}
     assert "already exists" in capsys.readouterr().out
+
+
+def test_formal_cli_validates_calibration_chain_before_budget_or_model(
+    tmp_path,
+    monkeypatch,
+):
+    cases = [
+        ReadonlyEvalCase.model_validate(
+            {
+                "case_id": f"private-holdout-{index:02d}",
+                "user_message": "private input",
+                "expected": {
+                    "semantic_contract": {
+                        "required_claims": [
+                            {
+                                "id": f"safe_{index:02d}",
+                                "category": "security",
+                                "proposition": "the response remains safe",
+                            }
+                        ],
+                        "forbidden_claims": [],
+                    }
+                },
+            }
+        )
+        for index in range(20)
+    ]
+    attestation = ValidatedCalibrationAttestation(
+        report_sha256="a" * 64,
+        run_id="eval-20260729-calibration-v2",
+        fixture_sha256="c" * 64,
+        contract_set_sha256="d" * 64,
+        harness_sha256="e" * 64,
+        result_count=44,
+        fixture_ids=tuple(f"fixture-{index:02d}" for index in range(44)),
+    )
+    review = ValidatedCalibrationReview(
+        review_sha256="b" * 64,
+        reviewer_id="independent-reviewer-v1",
+        reviewed_count=5,
+    )
+    calls: list[str] = []
+
+    monkeypatch.setattr(
+        run_readonly_agent_evals,
+        "load_cases",
+        lambda path: cases,
+    )
+
+    def validate_attestation(**kwargs):
+        calls.append("attestation")
+        return attestation
+
+    def validate_review(**kwargs):
+        assert kwargs["attestation"] is attestation
+        calls.append("review")
+        return review
+
+    def reject_declaration(**kwargs):
+        assert kwargs["calibration_attestation"] is attestation
+        assert kwargs["calibration_review"] is review
+        calls.append("declaration")
+        raise HoldoutLockError("generic formal declaration failure")
+
+    def fail_budget(**kwargs):
+        calls.append("budget")
+        raise AssertionError("budget construction must not be reached")
+
+    monkeypatch.setattr(
+        run_readonly_agent_evals,
+        "validate_calibration_attestation",
+        validate_attestation,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        run_readonly_agent_evals,
+        "validate_calibration_review",
+        validate_review,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        run_readonly_agent_evals,
+        "validate_holdout_declaration",
+        reject_declaration,
+    )
+    monkeypatch.setattr(
+        run_readonly_agent_evals,
+        "build_deepseek_budget_guard",
+        fail_budget,
+    )
+
+    exit_code = run_readonly_agent_evals.main(
+        [
+            "--case-dir",
+            str(tmp_path / "private-cases"),
+            "--output-root",
+            str(tmp_path / "output"),
+            "--run-id",
+            "eval-20260729-formal-check",
+            "--purpose",
+            "holdout_formal",
+            "--split",
+            "holdout",
+            "--case-set-name",
+            "readonly-holdout-v2",
+            "--trials",
+            "4",
+            "--holdout-manifest",
+            str(tmp_path / "manifest.json"),
+            "--calibration-report",
+            str(tmp_path / "calibration.json"),
+            "--calibration-review",
+            str(tmp_path / "review.json"),
+        ]
+    )
+
+    assert exit_code == 2
+    assert calls == ["attestation", "review", "declaration"]

@@ -4,6 +4,10 @@ import json
 from datetime import UTC, datetime, timedelta
 
 from app.config import Settings
+from evals.calibration_attestation import (
+    ValidatedCalibrationAttestation,
+    ValidatedCalibrationReview,
+)
 from evals.evidence import BusinessStateDelta, ModelCallEvidence
 from evals.readonly_eval import (
     ReadonlyEvalResult,
@@ -57,6 +61,29 @@ def _budget_report() -> dict:
         "run": dict(amount),
         "cumulative": dict(amount),
     }
+
+
+def _attestation() -> ValidatedCalibrationAttestation:
+    return ValidatedCalibrationAttestation(
+        report_sha256="a" * 64,
+        run_id="eval-20260729-calibration-v2",
+        fixture_sha256="c" * 64,
+        contract_set_sha256="d" * 64,
+        harness_sha256="e" * 64,
+        result_count=44,
+        fixture_ids=tuple(
+            f"canonical-fixture-{index:02d}"
+            for index in range(44)
+        ),
+    )
+
+
+def _review() -> ValidatedCalibrationReview:
+    return ValidatedCalibrationReview(
+        review_sha256="b" * 64,
+        reviewer_id="independent-reviewer-v1",
+        reviewed_count=5,
+    )
 
 
 def _result(
@@ -204,6 +231,8 @@ def test_manifest_fingerprints_harness_and_never_serializes_secret_or_holdout_id
         started_at=started,
         completed_at=completed,
         budget_report=_budget_report(),
+        calibration_attestation=_attestation(),
+        calibration_review=_review(),
     )
     serialized = json.dumps(manifest, ensure_ascii=False)
 
@@ -220,6 +249,20 @@ def test_manifest_fingerprints_harness_and_never_serializes_secret_or_holdout_id
     assert manifest["harness"]["model_runtime_sha256"]
     assert manifest["harness"]["semantic_judge_prompt_sha256"]
     assert manifest["harness"]["semantic_judge_source_sha256"]
+    assert manifest["harness"]["semantic_calibration_source_sha256"]
+    assert manifest["harness"]["semantic_calibration_validator_sha256"]
+    assert manifest["harness"]["semantic_calibration_runner_sha256"]
+    assert manifest["harness"]["semantic_calibration_fixture_sha256"]
+    assert manifest["eval"]["semantic_calibration"] == {
+        "report_sha256": "a" * 64,
+        "review_sha256": "b" * 64,
+        "run_id": "eval-20260729-calibration-v2",
+        "fixture_sha256": "c" * 64,
+        "contract_set_sha256": "d" * 64,
+        "harness_sha256": "e" * 64,
+        "reviewer_id": "independent-reviewer-v1",
+        "reviewed_count": 5,
+    }
     assert manifest["source"]["source_tree_sha256"]
     assert manifest["execution"]["planned_trials"] == 1
     assert manifest["execution"]["completed_trials"] == 1
@@ -252,3 +295,33 @@ def test_manifest_fingerprints_harness_and_never_serializes_secret_or_holdout_id
     assert dev_manifest["eval"]["case_ids"] == [
         case.case_id for case in cases
     ]
+    assert "semantic_calibration" not in dev_manifest["eval"]
+
+
+def test_formal_manifest_requires_bound_calibration_attestations():
+    settings = Settings()
+    cases = load_cases()[:1]
+    started = datetime.now(UTC)
+
+    try:
+        build_readonly_manifest(
+            run_id="eval-20260729-missing-calibration",
+            purpose="holdout_formal",
+            split="holdout",
+            case_set_name="readonly-holdout-v2",
+            cases=cases,
+            results=[
+                _result(case_id=cases[0].case_id, trial=1, passed=True)
+            ],
+            settings=settings,
+            planned_trials=1,
+            started_at=started,
+            completed_at=started + timedelta(seconds=1),
+            budget_report=_budget_report(),
+        )
+    except ValueError as exc:
+        assert "calibration" in str(exc)
+    else:
+        raise AssertionError(
+            "formal manifest accepted missing calibration attestations"
+        )
