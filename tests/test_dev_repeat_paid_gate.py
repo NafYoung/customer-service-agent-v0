@@ -15,6 +15,7 @@ from app.agent.deepseek_budget import (
 )
 from app.agent.openai_compatible import AssistantTurn
 from app.config import Settings
+from evals import holdout_lock as holdout_protocol
 from evals import run_readonly_agent_evals as runner
 from evals.canonical_pricing import (
     canonical_budget_price_payload,
@@ -24,6 +25,7 @@ from evals.canonical_pricing import (
 from evals.evidence import (
     BusinessStateDelta,
     ModelCallEvidence,
+    write_eval_bundle,
 )
 from evals.evidence_schema import (
     BudgetSummary,
@@ -280,6 +282,139 @@ def _dev_repeat_payload() -> dict:
             "files": {},
         },
     }
+
+
+def _write_dev_repeat_bundle(
+    tmp_path: Path,
+    payload: dict,
+) -> Path:
+    manifest = payload["manifest"]
+    manifest["source"]["git_commit"] = "a" * 40
+    manifest["source"]["git_dirty"] = False
+    output_root = tmp_path / "private-regression"
+    output_root.mkdir(mode=0o700)
+    return write_eval_bundle(
+        output_root=output_root,
+        run_id=manifest["run_id"],
+        manifest=manifest,
+        case_records=payload["cases"],
+        summary=payload["summary"],
+    )
+
+
+def test_programmatic_formal_run_requires_validated_context_before_model_call(
+    tmp_path: Path,
+) -> None:
+    model = _CountingModel()
+    case = load_cases(REGRESSION_CASE_DIR)[:1]
+
+    with pytest.raises(ValueError, match="validated formal"):
+        runner.run_eval_suite(
+            model=model,
+            settings=_settings(),
+            cases=case,
+            run_id="eval-20260729-formal-no-context",
+            purpose="holdout_formal",
+            split="holdout",
+            case_set_name="readonly-holdout-v2",
+            trials=4,
+            output_root=tmp_path,
+        )
+
+    assert model.calls == 0
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_programmatic_formal_run_rejects_forged_context_before_model_call(
+    tmp_path: Path,
+) -> None:
+    model = _CountingModel()
+
+    with pytest.raises(ValueError, match="validated formal"):
+        runner.run_eval_suite(
+            model=model,
+            settings=_settings(),
+            cases=load_cases(REGRESSION_CASE_DIR)[:1],
+            run_id="eval-20260729-formal-forged-context",
+            purpose="holdout_formal",
+            split="holdout",
+            case_set_name="readonly-holdout-v2",
+            trials=4,
+            output_root=tmp_path,
+            formal_run_context=object(),
+        )
+
+    assert model.calls == 0
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize(
+    "attack",
+    [
+        "missing_trial",
+        "security_failure",
+        "changed_state",
+        "stale_source",
+        "stale_harness",
+    ],
+)
+def test_formal_regression_gate_rejects_noncanonical_public_bundle(
+    tmp_path: Path,
+    attack: str,
+) -> None:
+    payload = _dev_repeat_payload()
+    expected_harness = payload["manifest"]["harness"][
+        "runtime_harness_sha256"
+    ]
+    if attack == "missing_trial":
+        payload["cases"].pop()
+        payload["trajectories"].pop()
+    elif attack == "security_failure":
+        payload["summary"]["security"]["passed"] = 27
+        payload["summary"]["security"]["failed"] = 1
+        payload["summary"]["security"]["rate"] = 27 / 28
+        payload["summary"]["security"]["all_trials_passed"] = False
+    elif attack == "changed_state":
+        payload["summary"]["business_state"]["changed_trials"] = 1
+        payload["summary"]["business_state"]["all_trials_unchanged"] = False
+    elif attack == "stale_source":
+        payload["manifest"]["source"]["git_commit"] = "b" * 40
+    elif attack == "stale_harness":
+        payload["manifest"]["harness"]["runtime_harness_sha256"] = "b" * 64
+    bundle_path = _write_dev_repeat_bundle(tmp_path, payload)
+
+    with pytest.raises(
+        holdout_protocol.HoldoutLockError,
+        match="regression",
+    ):
+        holdout_protocol.validate_regression_gate(
+            bundle_path=bundle_path,
+            private_root=tmp_path,
+            source_git_commit="a" * 40,
+            harness_sha256=expected_harness,
+        )
+
+
+def test_formal_regression_gate_accepts_only_verified_28_of_28_bundle(
+    tmp_path: Path,
+) -> None:
+    payload = _dev_repeat_payload()
+    expected_harness = payload["manifest"]["harness"][
+        "runtime_harness_sha256"
+    ]
+    bundle_path = _write_dev_repeat_bundle(tmp_path, payload)
+
+    gate = holdout_protocol.validate_regression_gate(
+        bundle_path=bundle_path,
+        private_root=tmp_path,
+        source_git_commit="a" * 40,
+        harness_sha256=expected_harness,
+    )
+
+    assert gate.run_id == payload["manifest"]["run_id"]
+    assert gate.source_git_commit == "a" * 40
+    assert gate.case_set_name == "readonly-regression-v1"
+    assert gate.passed_trials == 28
 
 
 @pytest.mark.parametrize(
