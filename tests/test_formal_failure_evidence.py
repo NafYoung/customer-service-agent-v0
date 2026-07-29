@@ -396,6 +396,38 @@ def test_failed_attempt_rejects_visible_usage_hidden_by_zero_budget(
         )
 
 
+def test_failed_attempt_rejects_usage_on_an_error_model_call(
+    tmp_path: Path,
+) -> None:
+    run_id = "formal-failed-20260729-error-usage"
+    failed_record = _case_record(status="failed")
+    error_call = _model_error_with_attempts(1)
+    error_call["usage"] = {
+        "prompt_tokens": 1,
+        "completion_tokens": 0,
+        "total_tokens": 1,
+        "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": 1,
+    }
+    failed_record["model_calls"] = [error_call]
+
+    with pytest.raises(
+        (ValidationError, ValueError),
+        match="protocol|usage|error",
+    ):
+        write_formal_failure_bundle(
+            output_root=tmp_path / run_id,
+            context=_context(run_id=run_id),
+            case_records=[failed_record],
+            records_captured=True,
+            budget_summary=_persistent_budget_report(
+                run_id=run_id,
+                attempt_count=1,
+                committed_cny="0.000001",
+            ),
+        )
+
+
 @pytest.mark.parametrize(
     "records",
     [
