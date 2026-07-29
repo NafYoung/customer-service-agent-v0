@@ -221,6 +221,7 @@ class ReadOnlyAgent:
         self._model = model
         self._contracts = get_read_only_tool_contracts()
         self._dispatcher = _ReadOnlyDispatcher(tools)
+        self._allowed_tool_names: tuple[str, ...] = READ_ONLY_TOOL_NAMES
         self._max_tool_rounds = max_tool_rounds
         self._max_tool_calls = max_tool_calls
         self._system_prompt = (
@@ -228,6 +229,22 @@ class ReadOnlyAgent:
             if system_prompt is not None
             else _DEFAULT_SYSTEM_PROMPT.read_text(encoding="utf-8")
         )
+
+    def _validate_tool_batch(
+        self,
+        calls: tuple[ToolCall, ...],
+        trace: tuple[ToolTrace, ...],
+    ) -> None:
+        """Phase-specific preflight hook; read-only runs need no extra rule."""
+
+    def _context_for_tool_call(
+        self,
+        context: ToolCallContext,
+        call: ToolCall,
+    ) -> ToolCallContext:
+        """Phase-specific context binding hook."""
+
+        return context
 
     def run(
         self,
@@ -298,11 +315,12 @@ class ReadOnlyAgent:
                         "The model returned duplicate tool call identifiers.",
                     )
                 batch_ids.add(call.id)
-                if call.name not in READ_ONLY_TOOL_NAMES:
+                if call.name not in self._allowed_tool_names:
                     raise AgentRunError(
                         "FORBIDDEN_TOOL_CALL",
-                        "The model requested a tool outside the read-only allowlist.",
+                        "The model requested a tool outside the configured allowlist.",
                     )
+            self._validate_tool_batch(turn.tool_calls, tuple(trace))
             seen_call_ids.update(batch_ids)
 
             prepared_calls: list[_PreparedToolCall] = []
@@ -388,7 +406,7 @@ class ReadOnlyAgent:
                         session,
                         tool_name=call.name,
                         parsed=parsed_call,
-                        context=context,
+                        context=self._context_for_tool_call(context, call),
                     )
                     safe_result = _model_safe(result)
                     record_trace(
@@ -454,7 +472,7 @@ class ReadOnlyAgent:
                     )
                     raise AgentRunError(
                         "TOOL_EXECUTION_ERROR",
-                        "A read-only tool failed unexpectedly.",
+                        "A configured tool failed unexpectedly.",
                     ) from exc
 
                 messages.append(

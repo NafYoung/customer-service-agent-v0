@@ -15,6 +15,12 @@ READ_ONLY_TOOL_NAMES = (
     "search_policy",
     "check_action_eligibility",
 )
+PREPARE_TOOL_NAMES = (
+    "prepare_cancel_order",
+    "prepare_return",
+    "prepare_exchange",
+)
+PREPARATION_TOOL_NAMES = (*READ_ONLY_TOOL_NAMES, *PREPARE_TOOL_NAMES)
 
 
 class ToolInput(BaseModel):
@@ -66,13 +72,13 @@ class EligibilityToolInput(ToolInput):
 
 
 class PrepareCancelInput(ToolInput):
-    order_id: str
+    order_id: str = Field(min_length=3, max_length=40)
     user_note: str | None = Field(default=None, max_length=500)
 
 
 class PrepareReturnInput(ToolInput):
-    order_id: str
-    order_item_id: str
+    order_id: str = Field(min_length=3, max_length=40)
+    order_item_id: str = Field(min_length=3, max_length=50)
     declared_condition: ItemCondition
     issue_type: IssueType
     user_note: str | None = Field(default=None, max_length=500)
@@ -171,6 +177,17 @@ def get_read_only_tool_contracts() -> list[dict[str, Any]]:
     """Return the exact tool allowlist for the first read-only Agent."""
 
     allowed = set(READ_ONLY_TOOL_NAMES)
+    return [
+        contract
+        for contract in get_tool_contracts()
+        if contract["name"] in allowed
+    ]
+
+
+def get_preparation_tool_contracts() -> list[dict[str, Any]]:
+    """Return the exact query, eligibility, and prepare allowlist."""
+
+    allowed = set(PREPARATION_TOOL_NAMES)
     return [
         contract
         for contract in get_tool_contracts()

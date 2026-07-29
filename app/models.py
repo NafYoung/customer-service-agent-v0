@@ -107,10 +107,26 @@ class Inventory(Base):
 
 class Approval(Base):
     __tablename__ = "approvals"
+    __table_args__ = (
+        UniqueConstraint(
+            "origin_server_run_id",
+            "origin_tool_call_id",
+            name="uq_approval_origin_tool_call",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(50), primary_key=True)
     customer_id: Mapped[str] = mapped_column(ForeignKey("customers.id"), index=True, nullable=False)
     conversation_id: Mapped[str] = mapped_column(String(120), index=True, nullable=False)
+    origin_server_run_id: Mapped[str | None] = mapped_column(
+        String(80),
+        index=True,
+        nullable=True,
+    )
+    origin_tool_call_id: Mapped[str | None] = mapped_column(
+        String(200),
+        nullable=True,
+    )
     action_type: Mapped[str] = mapped_column(String(40), nullable=False)
     order_id: Mapped[str] = mapped_column(ForeignKey("orders.id"), index=True, nullable=False)
     order_item_id: Mapped[str | None] = mapped_column(ForeignKey("order_items.id"), nullable=True)

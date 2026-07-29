@@ -14,7 +14,11 @@ sys.path.insert(0, str(ROOT))
 os.environ["ENABLE_DEBUG_ROUTES"] = "false"
 
 from app.main import create_app
-from app.tools.contracts import get_read_only_tool_contracts, get_tool_contracts
+from app.tools.contracts import (
+    get_preparation_tool_contracts,
+    get_read_only_tool_contracts,
+    get_tool_contracts,
+)
 
 
 def render_contracts() -> dict[str, str]:
@@ -27,6 +31,11 @@ def render_contracts() -> dict[str, str]:
         ),
         "readonly_tool_contracts.schema.json": json.dumps(
             get_read_only_tool_contracts(),
+            ensure_ascii=False,
+            indent=2,
+        ),
+        "preparation_tool_contracts.schema.json": json.dumps(
+            get_preparation_tool_contracts(),
             ensure_ascii=False,
             indent=2,
         ),

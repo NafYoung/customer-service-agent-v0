@@ -2,22 +2,34 @@
 
 ## 1. 当前状态
 
-v0 是供 Agent 调用的确定性交易后端原型。它已有业务规则、状态机、最小工具契约、宿主确认边界、调试轨迹和 Reference Eval。当前新增了 provider-neutral 单 Agent 循环与 DeepSeek OpenAI-compatible 适配，但只开放 6 个只读/资格工具；Prompt A/B 从严格 7/10 提升到 10/10，尚需重复运行和隐藏 holdout 验证。
+v0 是供 Agent 调用的确定性交易后端原型。它已有业务规则、状态机、最小
+工具契约、宿主确认边界、调试轨迹和 Eval 证据。当前有两个独立运行阶段：
+只读 Agent 固定开放 6 个查询/资格工具；Preparation Agent 核心开放这
+6 个工具和 3 个明确的 `prepare_*`。Preparation Agent 尚未接入公开宿主 UI。
 
 当前不应称为端到端客服 Agent、“安全交易层”或安全审计系统：
 
 - 认证、客户会话和确认由宿主应用负责；
-- 完整契约规划了 10 个工具，当前模型运行时只获得前 6 个只读工具；
+- 完整契约规划了 10 个工具；只读阶段获得前 6 个，Preparation 阶段获得
+  前 9 个，`create_handoff_ticket` 尚不属于任一当前模型运行时；
 - Reference Eval 读取结构化 `reference_plan`，不测试自然语言理解；只读 Agent Eval 已有一次真实基线但还不是隐藏 holdout；
 - SQLite、固定验证码和本地调试机制都不适合生产使用。
 
 ## 2. 模型与宿主的权限边界
 
-当前只读模型可调用：
+只读阶段模型可调用：
 
 ```text
 订单、物流、库存和政策查询
 确定性资格判断
+```
+
+Preparation 阶段在此基础上只新增：
+
+```text
+prepare_cancel_order
+prepare_return
+prepare_exchange
 ```
 
 模型不可调用或接触：
@@ -37,10 +49,12 @@ debug tool events
 
 1. ✅ 增加模型适配器，只开放查询、政策和资格判断工具。
 2. ✅ 建立自然语言案例并完成真实 DeepSeek Prompt A/B；严格 7/10 → 10/10，工具调用 25 → 12。
-3. 在只读自然语言 Eval 达到基线后，开放三个 `prepare_*` 工具；模型只能解释预览并请求确认。
+3. ✅ 新建独立 Preparation Agent/dispatcher，只开放三个明确的
+   `prepare_*` 增量工具；模型只能解释预览并请求确认。
 4. 实现结构化确认卡片，由宿主应用记录 `PRESENTED` 和 `ConfirmationEvent`。
 5. 宿主应用在确认后触发确定性执行，并把最终结果交回模型。
-6. 将模型输入输出、Agent 工具轨迹和宿主控制流关联到服务端生成的运行标识。
+6. ◐ Approval 与 Agent 工具轨迹已关联服务端运行和 provider tool call；
+   宿主 UI 控制流仍待接入。
 
 `execute_prepared_action` 不应在任何阶段开放为模型工具。
 
@@ -80,6 +94,11 @@ last_tool_result
 
 `approval_id` 是一次审批的服务端幂等边界。读取历史执行结果前，必须先校验客户和会话归属。
 
+Preparation Agent 的来源幂等边界是
+`(origin_server_run_id, origin_tool_call_id)`：同来源同请求返回原 Approval，
+同来源异请求失败。客户端 `X-Run-ID` 仍是不可信调试字段，不能作为
+`origin_server_run_id`。
+
 ## 6. 不建议的实现
 
 - 不要让模型直接生成 SQL。
@@ -101,4 +120,8 @@ last_tool_result
 
 ## 8. 本地数据库兼容
 
-P0 增加了审批上下文与确认事件字段。SQLAlchemy `create_all()` 只创建缺失表，不会修改旧 SQLite 表。旧演示数据库必须先备份并重建；在引入正式迁移工具前，不应承诺数据原地升级。
+P0 和 Preparation 阶段都增加了审批字段。SQLAlchemy `create_all()` 只创建
+缺失表，不会修改旧 SQLite 表。旧演示数据库必须先备份并重建；在引入正式
+迁移工具前，不应承诺数据原地升级。generic HTTP `/v1/actions/prepare`
+保持兼容，其 Approval 来源字段允许为空；只有 Agent prepare 路径强制完整
+来源对。

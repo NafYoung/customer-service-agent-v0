@@ -43,6 +43,9 @@ _SENSITIVE_KEYS = {
 @dataclass(frozen=True)
 class ToolCallContext:
     run_id: str | None = None
+    server_run_id: str | None = None
+    origin_tool_call_id: str | None = None
+    atomic_run: bool = False
     auth_token: str | None = None
     conversation_id: str | None = None
 
@@ -100,40 +103,64 @@ class CustomerServiceTools:
         operation: Callable[[], T],
     ) -> T:
         started = time.perf_counter()
-        try:
+
+        def invoke_and_record() -> T:
             result = operation()
             event = ToolEvent(
                 id=f"TEV-{uuid.uuid4().hex[:12].upper()}",
-                run_id=context.run_id,
+                run_id=context.server_run_id or context.run_id,
                 customer_id=customer_id,
                 tool_name=tool_name,
                 arguments=_redact(_jsonable(arguments)),
                 result=_redact(_jsonable(result)),
                 success=True,
                 error_code=None,
-                latency_ms=max(0, int((time.perf_counter() - started) * 1000)),
+                latency_ms=max(
+                    0,
+                    int((time.perf_counter() - started) * 1000),
+                ),
             )
             session.add(event)
             session.flush()
             return result
-        except ServiceError as exc:
-            # Roll back any partial business mutation first, then persist the
-            # failed tool event in a clean transaction. Each HTTP endpoint in
-            # v0 performs exactly one tool call, so this boundary is explicit.
-            session.rollback()
+
+        def record_failure(exc: ServiceError, *, commit: bool) -> None:
             event = ToolEvent(
                 id=f"TEV-{uuid.uuid4().hex[:12].upper()}",
-                run_id=context.run_id,
+                run_id=context.server_run_id or context.run_id,
                 customer_id=customer_id,
                 tool_name=tool_name,
                 arguments=_redact(_jsonable(arguments)),
                 result={"message": exc.message},
                 success=False,
                 error_code=exc.code,
-                latency_ms=max(0, int((time.perf_counter() - started) * 1000)),
+                latency_ms=max(
+                    0,
+                    int((time.perf_counter() - started) * 1000),
+                ),
             )
             session.add(event)
-            session.commit()
+            if commit:
+                session.commit()
+            else:
+                session.flush()
+
+        if context.atomic_run:
+            try:
+                with session.begin_nested():
+                    return invoke_and_record()
+            except ServiceError as exc:
+                record_failure(exc, commit=False)
+                raise
+
+        try:
+            return invoke_and_record()
+        except ServiceError as exc:
+            # Roll back any partial business mutation first, then persist the
+            # failed tool event in a clean transaction. Each HTTP endpoint in
+            # v0 performs exactly one tool call, so this boundary is explicit.
+            session.rollback()
+            record_failure(exc, commit=True)
             raise
 
     def _customer_id(self, session: Session, context: ToolCallContext) -> str:
@@ -292,6 +319,8 @@ class CustomerServiceTools:
                 customer_id=customer_id,
                 conversation_id=conversation_id,
                 request=request,
+                origin_server_run_id=context.server_run_id,
+                origin_tool_call_id=context.origin_tool_call_id,
             ),
         )
 
@@ -321,6 +350,8 @@ class CustomerServiceTools:
                 customer_id=customer_id,
                 conversation_id=conversation_id,
                 request=request,
+                origin_server_run_id=context.server_run_id,
+                origin_tool_call_id=context.origin_tool_call_id,
             ),
         )
 
@@ -356,6 +387,8 @@ class CustomerServiceTools:
                 customer_id=customer_id,
                 conversation_id=conversation_id,
                 request=request,
+                origin_server_run_id=context.server_run_id,
+                origin_tool_call_id=context.origin_tool_call_id,
             ),
         )
 
@@ -393,6 +426,8 @@ class CustomerServiceTools:
                 customer_id=customer_id,
                 conversation_id=conversation_id,
                 request=request,
+                origin_server_run_id=context.server_run_id,
+                origin_tool_call_id=context.origin_tool_call_id,
             ),
         )
 

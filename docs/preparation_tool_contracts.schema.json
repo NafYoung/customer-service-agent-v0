@@ -401,58 +401,5 @@
       "title": "PrepareExchangeInput",
       "type": "object"
     }
-  },
-  {
-    "name": "create_handoff_ticket",
-    "description": "Create a human-support ticket for defects, damage, wrong items, policy ambiguity, or any case the automated flow cannot safely decide.",
-    "input_schema": {
-      "$defs": {
-        "TicketPriority": {
-          "enum": [
-            "NORMAL",
-            "HIGH"
-          ],
-          "title": "TicketPriority",
-          "type": "string"
-        }
-      },
-      "additionalProperties": false,
-      "properties": {
-        "order_id": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Order Id"
-        },
-        "category": {
-          "maxLength": 60,
-          "minLength": 2,
-          "title": "Category",
-          "type": "string"
-        },
-        "summary": {
-          "maxLength": 1000,
-          "minLength": 5,
-          "title": "Summary",
-          "type": "string"
-        },
-        "priority": {
-          "$ref": "#/$defs/TicketPriority",
-          "default": "NORMAL"
-        }
-      },
-      "required": [
-        "category",
-        "summary"
-      ],
-      "title": "CreateHandoffTicketInput",
-      "type": "object"
-    }
   }
 ]

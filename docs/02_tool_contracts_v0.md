@@ -1,6 +1,10 @@
 # Agent 工具契约 v0
 
-完整的未来 Agent Schema 见 `docs/tool_contracts.schema.json`；当前只读 Agent 实际白名单见 `docs/readonly_tool_contracts.schema.json`；宿主 HTTP Schema 见 `docs/openapi.json`。三者用途不同，不能把整份 OpenAPI 自动暴露给模型。
+完整规划 Schema 见 `docs/tool_contracts.schema.json`；只读 Agent 的 6 工具
+白名单见 `docs/readonly_tool_contracts.schema.json`；Preparation Agent 的
+9 工具白名单见 `docs/preparation_tool_contracts.schema.json`；宿主 HTTP
+Schema 见 `docs/openapi.json`。这些契约用途不同，不能把整份 OpenAPI
+自动暴露给模型。
 
 ## 1. 边界
 
@@ -26,11 +30,16 @@
 - 执行已确认操作；
 - 调试轨迹查询。
 
-客户身份和 `conversation_id` 由宿主应用注入调用上下文，模型不能选择或改写。HTTP API 可保留宿主认证、展示和确认接口，但 Agent 适配器必须按上述白名单注册工具。
+客户身份、`conversation_id` 和 `server_run_id` 由宿主应用注入调用上下文，
+模型不能选择或改写。Preparation Agent 把 provider 的结构化
+`tool_call_id` 绑定到调用上下文；两个来源字段都不属于模型工具参数。HTTP
+API 可保留宿主认证、展示和确认接口，但 Agent 适配器必须按阶段白名单注册
+工具。
 
-当前 DeepSeek 只读 Agent 只注册前 6 个查询与资格工具。三个
-`prepare_*` 和 `create_handoff_ticket` 尚未向模型开放；即使模型伪造这些
-工具名，适配器也会在业务调用前拒绝。
+只读 Agent 仍只注册前 6 个查询与资格工具。独立 Preparation Agent
+注册前 6 个工具和三个 `prepare_*`，合计精确 9 个；它不注册 generic
+`prepare_action` 或 `create_handoff_ticket`。两个阶段遇到白名单外工具都会
+在业务调用前失败关闭。
 
 ## 2. 设计原则
 
@@ -138,7 +147,16 @@
 
 生成换货预览和审批，不预占库存。
 
-Prepare 返回 `approval_id`、结构化 `preview`、`preview_hash` 和有效期。模型必须展示并解释预览，然后停止工具执行、等待宿主确认；它不能自行调用 present、confirm 或 execute。
+Prepare 返回 `approval_id`、结构化 `preview`、`preview_hash` 和有效期。
+模型只能解释“待确认”状态，然后停止工具执行、等待宿主确认；它不能自行
+调用 present、confirm 或 execute。规范化确认卡必须由宿主根据数据库中的
+Approval 重新渲染，不能把模型自由文本作为执行依据。
+
+每个 Agent 来源的 Approval 同时记录 `origin_server_run_id` 与
+`origin_tool_call_id`，联合唯一。同来源、同参数重放返回原 Approval；同来源
+但参数、客户或会话不同则冲突失败。来源字段进入 preview 完整性哈希，但不
+进入模型参数或客户可编辑内容。一个含 prepare 的批次只能有该单一调用；一次
+Agent 运行最多成功 prepare 一次。
 
 ## 5. 转人工工具
 
@@ -180,7 +198,7 @@ Prepare 返回 `approval_id`、结构化 `preview`、`preview_hash` 和有效期
 | 取消 | 资格判断、`prepare_cancel_order` | 直接执行或伪造确认 |
 | 退货 | 资格判断、`prepare_return` | 把预览说成已退货或已退款 |
 | 换货 | 资格判断、`prepare_exchange` | 不查库存或声称已预占 |
-| 破损/错发 | 资格判断、`create_handoff_ticket` | 自动认责或承诺赔偿 |
+| 破损/错发 | 资格判断、说明需人工处理 | 自动认责、承诺赔偿或谎称已建工单 |
 
 ## 8. 调试轨迹
 

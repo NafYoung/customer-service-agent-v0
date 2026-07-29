@@ -61,10 +61,12 @@ _ACTIVE_APPROVAL_STATUSES = {
 
 def _approval_preview_hash(approval: Approval) -> str:
     confirmation_document = {
-        "schema_version": "v1",
+        "schema_version": "v2",
         "approval_id": approval.id,
         "customer_id": approval.customer_id,
         "conversation_id": approval.conversation_id,
+        "origin_server_run_id": approval.origin_server_run_id,
+        "origin_tool_call_id": approval.origin_tool_call_id,
         "action_type": approval.action_type,
         "order_id": approval.order_id,
         "order_item_id": approval.order_item_id,
@@ -186,6 +188,83 @@ class ActionService:
 
         raise ValidationError("INVALID_ACTION", "不支持该操作类型。")
 
+    @staticmethod
+    def _prepare_response(approval: Approval) -> PrepareActionResponse:
+        return PrepareActionResponse(
+            approval_id=approval.id,
+            action_type=ActionType(approval.action_type),
+            status=ApprovalStatus(approval.status),
+            preview=approval.preview,
+            preview_hash=approval.preview_hash,
+            expires_at=approval.expires_at,
+        )
+
+    @staticmethod
+    def _assert_origin_pair(
+        *,
+        origin_server_run_id: str | None,
+        origin_tool_call_id: str | None,
+    ) -> None:
+        if origin_server_run_id is None and origin_tool_call_id is None:
+            return
+        if origin_server_run_id is None or origin_tool_call_id is None:
+            raise ValidationError(
+                "PREPARATION_ORIGIN_REQUIRED",
+                "Agent 操作准备需要可信运行标识和工具调用标识。",
+            )
+        if (
+            not origin_server_run_id.strip()
+            or not origin_tool_call_id.strip()
+            or origin_server_run_id != origin_server_run_id.strip()
+            or origin_tool_call_id != origin_tool_call_id.strip()
+            or len(origin_server_run_id) > 80
+            or len(origin_tool_call_id) > 200
+        ):
+            raise ValidationError(
+                "PREPARATION_ORIGIN_INVALID",
+                "Agent 操作准备的可信来源标识格式无效。",
+            )
+
+    @staticmethod
+    def _find_origin_replay(
+        session: Session,
+        *,
+        customer_id: str,
+        conversation_id: str,
+        request_payload: dict[str, object],
+        origin_server_run_id: str | None,
+        origin_tool_call_id: str | None,
+    ) -> Approval | None:
+        if origin_server_run_id is None or origin_tool_call_id is None:
+            return None
+        approval = session.scalar(
+            select(Approval)
+            .where(
+                Approval.origin_server_run_id == origin_server_run_id,
+                Approval.origin_tool_call_id == origin_tool_call_id,
+            )
+            .with_for_update()
+        )
+        if approval is None:
+            return None
+        if (
+            approval.customer_id != customer_id
+            or approval.conversation_id != conversation_id
+            or approval.payload != request_payload
+        ):
+            raise ConflictError(
+                "PREPARATION_ORIGIN_CONFLICT",
+                "该工具调用来源已绑定到另一份操作准备。",
+                status_code=409,
+            )
+        if _approval_preview_hash(approval) != approval.preview_hash:
+            raise ServiceError(
+                "APPROVAL_INTEGRITY_ERROR",
+                "审批快照完整性校验失败。",
+                status_code=500,
+            )
+        return approval
+
     def prepare_action(
         self,
         session: Session,
@@ -193,9 +272,27 @@ class ActionService:
         customer_id: str,
         conversation_id: str,
         request: PrepareActionRequest,
+        origin_server_run_id: str | None = None,
+        origin_tool_call_id: str | None = None,
         now: datetime | None = None,
     ) -> PrepareActionResponse:
         now = now or utcnow()
+        self._assert_origin_pair(
+            origin_server_run_id=origin_server_run_id,
+            origin_tool_call_id=origin_tool_call_id,
+        )
+        request_payload = request.model_dump(mode="json")
+        replay = self._find_origin_replay(
+            session,
+            customer_id=customer_id,
+            conversation_id=conversation_id,
+            request_payload=request_payload,
+            origin_server_run_id=origin_server_run_id,
+            origin_tool_call_id=origin_tool_call_id,
+        )
+        if replay is not None:
+            return self._prepare_response(replay)
+
         eligibility = self.check_eligibility(
             session,
             customer_id=customer_id,
@@ -271,10 +368,12 @@ class ActionService:
             id=approval_id,
             customer_id=customer_id,
             conversation_id=conversation_id,
+            origin_server_run_id=origin_server_run_id,
+            origin_tool_call_id=origin_tool_call_id,
             action_type=action_type.value,
             order_id=order.id,
             order_item_id=item.id if item else None,
-            payload=request.model_dump(mode="json"),
+            payload=request_payload,
             preview=preview,
             preview_hash="",
             status=ApprovalStatus.PREPARED.value,
@@ -298,14 +397,7 @@ class ActionService:
             if confirmation is not None and confirmation.consumed_at is None:
                 confirmation.consumed_at = now
         session.flush()
-        return PrepareActionResponse(
-            approval_id=approval.id,
-            action_type=action_type,
-            status=ApprovalStatus.PREPARED,
-            preview=preview,
-            preview_hash=preview_hash,
-            expires_at=approval.expires_at,
-        )
+        return self._prepare_response(approval)
 
     @staticmethod
     def _owned_approval(
