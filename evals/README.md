@@ -76,9 +76,13 @@ Every non-formal paid entry point is fail-closed against a repository-owned
 case allowlist before budget or model construction. `diagnostic` is bound to
 the canonical 10-case development set; `dev_repeat` is bound to the canonical
 7-case regression set, its name, count, and content hash. Completed
-`dev_repeat` evidence must contain 28 settled records whose provider attempts,
-canonical usage costs, and attempt buckets reconcile exactly with the
-persistent run budget and remain within the CNY 18 execution limit.
+`diagnostic` evidence recomputes canonical usage cost for every successful
+call and requires every retry or error attempt to match an `uncertain` bucket;
+the producer and public Schema apply the same check. Offline reference
+evidence cannot claim a DeepSeek observation or a non-zero provider attempt.
+Completed `dev_repeat` evidence must contain 28 settled records whose provider
+attempts, canonical usage costs, and attempt buckets reconcile exactly with
+the persistent run budget and remain within the CNY 18 execution limit.
 
 The first live `deepseek-v4-flash` run on 2026-07-29 passed 7/10 cases under
 the strict tool-call budgets. All three failures were efficiency failures; all

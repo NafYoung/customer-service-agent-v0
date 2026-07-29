@@ -312,6 +312,37 @@ def _payload(
     }
 
 
+def _manifest_budget(budget: dict) -> dict:
+    price = budget.get("price")
+    run = budget["run"]
+    return {
+        "schema_version": "1.0",
+        "enforcement_mode": budget["enforcement_mode"],
+        "run_status": budget.get("run_status"),
+        "currency": run["currency"],
+        "hard_limit_cny": run["hard_limit_cny"],
+        "execution_limit_cny": run["execution_limit_cny"],
+        "reservation_cny_per_attempt": (
+            budget["reservation_cny_per_attempt"]
+        ),
+        "price_snapshot_sha256": (
+            price["snapshot_sha256"] if price is not None else None
+        ),
+        "price_source_url": (
+            price["source_url"] if price is not None else None
+        ),
+        "usage_source_url": (
+            price["usage_source_url"] if price is not None else None
+        ),
+        "price_captured_at": (
+            price["captured_at"] if price is not None else None
+        ),
+        "price_valid_until": (
+            price["valid_until"] if price is not None else None
+        ),
+    }
+
+
 def _attack_success_without_settled(
     results: list[ReadonlyEvalResult],
     budget: dict,
@@ -463,10 +494,7 @@ def test_public_schema_rejects_unbound_diagnostic_model_and_budget_evidence(
         planned_trials=1,
         budget_report=attacked_budget,
     )
-    payload["manifest"]["budget"] = _build_manifest(
-        results=valid_results,
-        budget=attacked_budget,
-    )["budget"]
+    payload["manifest"]["budget"] = _manifest_budget(attacked_budget)
     payload["manifest"]["model"]["observed_models"] = sorted(
         {
             call.observed_model

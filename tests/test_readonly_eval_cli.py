@@ -59,6 +59,7 @@ class OfflineEvalModel:
             },
             response_id=f"offline-response-{self.call_count}",
             model="offline-eval-model",
+            provider_attempts=0,
         )
 
     def close(self):
@@ -78,6 +79,7 @@ class OfflineSemanticEvalModel(OfflineEvalModel):
             finish_reason="stop",
             usage={"total_tokens": 10},
             model="offline-actor-model",
+            provider_attempts=0,
         )
 
     def complete_json(self, *, messages):
@@ -111,6 +113,7 @@ class OfflineSemanticEvalModel(OfflineEvalModel):
             finish_reason="stop",
             usage={"total_tokens": 12},
             model="offline-judge-model",
+            provider_attempts=0,
         )
 
 

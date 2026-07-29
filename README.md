@@ -281,8 +281,12 @@ python evals/run_readonly_agent_evals.py \
 所有非正式真实付费入口也采用案例 allowlist：`diagnostic` 只能运行仓库内
 固定 10 条开发集，`dev_repeat` 只能运行仓库内固定 7 条公开回归及其规范
 名称、数量和内容哈希；外部目录、副本、holdout 身份和内容漂移均在构造预算
-闸门前拒绝。完成的 `dev_repeat` 证据还会从 28 条记录重算 provider attempt、
-usage 成本和逐 attempt bucket，并要求运行与累计预算均结清且不超过 ¥18。
+闸门前拒绝。完成的 `diagnostic` 证据会从 10 条记录重算成功调用的 canonical
+usage 成本，并把 retry/error 的未结算 attempt 与 `uncertain` bucket 精确
+对应；公开 Schema 与生成端使用同一校验。离线参考证据不得冒充 DeepSeek
+观察或非零 provider attempt。完成的 `dev_repeat` 证据还会从 28 条记录重算
+provider attempt、usage 成本和逐 attempt bucket，并要求运行与累计预算均
+结清且不超过 ¥18。
 
 2026-07-29 的首次真实基线为 7/10；Prompt-only B 组单次达到 10/10，并把
 工具调用从 25 次降到 12 次。随后正式重复运行 4 trials，达到 40/40、

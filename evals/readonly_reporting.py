@@ -31,6 +31,9 @@ from evals.canonical_pricing import (
     require_canonical_attempt_reservation,
     require_canonical_paid_budget,
 )
+from evals.diagnostic_evidence import (
+    require_completed_diagnostic_evidence,
+)
 from evals.evidence import stable_sha256
 from evals.evidence_schema import BudgetSummary
 from evals.file_snapshot import FileSnapshot, read_file_snapshot
@@ -1129,6 +1132,26 @@ def build_readonly_manifest(
             if call.observed_model
         }
     )
+    if purpose == "diagnostic":
+        require_completed_diagnostic_evidence(
+            label="diagnostic",
+            budget=validated_budget.model_dump(mode="json"),
+            records=[
+                result_to_record(result, split=split)
+                for result in results
+            ],
+            requested_model=settings.deepseek_model,
+            observed_models=observed_models,
+            max_output_tokens=settings.deepseek_max_tokens,
+            run_id=run_id,
+            started_at=started_at,
+            completed_at=completed_at,
+            canonical_price_snapshot_sha256=(
+                runtime_harness_fingerprints[
+                    "canonical_price_snapshot_sha256"
+                ]
+            ),
+        )
     harness_fingerprints = runtime_harness_fingerprints
     eval_metadata: dict[str, Any] = {
         "suite_name": "readonly-agent",

@@ -176,6 +176,7 @@ class _CapturingFrozenModel:
                 "total_tokens": 7,
             },
             model="offline-actor",
+            provider_attempts=0,
         )
 
     def complete_json(self, *, messages):
@@ -198,6 +199,7 @@ class _CapturingFrozenModel:
                 "total_tokens": 7,
             },
             model="offline-judge",
+            provider_attempts=0,
         )
 
 
@@ -267,6 +269,7 @@ class _PromptMutationModel:
                 "total_tokens": 7,
             },
             model="offline-frozen-model",
+            provider_attempts=0,
         )
 
     def close(self) -> None:

@@ -469,6 +469,14 @@ def test_diagnostic_manifest_and_schema_reject_noncanonical_identity() -> None:
         _result(case_id=case.case_id, trial=1)
         for case in canonical_cases
     ]
+    for result in canonical_results:
+        result.model_calls = (
+            replace(
+                result.model_calls[0],
+                observed_model="offline-eval-model",
+                provider_attempts=0,
+            ),
+        )
     manifest = build_readonly_manifest(
         run_id="eval-20260729-diagnostic-schema-forgery",
         purpose="diagnostic",

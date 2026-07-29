@@ -28,6 +28,9 @@ from evals.canonical_pricing import (
     require_canonical_attempt_reservation,
     require_canonical_paid_budget,
 )
+from evals.diagnostic_evidence import (
+    require_completed_diagnostic_evidence,
+)
 from evals.evidence import (
     verify_eval_bundle,
     verify_private_eval_bundle_permissions,
@@ -422,6 +425,20 @@ class BudgetAmountSummary(StrictEvidenceModel):
     reserved_count: int = Field(ge=0)
     uncertain_count: int = Field(ge=0)
 
+    @field_validator(
+        "attempt_count",
+        "reserved_count",
+        "uncertain_count",
+        mode="before",
+    )
+    @classmethod
+    def validate_count_types(cls, value: Any) -> Any:
+        if type(value) is not int or value < 0:
+            raise ValueError(
+                "budget counts must be non-negative integers"
+            )
+        return value
+
     @model_validator(mode="after")
     def validate_amounts(self) -> BudgetAmountSummary:
         hard = Decimal(self.hard_limit_cny)
@@ -502,6 +519,15 @@ class BudgetAttemptBucket(StrictEvidenceModel):
     reserved_cny: MoneyCny
     known_cost_cny: MoneyCny | None
     count: int = Field(ge=1)
+
+    @field_validator("count", mode="before")
+    @classmethod
+    def validate_count_type(cls, value: Any) -> Any:
+        if type(value) is not int or value < 1:
+            raise ValueError(
+                "budget attempt bucket count must be a positive integer"
+            )
+        return value
 
     @model_validator(mode="after")
     def validate_attempt_state(self) -> BudgetAttemptBucket:
@@ -1466,6 +1492,27 @@ class ReadonlyEvidenceBundle(StrictEvidenceModel):
         if actual_summary != expected_summary:
             raise ValueError(
                 "Summary differs from the evidence records"
+            )
+        if self.manifest.purpose == "diagnostic":
+            require_completed_diagnostic_evidence(
+                label="diagnostic",
+                budget=self.summary.budget.model_dump(mode="json"),
+                records=[
+                    record.model_dump(mode="python")
+                    for record in self.cases
+                ],
+                requested_model=self.manifest.model.requested_model,
+                observed_models=self.manifest.model.observed_models,
+                max_output_tokens=(
+                    self.manifest.model.generation_config.max_tokens
+                ),
+                run_id=self.manifest.run_id,
+                started_at=self.manifest.created_at,
+                completed_at=self.manifest.completed_at,
+                canonical_price_snapshot_sha256=(
+                    self.manifest.harness
+                    .canonical_price_snapshot_sha256
+                ),
             )
         if self.manifest.purpose == "dev_repeat":
             contract = nonformal_paid_contract("dev_repeat")
