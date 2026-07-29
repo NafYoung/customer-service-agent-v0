@@ -8,8 +8,8 @@ from decimal import Decimal
 
 import pytest
 
-from evals import readonly_reporting
 from app.config import Settings
+from evals import readonly_reporting
 from evals.calibration_attestation import (
     ValidatedCalibrationAttestation,
     ValidatedCalibrationReview,
@@ -354,6 +354,7 @@ def test_manifest_fingerprints_harness_and_never_serializes_secret_or_holdout_id
         "report_sha256": "a" * 64,
         "review_sha256": "b" * 64,
         "run_id": "eval-20260729-calibration-v2",
+        "source_git_commit": "1" * 40,
         "fixture_sha256": "c" * 64,
         "contract_set_sha256": "d" * 64,
         "harness_sha256": "e" * 64,
@@ -605,6 +606,20 @@ def test_formal_bundle_schema_recomputes_cost_instead_of_trusting_summary():
     }
 
     validate_readonly_payload(payload)
+    mismatched_execution_limit = deepcopy(payload)
+    mismatched_execution_limit["manifest"]["budget"][
+        "execution_limit_cny"
+    ] = "17"
+    with pytest.raises(ValueError, match="budget|limit|differ"):
+        validate_readonly_payload(mismatched_execution_limit)
+
+    mismatched_reservation = deepcopy(payload)
+    mismatched_reservation["manifest"]["budget"][
+        "reservation_cny_per_attempt"
+    ] = "0.5"
+    with pytest.raises(ValueError, match="budget|reservation|differ"):
+        validate_readonly_payload(mismatched_reservation)
+
     for scope in ("run", "cumulative"):
         payload["summary"]["budget"][scope]["committed_cny"] = "17"
         payload["summary"]["budget"][scope]["settled_cny"] = "17"
