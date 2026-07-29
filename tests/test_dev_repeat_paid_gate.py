@@ -13,6 +13,7 @@ from app.agent.deepseek_budget import (
     calculate_usage_cost_from_rates,
     format_cny,
 )
+from app.agent.openai_compatible import AssistantTurn
 from app.config import Settings
 from evals import run_readonly_agent_evals as runner
 from evals.canonical_pricing import (
@@ -31,6 +32,7 @@ from evals.evidence_schema import (
 )
 from evals.readonly_eval import (
     DEFAULT_CASE_DIR,
+    ReadonlyEvalCase,
     ReadonlyEvalResult,
     ScoreCheck,
     load_cases,
@@ -138,6 +140,27 @@ def _dev_repeat_inputs() -> tuple[list, list[ReadonlyEvalResult]]:
 
 def _attempt_count(results: list[ReadonlyEvalResult]) -> int:
     return sum(len(result.model_calls) for result in results)
+
+
+class _CountingModel:
+    def __init__(self) -> None:
+        self.calls = 0
+        self.closed = False
+
+    def complete(self, **_: object) -> AssistantTurn:
+        self.calls += 1
+        return AssistantTurn(
+            content="safe answer",
+            tool_calls=(),
+            finish_reason="stop",
+            usage=dict(USAGE),
+            response_id=f"response-{self.calls}",
+            model="deepseek-v4-flash",
+            provider_attempts=1,
+        )
+
+    def close(self) -> None:
+        self.closed = True
 
 
 def _paid_budget(
@@ -375,6 +398,97 @@ def test_cli_rejects_unsafe_run_id_before_output_path_probe(
         )
 
 
+@pytest.mark.parametrize(
+    ("purpose", "case_set_name", "trials"),
+    [
+        ("diagnostic", "arbitrary-diagnostic-v1", 1),
+        ("dev_repeat", "arbitrary-repeat-v1", 4),
+        ("unknown-purpose", "arbitrary-unknown-v1", 1),
+    ],
+)
+def test_programmatic_runner_rejects_invalid_scope_before_model_calls(
+    tmp_path: Path,
+    purpose: str,
+    case_set_name: str,
+    trials: int,
+) -> None:
+    model = _CountingModel()
+    output_root = tmp_path / "output"
+    arbitrary_case = ReadonlyEvalCase.model_validate(
+        {
+            "case_id": "arbitrary-programmatic-case",
+            "user_message": "arbitrary",
+            "expected": {},
+        }
+    )
+
+    with pytest.raises(ValueError, match="purpose|canonical|case"):
+        runner.run_eval_suite(
+            model=model,
+            settings=_settings(),
+            cases=[arbitrary_case],
+            run_id="eval-20260729-programmatic-preflight",
+            purpose=purpose,
+            split="dev",
+            case_set_name=case_set_name,
+            trials=trials,
+            output_root=output_root,
+        )
+
+    assert model.calls == 0
+    assert not output_root.exists()
+
+
+def test_diagnostic_manifest_and_schema_reject_noncanonical_identity() -> None:
+    arbitrary_case = ReadonlyEvalCase.model_validate(
+        {
+            "case_id": "arbitrary-diagnostic-case",
+            "user_message": "arbitrary",
+            "expected": {},
+        }
+    )
+    result = _result(case_id=arbitrary_case.case_id, trial=1)
+    started = datetime(2026, 7, 29, 12, tzinfo=UTC)
+
+    manifest = build_readonly_manifest(
+        run_id="eval-20260729-diagnostic-forgery",
+        purpose="diagnostic",
+        split="dev",
+        case_set_name="arbitrary-diagnostic-v1",
+        cases=[arbitrary_case],
+        results=[result],
+        settings=_settings(),
+        planned_trials=1,
+        started_at=started,
+        completed_at=started + timedelta(minutes=1),
+    )
+    manifest["artifacts"] = {
+        "cases": "cases.jsonl",
+        "summary": "summary.json",
+        "trajectories": "trajectories/",
+        "integrity": "integrity.json",
+    }
+    records = [result_to_record(result, split="dev")]
+    payload = {
+        "manifest": manifest,
+        "cases": records,
+        "summary": summarize_results(
+            run_id=manifest["run_id"],
+            results=[result],
+            planned_trials=1,
+        ),
+        "trajectories": deepcopy(records),
+        "integrity": {
+            "schema_version": "1.0",
+            "algorithm": "sha256",
+            "files": {},
+        },
+    }
+
+    with pytest.raises(ValueError, match="diagnostic|canonical|case"):
+        validate_readonly_payload(payload)
+
+
 def test_dev_repeat_manifest_accepts_only_canonical_7_by_4_case_set() -> None:
     cases, results = _dev_repeat_inputs()
     run_id = "eval-20260729-dev-repeat-valid"
@@ -481,6 +595,8 @@ def test_public_validator_recomputes_dev_repeat_bucket_costs() -> None:
     [
         "move_calls_between_trials",
         "all_calls_missing_with_forged_manifest",
+        "success_has_error",
+        "agent_contract_count",
     ],
 )
 def test_public_validator_binds_paid_calls_to_each_trial(
@@ -495,7 +611,7 @@ def test_public_validator_binds_paid_calls_to_each_trial(
                 *moved,
                 *payload[section][1]["model_calls"],
             ]
-    else:
+    elif attack == "all_calls_missing_with_forged_manifest":
         for section in ("cases", "trajectories"):
             for record in payload[section]:
                 record["model_calls"] = []
@@ -522,6 +638,13 @@ def test_public_validator_binds_paid_calls_to_each_trial(
         payload["manifest"]["model"]["observed_models"] = [
             payload["manifest"]["model"]["requested_model"]
         ]
+    else:
+        for section in ("cases", "trajectories"):
+            agent_call = payload[section][0]["model_calls"][0]
+            if attack == "success_has_error":
+                agent_call["error_code"] = "FORGED_SUCCESS_ERROR"
+            else:
+                agent_call["tool_contract_count"] = 5
 
     with pytest.raises(
         ValueError,
@@ -645,6 +768,8 @@ def test_dev_repeat_manifest_rejects_unsettled_or_unpriced_paid_evidence(
         "agent_sequence_gap",
         "judge_has_tools",
         "call_outside_trial_window",
+        "success_has_error",
+        "agent_contract_count",
     ],
 )
 def test_dev_repeat_manifest_binds_calls_to_each_completed_trial(
@@ -685,6 +810,18 @@ def test_dev_repeat_manifest_binds_calls_to_each_completed_trial(
                 agent,
                 started_at="2026-07-29T11:59:59+00:00",
             ),
+            judge,
+        )
+    elif attack == "success_has_error":
+        agent, judge = results[0].model_calls
+        results[0].model_calls = (
+            replace(agent, error_code="FORGED_SUCCESS_ERROR"),
+            judge,
+        )
+    elif attack == "agent_contract_count":
+        agent, judge = results[0].model_calls
+        results[0].model_calls = (
+            replace(agent, tool_contract_count=5),
             judge,
         )
 
