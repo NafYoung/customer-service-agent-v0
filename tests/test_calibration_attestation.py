@@ -157,7 +157,7 @@ def _settled_budget(attempt_count: int) -> dict[str, object]:
             "completed_at": "2026-07-29T12:05:00+00:00",
         },
         "price": _canonical_price_summary(),
-        "reservation_cny_per_attempt": "0.01",
+        "reservation_cny_per_attempt": "1.002048",
         "run": dict(snapshot),
         "cumulative": dict(snapshot),
     }
@@ -350,7 +350,15 @@ def test_calibration_attestation_recomputes_results_summary_and_budget(
         )
 
 
-@pytest.mark.parametrize("attack", ["forged_price", "lower_limits"])
+@pytest.mark.parametrize(
+    "attack",
+    [
+        "forged_price",
+        "lower_limits",
+        "lower_reservation",
+        "max_tokens_drift",
+    ],
+)
 def test_calibration_attestation_rejects_noncanonical_budget_contract(
     tmp_path: Path,
     attack: str,
@@ -370,7 +378,7 @@ def test_calibration_attestation_rejects_noncanonical_budget_contract(
             budget[scope]["committed_cny"] = "0"
             budget[scope]["settled_cny"] = "0"
             budget[scope]["remaining_execution_cny"] = "18"
-    else:
+    elif attack == "lower_limits":
         for scope in ("run", "cumulative"):
             budget[scope]["hard_limit_cny"] = "5"
             budget[scope]["execution_limit_cny"] = "5"
@@ -379,20 +387,30 @@ def test_calibration_attestation_rejects_noncanonical_budget_contract(
                 - Decimal(budget[scope]["committed_cny"]),
                 "f",
             )
+    elif attack == "lower_reservation":
+        budget["reservation_cny_per_attempt"] = "0"
+    settings = Settings(
+        deepseek_model="deepseek-v4-flash",
+        deepseek_temperature=0,
+        deepseek_max_tokens=(
+            2048 if attack == "max_tokens_drift" else 1024
+        ),
+    )
+    if attack == "max_tokens_drift":
+        report["harness"] = current_readonly_harness_fingerprints(
+            settings
+        )
 
     with pytest.raises(
         CalibrationAttestationError,
-        match="pricing|price|budget|limit",
+        match="pricing|price|budget|limit|reservation|max_tokens",
     ):
         validate_calibration_attestation(
             report_path=_write_json(
                 tmp_path / f"{attack}.json",
                 report,
             ),
-            settings=Settings(
-                deepseek_model="deepseek-v4-flash",
-                deepseek_temperature=0,
-            ),
+            settings=settings,
             now=datetime(2026, 7, 29, 13, tzinfo=UTC),
         )
 

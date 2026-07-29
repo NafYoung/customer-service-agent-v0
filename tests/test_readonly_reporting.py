@@ -599,11 +599,24 @@ def test_formal_manifest_recomputes_exact_cost_from_every_model_call():
         )
 
 
-@pytest.mark.parametrize("attack", ["forged_price", "lower_limits"])
+@pytest.mark.parametrize(
+    "attack",
+    [
+        "forged_price",
+        "lower_limits",
+        "lower_reservation",
+        "max_tokens_drift",
+    ],
+)
 def test_formal_manifest_rejects_noncanonical_budget_contract(
     attack: str,
 ) -> None:
-    settings = Settings(deepseek_model="deepseek-v4-flash")
+    settings = Settings(
+        deepseek_model="deepseek-v4-flash",
+        deepseek_max_tokens=(
+            2048 if attack == "max_tokens_drift" else 1024
+        ),
+    )
     cases = _formal_cases()
     results = [
         _result(case_id=case.case_id, trial=trial, passed=True)
@@ -627,7 +640,7 @@ def test_formal_manifest_rejects_noncanonical_budget_contract(
             budget[scope]["committed_cny"] = "0"
             budget[scope]["settled_cny"] = "0"
             budget[scope]["remaining_execution_cny"] = "18"
-    else:
+    elif attack == "lower_limits":
         for scope in ("run", "cumulative"):
             budget[scope]["hard_limit_cny"] = "5"
             budget[scope]["execution_limit_cny"] = "5"
@@ -636,11 +649,13 @@ def test_formal_manifest_rejects_noncanonical_budget_contract(
                 - Decimal(budget[scope]["committed_cny"]),
                 "f",
             )
+    elif attack == "lower_reservation":
+        budget["reservation_cny_per_attempt"] = "0"
 
     started = datetime.now(UTC)
     with pytest.raises(
         ValueError,
-        match="pricing|price|budget|limit",
+        match="pricing|price|budget|limit|reservation|max_tokens",
     ):
         build_readonly_manifest(
             run_id="eval-20260729-formal-canonical-price",
@@ -656,7 +671,7 @@ def test_formal_manifest_rejects_noncanonical_budget_contract(
             budget_report=budget,
             calibration_attestation=_attestation(),
             calibration_review=_review(),
-            formal_holdout_evidence=_formal_holdout_evidence(),
+            formal_holdout_evidence=_formal_holdout_evidence(settings),
         )
 
 
@@ -846,6 +861,29 @@ def test_formal_bundle_schema_recomputes_cost_instead_of_trusting_summary():
     ] = "0.5"
     with pytest.raises(ValueError, match="budget|reservation|differ"):
         validate_readonly_payload(mismatched_reservation)
+
+    coordinated_lower_reservation = deepcopy(payload)
+    coordinated_lower_reservation["manifest"]["budget"][
+        "reservation_cny_per_attempt"
+    ] = "0"
+    coordinated_lower_reservation["summary"]["budget"][
+        "reservation_cny_per_attempt"
+    ] = "0"
+    with pytest.raises(
+        ValueError,
+        match="canonical|budget|reservation",
+    ):
+        validate_readonly_payload(coordinated_lower_reservation)
+
+    max_tokens_drift = deepcopy(payload)
+    max_tokens_drift["manifest"]["model"]["generation_config"][
+        "max_tokens"
+    ] = 2048
+    with pytest.raises(
+        ValueError,
+        match="canonical|budget|reservation|max_tokens",
+    ):
+        validate_readonly_payload(max_tokens_drift)
 
     for scope in ("run", "cumulative"):
         payload["summary"]["budget"][scope]["committed_cny"] = "17"
