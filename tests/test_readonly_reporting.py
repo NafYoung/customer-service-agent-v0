@@ -14,7 +14,11 @@ from evals.calibration_attestation import (
     ValidatedCalibrationAttestation,
     ValidatedCalibrationReview,
 )
-from evals.evidence import BusinessStateDelta, ModelCallEvidence
+from evals.evidence import (
+    BusinessStateDelta,
+    ModelCallEvidence,
+    stable_sha256,
+)
 from evals.evidence_schema import validate_readonly_payload
 from evals.readonly_eval import (
     ReadonlyEvalCase,
@@ -26,6 +30,7 @@ from evals.readonly_reporting import (
     FormalHoldoutEvidence,
     build_readonly_manifest,
     create_server_run_id,
+    current_readonly_harness_fingerprints,
     result_to_record,
     summarize_results,
 )
@@ -82,6 +87,7 @@ def _attestation() -> ValidatedCalibrationAttestation:
     return ValidatedCalibrationAttestation(
         report_sha256="a" * 64,
         run_id="eval-20260729-calibration-v2",
+        source_git_commit="1" * 40,
         fixture_sha256="c" * 64,
         contract_set_sha256="d" * 64,
         harness_sha256="e" * 64,
@@ -189,10 +195,15 @@ def _formal_cases() -> list[ReadonlyEvalCase]:
     ]
 
 
-def _formal_holdout_evidence() -> FormalHoldoutEvidence:
+def _formal_holdout_evidence(
+    settings: Settings | None = None,
+) -> FormalHoldoutEvidence:
     return FormalHoldoutEvidence(
         declaration_manifest_sha256="6" * 64,
         lock_start_receipt_sha256="7" * 64,
+        declared_harness_sha256=stable_sha256(
+            current_readonly_harness_fingerprints(settings)
+        ),
     )
 
 
@@ -317,7 +328,7 @@ def test_manifest_fingerprints_harness_and_never_serializes_secret_or_holdout_id
         budget_report=_budget_report(len(results)),
         calibration_attestation=_attestation(),
         calibration_review=_review(),
-        formal_holdout_evidence=_formal_holdout_evidence(),
+        formal_holdout_evidence=_formal_holdout_evidence(settings),
     )
     serialized = json.dumps(manifest, ensure_ascii=False)
 
@@ -352,7 +363,16 @@ def test_manifest_fingerprints_harness_and_never_serializes_secret_or_holdout_id
     assert manifest["eval"]["formal_holdout"] == {
         "declaration_manifest_sha256": "6" * 64,
         "lock_start_receipt_sha256": "7" * 64,
+        "declared_harness_sha256": stable_sha256(
+            current_readonly_harness_fingerprints(settings)
+        ),
     }
+    assert (
+        manifest["harness"]["runtime_harness_sha256"]
+        == manifest["eval"]["formal_holdout"][
+            "declared_harness_sha256"
+        ]
+    )
     assert manifest["source"]["source_tree_sha256"]
     assert manifest["execution"]["planned_trials"] == 4
     assert manifest["execution"]["completed_trials"] == 4
