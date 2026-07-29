@@ -184,7 +184,7 @@ def _usage_cost_units(
         raise CalibrationAttestationError(
             "A calibration call has invalid or inconsistent token usage."
         ) from exc
-    if usage_cost.mode not in {"exact", "upper_bound"}:
+    if usage_cost.mode == "reservation":
         raise CalibrationAttestationError(
             "A calibration call has an invalid settlement mode."
         )
