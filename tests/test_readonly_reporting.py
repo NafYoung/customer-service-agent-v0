@@ -14,6 +14,7 @@ from evals.calibration_attestation import (
     ValidatedCalibrationReview,
 )
 from evals.evidence import BusinessStateDelta, ModelCallEvidence
+from evals.evidence_schema import validate_readonly_payload
 from evals.readonly_eval import (
     ReadonlyEvalCase,
     ReadonlyEvalResult,
@@ -118,6 +119,7 @@ def _result(
         case_id=case_id,
         trial=trial,
         case_run_id=f"eval-run-t{trial}-{case_id}",
+        input_sha256="0" * 64,
         passed=passed,
         started_at="2026-07-29T10:00:00+00:00",
         completed_at="2026-07-29T10:00:01+00:00",
@@ -497,3 +499,70 @@ def test_formal_manifest_recomputes_exact_cost_from_every_model_call():
             **{**common, "results": retried},
             budget_report=retry_budget,
         )
+
+
+def test_formal_bundle_schema_recomputes_cost_instead_of_trusting_summary():
+    settings = Settings(deepseek_model="deepseek-v4-flash")
+    cases = _formal_cases()
+    results = [
+        _result(case_id=case.case_id, trial=trial, passed=True)
+        for trial in range(1, 5)
+        for case in cases
+    ]
+    budget = _budget_report(len(results))
+    started = datetime.now(UTC)
+    manifest = build_readonly_manifest(
+        run_id="eval-20260729-formal-schema-cost",
+        purpose="holdout_formal",
+        split="holdout",
+        case_set_name="readonly-holdout-v2",
+        cases=cases,
+        results=results,
+        settings=settings,
+        planned_trials=4,
+        started_at=started,
+        completed_at=started + timedelta(seconds=1),
+        budget_report=budget,
+        calibration_attestation=_attestation(),
+        calibration_review=_review(),
+        formal_holdout_evidence=_formal_holdout_evidence(),
+    )
+    manifest["source"]["git_commit"] = "a" * 40
+    manifest["source"]["git_dirty"] = False
+    manifest["artifacts"] = {
+        "cases": "cases.jsonl",
+        "summary": "summary.json",
+        "trajectories": "trajectories/",
+        "integrity": "integrity.json",
+    }
+    records = [
+        result_to_record(result, split="holdout")
+        for result in results
+    ]
+    payload = {
+        "manifest": manifest,
+        "cases": records,
+        "summary": summarize_results(
+            run_id="eval-20260729-formal-schema-cost",
+            results=results,
+            planned_trials=4,
+            budget_report=budget,
+        ),
+        "trajectories": deepcopy(records),
+        "integrity": {
+            "schema_version": "1.0",
+            "algorithm": "sha256",
+            "files": {},
+        },
+    }
+
+    validate_readonly_payload(payload)
+    for scope in ("run", "cumulative"):
+        payload["summary"]["budget"][scope]["committed_cny"] = "17"
+        payload["summary"]["budget"][scope]["settled_cny"] = "17"
+        payload["summary"]["budget"][scope][
+            "remaining_execution_cny"
+        ] = "1"
+
+    with pytest.raises(ValueError, match="cost|usage|formal"):
+        validate_readonly_payload(payload)
