@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from decimal import Decimal
 from pathlib import Path
 
 from app.agent.openai_compatible import AssistantTurn
@@ -19,13 +20,18 @@ class _ClosedBudgetGuard:
 
     def snapshot(self) -> dict[str, object]:
         assert self.closed is True
+        settled = Decimal(self.attempt_count) * Decimal("0.00002")
+        settled_cny = format(settled, "f")
         amounts = {
             "currency": "CNY",
             "hard_limit_cny": "20",
             "execution_limit_cny": "18",
-            "committed_cny": "0.01",
-            "settled_cny": "0.01",
-            "remaining_execution_cny": "17.99",
+            "committed_cny": settled_cny,
+            "settled_cny": settled_cny,
+            "remaining_execution_cny": format(
+                Decimal("18") - settled,
+                "f",
+            ),
             "attempt_count": self.attempt_count,
             "reserved_count": 0,
             "uncertain_count": 0,
@@ -33,6 +39,7 @@ class _ClosedBudgetGuard:
         return {
             "schema_version": "1.0",
             "enforcement_mode": "persistent_sqlite",
+            "run_status": "completed",
             "price": {
                 "provider": "deepseek",
                 "model": "deepseek-v4-flash",
@@ -47,7 +54,11 @@ class _ClosedBudgetGuard:
                 ),
                 "captured_at": "2026-07-29T08:58:58+00:00",
                 "valid_until": "2026-07-30T08:58:58+00:00",
-                "rates_cny": {},
+                "rates_cny": {
+                    "prompt_cache_hit": "0.02",
+                    "prompt_cache_miss": "1",
+                    "completion": "2",
+                },
                 "tokens_per_price_unit": 1_000_000,
             },
             "reservation_cny_per_attempt": "0.01",
@@ -90,7 +101,7 @@ class _CanonicalCalibrationModel:
                             ),
                         }
                         for claim_id, relation
-                        in fixture.expected_relations.items()
+                        in fixture.effective_expected_relations.items()
                     ],
                     "material_self_contradiction": (
                         fixture.expected_material_self_contradiction
@@ -192,3 +203,44 @@ def test_holdout_eligible_calibration_rejects_custom_corpus_before_model(
 
     assert exit_code == 2
     assert called is False
+
+
+def test_holdout_eligible_calibration_checks_clean_git_before_budget(
+    tmp_path,
+    monkeypatch,
+):
+    budget_called = False
+
+    def reject_dirty_source(**kwargs):
+        del kwargs
+        raise ValueError("clean Git worktree required")
+
+    def fail_budget(**kwargs):
+        nonlocal budget_called
+        del kwargs
+        budget_called = True
+        raise AssertionError("budget must not be created")
+
+    monkeypatch.setattr(
+        calibration_cli,
+        "require_clean_git_worktree",
+        reject_dirty_source,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        calibration_cli,
+        "build_deepseek_budget_guard",
+        fail_budget,
+    )
+
+    exit_code = calibration_cli.main(
+        [
+            "--output-root",
+            str(tmp_path),
+            "--run-id",
+            "eval-20260729-dirty-calibration",
+        ]
+    )
+
+    assert exit_code == 2
+    assert budget_called is False
