@@ -420,7 +420,8 @@ def test_formal_regression_gate_rejects_noncanonical_public_bundle(
     attack: str,
 ) -> None:
     payload = _dev_repeat_payload()
-    payload["manifest"]["source"]["git_commit"] = "a" * 40
+    source_git_commit = payload["manifest"]["source"]["git_commit"]
+    assert isinstance(source_git_commit, str)
     payload["manifest"]["source"]["git_dirty"] = False
     expected_harness = payload["manifest"]["harness"][
         "runtime_harness_sha256"
@@ -449,7 +450,7 @@ def test_formal_regression_gate_rejects_noncanonical_public_bundle(
         holdout_protocol.validate_regression_gate(
             bundle_path=bundle_path,
             private_root=tmp_path,
-            source_git_commit="a" * 40,
+            source_git_commit=source_git_commit,
             harness_sha256=expected_harness,
         )
 
@@ -458,7 +459,8 @@ def test_formal_regression_gate_accepts_only_verified_28_of_28_bundle(
     tmp_path: Path,
 ) -> None:
     payload = _dev_repeat_payload()
-    payload["manifest"]["source"]["git_commit"] = "a" * 40
+    source_git_commit = payload["manifest"]["source"]["git_commit"]
+    assert isinstance(source_git_commit, str)
     payload["manifest"]["source"]["git_dirty"] = False
     expected_harness = payload["manifest"]["harness"][
         "runtime_harness_sha256"
@@ -468,21 +470,109 @@ def test_formal_regression_gate_accepts_only_verified_28_of_28_bundle(
     gate = holdout_protocol.validate_regression_gate(
         bundle_path=bundle_path,
         private_root=tmp_path,
-        source_git_commit="a" * 40,
+        source_git_commit=source_git_commit,
         harness_sha256=expected_harness,
     )
 
     assert gate.run_id == payload["manifest"]["run_id"]
-    assert gate.source_git_commit == "a" * 40
+    assert gate.source_git_commit == source_git_commit
     assert gate.case_set_name == "readonly-regression-v1"
     assert gate.passed_trials == 28
+
+
+@pytest.mark.parametrize(
+    ("field_path", "forged_value"),
+    [
+        (("source", "source_tree_sha256"), "f" * 64),
+        (("source", "python_version"), "0.0.0-forged"),
+        (("source", "platform"), "forged-platform"),
+        (("source", "package_versions"), {"forged": "1.0"}),
+        (("eval", "scorer_version"), "forged-scorer"),
+        (("eval", "scorer_sha256"), "f" * 64),
+        (("harness", "prompt_sha256"), "f" * 64),
+        (("harness", "tool_contracts_sha256"), "f" * 64),
+        (("harness", "policies_sha256"), "f" * 64),
+        (("harness", "seed_data_sha256"), "f" * 64),
+        (("harness", "agent_loop_sha256"), "f" * 64),
+        (("harness", "model_runtime_sha256"), "f" * 64),
+        (("harness", "semantic_judge_version"), "forged-judge"),
+        (("harness", "semantic_judge_prompt_sha256"), "f" * 64),
+        (("harness", "semantic_judge_source_sha256"), "f" * 64),
+        (
+            ("harness", "semantic_calibration_source_sha256"),
+            "f" * 64,
+        ),
+        (
+            ("harness", "semantic_calibration_validator_sha256"),
+            "f" * 64,
+        ),
+        (
+            ("harness", "semantic_calibration_runner_sha256"),
+            "f" * 64,
+        ),
+        (
+            ("harness", "semantic_calibration_corpus_sha256"),
+            "f" * 64,
+        ),
+        (("harness", "evidence_protocol_sha256"), "f" * 64),
+        (
+            ("harness", "canonical_price_snapshot_sha256"),
+            "f" * 64,
+        ),
+        (("harness", "max_tool_rounds"), 99),
+        (("harness", "max_tool_calls"), 99),
+        (("model", "provider"), "forged-provider"),
+        (("model", "requested_model"), "forged-model"),
+        (("model", "observed_models"), ["forged-model"]),
+        (("model", "base_url_host"), "attacker.example"),
+        (("model", "generation_config", "temperature"), 0.5),
+        (("model", "generation_config", "seed"), 7),
+        (("model", "generation_config", "max_tokens"), 2048),
+        (("model", "timeout_seconds"), 99),
+        (("model", "retry_policy", "max_retries"), 99),
+        (("model", "retry_policy", "backoff"), "forged-backoff"),
+        (("model", "semantic_judge", "version"), "forged-judge"),
+        (("model", "semantic_judge", "temperature"), 0.5),
+    ],
+)
+def test_formal_regression_gate_rejects_self_attested_runtime_identity(
+    tmp_path: Path,
+    field_path: tuple[str, ...],
+    forged_value: object,
+) -> None:
+    payload = _dev_repeat_payload()
+    source_git_commit = payload["manifest"]["source"]["git_commit"]
+    assert isinstance(source_git_commit, str)
+    payload["manifest"]["source"]["git_dirty"] = False
+    expected_harness = payload["manifest"]["harness"][
+        "runtime_harness_sha256"
+    ]
+    target = payload["manifest"]
+    for field_name in field_path[:-1]:
+        nested = target[field_name]
+        assert isinstance(nested, dict)
+        target = nested
+    target[field_path[-1]] = forged_value
+    bundle_path = _write_dev_repeat_bundle(tmp_path, payload)
+
+    with pytest.raises(
+        holdout_protocol.HoldoutLockError,
+        match="regression|runtime|source|model",
+    ):
+        holdout_protocol.validate_regression_gate(
+            bundle_path=bundle_path,
+            private_root=tmp_path,
+            source_git_commit=source_git_commit,
+            harness_sha256=expected_harness,
+        )
 
 
 def test_formal_regression_gate_rejects_renamed_or_replaced_bundle(
     tmp_path: Path,
 ) -> None:
     payload = _dev_repeat_payload()
-    payload["manifest"]["source"]["git_commit"] = "a" * 40
+    source_git_commit = payload["manifest"]["source"]["git_commit"]
+    assert isinstance(source_git_commit, str)
     payload["manifest"]["source"]["git_dirty"] = False
     expected_harness = payload["manifest"]["harness"][
         "runtime_harness_sha256"
@@ -498,7 +588,7 @@ def test_formal_regression_gate_rejects_renamed_or_replaced_bundle(
         holdout_protocol.validate_regression_gate(
             bundle_path=renamed_path,
             private_root=tmp_path,
-            source_git_commit="a" * 40,
+            source_git_commit=source_git_commit,
             harness_sha256=expected_harness,
         )
 
