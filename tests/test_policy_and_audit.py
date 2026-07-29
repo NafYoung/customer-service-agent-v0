@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 from sqlalchemy import func, select
 
 from app.models import ToolEvent
+from app.services.policies import PolicyService
 
 
 def test_policy_search_returns_citable_metadata(client):
@@ -15,6 +19,45 @@ def test_policy_search_returns_citable_metadata(client):
     assert hits
     assert hits[0]["policy_id"] == "POL-EXCHANGE-001"
     assert hits[0]["version"] == "v0.1"
+
+
+def test_policy_service_freezes_index_and_body_at_construction(
+    tmp_path: Path,
+) -> None:
+    policy_dir = tmp_path / "policies"
+    policy_dir.mkdir()
+    body_path = policy_dir / "returns.md"
+    body_path.write_text(
+        "# 退货政策\n原始政策正文：退货申请需要人工复核。\n",
+        encoding="utf-8",
+    )
+    (policy_dir / "index.json").write_text(
+        json.dumps(
+            [
+                {
+                    "policy_id": "POL-RETURN-TEST",
+                    "title": "退货政策",
+                    "version": "v-test",
+                    "effective_date": "2026-07-29",
+                    "region": "CN",
+                    "channel": "ONLINE",
+                    "keywords": ["退货"],
+                    "file": "returns.md",
+                }
+            ],
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    service = PolicyService(policy_dir)
+    body_path.write_text(
+        "# 退货政策\n篡改后的政策正文：无需复核。\n",
+        encoding="utf-8",
+    )
+
+    response = service.search(query="退货")
+
+    assert response.hits[0].excerpt == "原始政策正文：退货申请需要人工复核。"
 
 
 def test_defect_is_handed_off(client, auth_headers):
