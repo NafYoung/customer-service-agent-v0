@@ -36,14 +36,17 @@ from evals.file_snapshot import (
     require_private_regular_file,
 )
 from evals.readonly_eval import ReadonlyEvalCase, load_cases
-from evals.readonly_reporting import current_readonly_harness_fingerprints
+from evals.readonly_reporting import (
+    current_source_tree_sha256,
+    freeze_readonly_harness,
+    require_clean_git_worktree,
+)
 from evals.semantic_calibration import (
     CalibrationFixture,
     CalibrationKind,
     CalibrationResult,
     CalibrationSummary,
     ExpectedRelation,
-    load_calibration_fixtures_snapshot,
     parse_calibration_fixtures_snapshot,
     summarize_calibration,
     validate_calibration_coverage,
@@ -67,6 +70,48 @@ _SHA256_PATTERN = r"^[0-9a-f]{64}$"
 
 class CalibrationAttestationError(RuntimeError):
     """A calibration report or independent review cannot be trusted."""
+
+
+@dataclass(frozen=True)
+class _TrustedCalibrationValidationContext:
+    source_git_commit: str
+    source_tree_sha256: str
+    fixture_snapshot: FileSnapshot
+    harness_fingerprints: Mapping[str, str]
+
+
+def _freeze_trusted_validation_context(
+    settings: Settings,
+) -> _TrustedCalibrationValidationContext:
+    """Independently bind validation to one clean local source snapshot."""
+
+    try:
+        source_git_commit = require_clean_git_worktree()
+        source_tree_before = current_source_tree_sha256()
+        frozen_harness = freeze_readonly_harness(settings)
+        source_tree_after = current_source_tree_sha256()
+        require_clean_git_worktree(
+            expected_commit=source_git_commit
+        )
+    except (
+        CanonicalPricingError,
+        FileSnapshotError,
+        OSError,
+        ValueError,
+    ) as exc:
+        raise CalibrationAttestationError(
+            "The trusted calibration source context is not clean or stable."
+        ) from exc
+    if source_tree_before != source_tree_after:
+        raise CalibrationAttestationError(
+            "The trusted calibration source context changed while freezing."
+        )
+    return _TrustedCalibrationValidationContext(
+        source_git_commit=source_git_commit,
+        source_tree_sha256=source_tree_after,
+        fixture_snapshot=frozen_harness.calibration_fixture_snapshot,
+        harness_fingerprints=frozen_harness.fingerprints,
+    )
 
 
 def require_canonical_calibration_runtime(settings: Settings) -> None:
@@ -429,6 +474,30 @@ def validate_calibration_attestation(
     """Validate and independently recompute a holdout-eligibility report."""
 
     require_canonical_calibration_runtime(settings)
+    if (
+        fixture_path.resolve() != CANONICAL_FIXTURE_PATH.resolve()
+        or case_dir.resolve() != CANONICAL_CASE_DIR.resolve()
+    ):
+        raise CalibrationAttestationError(
+            "The trusted calibration context requires canonical paths."
+        )
+    trusted_context = _freeze_trusted_validation_context(settings)
+    if (
+        fixture_snapshot is not None
+        and fixture_snapshot.sha256
+        != trusted_context.fixture_snapshot.sha256
+    ):
+        raise CalibrationAttestationError(
+            "The caller fixture snapshot does not match the trusted context."
+        )
+    if (
+        harness_fingerprints is not None
+        and dict(harness_fingerprints)
+        != dict(trusted_context.harness_fingerprints)
+    ):
+        raise CalibrationAttestationError(
+            "The caller harness does not match the trusted context."
+        )
     try:
         require_private_regular_file(
             report_path,
@@ -445,6 +514,10 @@ def validate_calibration_attestation(
         raise CalibrationAttestationError(
             "The calibration report failed its strict schema."
         ) from exc
+    if report.source_git_commit != trusted_context.source_git_commit:
+        raise CalibrationAttestationError(
+            "The calibration report source commit is not the trusted HEAD."
+        )
     checked_at = now or datetime.now(UTC)
     if (
         checked_at.tzinfo is None
@@ -463,16 +536,11 @@ def validate_calibration_attestation(
             "The calibration report is too old or not yet fresh."
         )
     try:
-        if fixture_snapshot is None:
-            fixtures, canonical_fixture_snapshot = (
-                load_calibration_fixtures_snapshot(fixture_path)
-            )
-        else:
-            canonical_fixture_snapshot = fixture_snapshot
-            fixtures = parse_calibration_fixtures_snapshot(
-                canonical_fixture_snapshot
-            )
-        cases = load_cases(case_dir)
+        canonical_fixture_snapshot = trusted_context.fixture_snapshot
+        fixtures = parse_calibration_fixtures_snapshot(
+            canonical_fixture_snapshot
+        )
+        cases = load_cases(CANONICAL_CASE_DIR)
         validate_calibration_coverage(fixtures=fixtures, cases=cases)
     except (FileSnapshotError, OSError, ValueError) as exc:
         raise CalibrationAttestationError(
@@ -487,11 +555,7 @@ def validate_calibration_attestation(
         raise CalibrationAttestationError(
             "The calibration contract-set hash does not match."
         )
-    current_harness = (
-        dict(harness_fingerprints)
-        if harness_fingerprints is not None
-        else current_readonly_harness_fingerprints(settings)
-    )
+    current_harness = dict(trusted_context.harness_fingerprints)
     if report.harness != current_harness:
         raise CalibrationAttestationError(
             "The calibration harness or model runtime has drifted."

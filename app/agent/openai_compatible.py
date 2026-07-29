@@ -354,6 +354,12 @@ class OpenAICompatibleChatClient:
                     attempt_count=attempt_count,
                 )
             except ModelAdapterError as exc:
+                self._ensure_response_price_window(
+                    reservation,
+                    usage=None,
+                    provider_request_id=request_id,
+                    attempts=attempt_count,
+                )
                 self._mark_budget_uncertain(
                     reservation,
                     error_code=exc.code,

@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from app.agent.openai_compatible import AssistantTurn
+from evals import calibration_attestation as calibration_attestation_module
 from evals import run_semantic_judge_calibration as calibration_cli
 from evals.calibration_attestation import validate_calibration_attestation
 from evals.canonical_pricing import canonical_budget_price_payload
@@ -186,11 +187,21 @@ def test_holdout_eligible_calibration_writes_a_validated_closed_report(
         clean_checks.append(expected_commit)
         return "1" * 40
 
+    def require_trusted_attestation_source(*, expected_commit=None):
+        if expected_commit not in {None, "1" * 40}:
+            raise ValueError("commit drift")
+        return "1" * 40
+
     monkeypatch.setattr(
         calibration_cli,
         "require_clean_git_worktree",
         require_clean_source,
         raising=False,
+    )
+    monkeypatch.setattr(
+        calibration_attestation_module,
+        "require_clean_git_worktree",
+        require_trusted_attestation_source,
     )
     monkeypatch.setattr(
         calibration_cli,
