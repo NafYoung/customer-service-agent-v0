@@ -1,10 +1,10 @@
 # 项目现役状态
 
-最后核对：2026-07-29 21:19 UTC
+最后核对：2026-07-29 22:53 UTC
 
 本地分支：`main`
 
-最近实现检查点：`40289d9`（formal context and regression gate）
+最近实现检查点：`0c55845`（canonical Eval runtime identity）
 
 下一轮审查基线：本文件所在的干净 Git 提交；以审查报告记录的完整
 `git rev-parse HEAD` 为准。
@@ -24,7 +24,7 @@ Preparation Agent 检查点：`1b034cd`
 | holdout v1 | verified-current / retired | 唯一正式结果 46/80、`pass^4=0.35`；禁止重跑 |
 | Preparation Agent | changed-and-verified | 提交 `1b034cd`；独立审查 Gate GO |
 | 原子命题语义门 | changed-and-verified / pending final fresh re-audit | 49 条固定夹具已有逐 claim 人工证据区域和矛盾双侧标注；单字、子串、删否定、跨 claim 和单侧证据失败关闭 |
-| 正式 Eval 证据链 | changed-and-verified / pending final fresh re-audit | formal 程序化入口必须消费排他 start receipt 后签发的一次性 context；v2 声明、start、完成/失败 evidence、terminal 与 public verifier 全链绑定当前 28/28 回归 bundle |
+| 正式 Eval 证据链 | changed-and-verified / pending same-commit triple re-audit | formal 程序化入口必须消费排他 start receipt 后签发的一次性 context；固定私有输出根在模型调用前拒绝 symlink/越界；严格 start/terminal Schema 与完成/失败 chain 全链绑定当前 28/28 回归 bundle；`18d31bb` 独立聚焦复审 GO |
 | 非正式付费入口 | changed-and-verified / pending final fresh re-audit | `diagnostic` 固定 10×1，`dev_repeat` 固定 7×4；程序化入口在模型调用前校验，完成证据逐 trial 对齐模型、usage、retry/error 和预算桶 |
 | DeepSeek 语义校准 | pending | 尚未调用，新增费用为 0 |
 | 公开回归与 holdout v2 | pending | 必须等待语义校准和独立审查通过 |
@@ -34,19 +34,20 @@ Preparation Agent 检查点：`1b034cd`
 
 ## 最近验证
 
-2026-07-29 在 `9918925` 实现上执行：
+2026-07-29 在 `0c55845` 实现上执行离线门：
 
 ```text
 ruff: passed
 mypy: 52 source files passed
 schema freshness: passed
-pytest: 395 passed
-branch coverage: 82.56%
-pip-audit: no known runtime vulnerabilities
+pytest: 518 passed
+branch coverage: 83.14%
 Reference Eval: 8/8
 ```
 
-完整 `make verify PYTHON=.venv/bin/python` 已通过。测试仍有一条非阻断
+本轮未联网，因此执行了 `make verify` 中除 `pip-audit` 之外的全部门并追加
+Reference Eval；依赖声明未变化，最近一次 `pip-audit` 仍为无已知运行时漏洞，
+但尚未在 `0c55845` 上联网刷新。测试仍有一条非阻断
 警告：FastAPI/Starlette 的旧
 `TestClient` 兼容入口提示未来迁移到 `httpx2`；当前测试行为未受影响。
 本轮未调用 DeepSeek，新增费用为 0。
@@ -82,10 +83,9 @@ Reference Eval: 8/8
 
 Preparation Agent 与 Phase 2 对抗修复都已保存为本地检查点，但 Phase 2
 还没有同一提交上的三路 fresh re-audit GO、真实校准或公开回归结果，不能
-视为验收完成。此前审查除价格冻结、summary、failed-attempt、receipt、
-权限、路径和语义绕过外，又复现了最坏费用预留不足、完成态 attempt bucket
-可伪造、非正式案例 allowlist 可被程序化绕过、模型调用可跨 trial 搬移，
-diagnostic retry/error 费用未绑定、formal 可编程入口锁前调用模型，以及 v2
-未绑定 28/28 回归 evidence。`40289d9` 及其前置 RED/GREEN 检查点已逐项关闭
-这些问题；下一步必须由未参与实现的全新审查者在同一干净提交上重新签发
-Gate。复核现场保留，未删除缓存、数据库或私有 artifact。
+视为验收完成。`40289d9` 关闭了 formal context 与 28/28 回归前置门；
+`18d31bb` 关闭固定输出根 symlink、严格回执、私有目录链和公开校验器问题，
+独立聚焦复审为 GO；`0c55845` 又把批准的 Eval profile 固定为
+`30 / 1024 / 2 / 4 / 12`，扩展运行依赖身份，并要求 source-tree 三次快照
+一致。下一步必须由未参与实现的三路全新审查者在本文件所在同一干净提交上
+重新签发 Gate。复核现场保留，未删除缓存、数据库或私有 artifact。
