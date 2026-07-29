@@ -30,14 +30,23 @@ def _attestation() -> ValidatedCalibrationAttestation:
     return ValidatedCalibrationAttestation(
         report_sha256="a" * 64,
         run_id="eval-20260729-calibration-v2",
+        source_git_commit="1" * 40,
         fixture_sha256="c" * 64,
         contract_set_sha256="d" * 64,
         harness_sha256="e" * 64,
-        result_count=44,
+        result_count=49,
         fixture_ids=tuple(
             f"canonical-fixture-{index:02d}"
-            for index in range(44)
+            for index in range(49)
         ),
+        fixture_kinds=tuple(
+            (
+                f"canonical-fixture-{index:02d}",
+                "safe_canonical",
+            )
+            for index in range(49)
+        ),
+        completed_at=datetime(2026, 7, 29, 12, tzinfo=UTC),
     )
 
 
@@ -98,6 +107,7 @@ def _write_manifest_for_cases(
         "rerun_policy": "prohibited",
         "sealed_at": "2026-07-29T13:00:00+00:00",
         "sealer_id": "independent-holdout-sealer-v2",
+        "source_git_commit": "2" * 40,
         "implementation_independence_declared": True,
     }
     path.write_text(
@@ -128,6 +138,9 @@ def _manifest(
         "semantic_calibration_report_sha256": "a" * 64,
         "semantic_calibration_review_sha256": "b" * 64,
         "semantic_calibration_run_id": _attestation().run_id,
+        "semantic_calibration_source_git_commit": (
+            _attestation().source_git_commit
+        ),
         "semantic_calibration_fixture_sha256": (
             _attestation().fixture_sha256
         ),
@@ -145,6 +158,7 @@ def _manifest(
         "rerun_policy": "prohibited",
         "sealed_at": "2026-07-29T13:00:00+00:00",
         "sealer_id": "independent-holdout-sealer-v2",
+        "source_git_commit": "2" * 40,
         "implementation_independence_declared": True,
     }
     if scorer_sha256 is not None:
@@ -188,6 +202,7 @@ def test_holdout_lock_is_exclusive_and_final_status_is_persisted(
         lock_path=lock_path,
         status="completed",
         run_id="eval-20260729-holdout-v2",
+        expected_start_receipt_sha256=start_receipt_sha256,
         bundle_integrity_sha256="f" * 64,
         now=datetime(2026, 7, 29, 10, 5, tzinfo=UTC),
     )
@@ -208,6 +223,38 @@ def test_holdout_lock_is_exclusive_and_final_status_is_persisted(
     assert "user_message" not in json.dumps(
         {"start": lock_payload, "terminal": terminal_payload}
     )
+
+
+def test_holdout_finalize_rejects_a_replaced_start_receipt(
+    tmp_path: Path,
+) -> None:
+    declaration = validate_holdout_declaration(
+        manifest_path=_manifest(tmp_path / "manifest.json"),
+        case_set_name="readonly-holdout-v2",
+        cases=_cases(),
+        calibration_attestation=_attestation(),
+        calibration_review=_review(),
+    )
+    lock_path = acquire_holdout_run_lock(
+        lock_root=tmp_path / "private-locks",
+        declaration=declaration,
+        run_id="eval-20260729-replaced-start",
+    )
+    expected_start_sha256 = holdout_lock_receipt_sha256(lock_path)
+    payload = json.loads(lock_path.read_text(encoding="utf-8"))
+    payload["created_at"] = "2026-07-29T23:59:59+00:00"
+    lock_path.write_text(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(HoldoutLockError, match="start|receipt|changed"):
+        finalize_holdout_run_lock(
+            lock_path=lock_path,
+            status="failed",
+            run_id="eval-20260729-replaced-start",
+            expected_start_receipt_sha256=expected_start_sha256,
+        )
 
 
 def test_same_case_hash_cannot_get_a_second_lock_by_renaming(
