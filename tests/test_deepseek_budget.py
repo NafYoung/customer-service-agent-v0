@@ -428,14 +428,14 @@ def test_run_snapshot_reopens_with_persisted_identity_and_closed_status(
     run_id = "eval-budget-identity-0001"
     ledger.start_run(
         run_id=run_id,
-        purpose="semantic-judge-calibration",
+        purpose="semantic_judge_calibration",
         price_snapshot=snapshot,
     )
 
     active = ledger.snapshot(run_id=run_id)
     assert active["run_identity"] == {
         "run_id": run_id,
-        "purpose": "semantic-judge-calibration",
+        "purpose": "semantic_judge_calibration",
         "model": snapshot.model,
         "price_sha256": snapshot.sha256,
         "status": "active",
@@ -485,7 +485,7 @@ def test_guard_close_status_and_identity_survive_ledger_reopen(tmp_path):
     guard = DeepSeekBudgetGuard(
         ledger=_ledger(tmp_path),
         run_id="eval-budget-guard-close",
-        purpose="holdout-v2-formal",
+        purpose="holdout_formal",
         price_snapshot=_price_snapshot(),
         model="deepseek-v4-flash",
         max_output_tokens=1024,
@@ -503,7 +503,7 @@ def test_guard_close_status_and_identity_survive_ledger_reopen(tmp_path):
 
     assert closed_report["run_status"] == "completed"
     assert closed_report["run_identity"] == persisted["run_identity"]
-    assert persisted["run_identity"]["purpose"] == "holdout-v2-formal"
+    assert persisted["run_identity"]["purpose"] == "holdout_formal"
     assert persisted["run_identity"]["completed_at"] is not None
 
 

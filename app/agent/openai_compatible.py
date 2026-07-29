@@ -11,6 +11,7 @@ import httpx
 from app.agent.deepseek_budget import (
     BudgetError,
     BudgetExceededError,
+    BudgetPriceWindowError,
     BudgetUsageError,
 )
 
@@ -47,6 +48,8 @@ class ChatModel(Protocol):
 
 
 class AttemptBudgetGuard(Protocol):
+    def bind_request_timeout(self, *, timeout_seconds: float) -> None: ...
+
     def reserve_attempt(
         self,
         *,
@@ -61,6 +64,14 @@ class AttemptBudgetGuard(Protocol):
         usage: Mapping[str, Any],
         provider_request_id: str | None,
     ) -> Any: ...
+
+    def ensure_response_in_price_window(
+        self,
+        *,
+        reservation: Any,
+        usage: Mapping[str, Any] | None,
+        provider_request_id: str | None,
+    ) -> None: ...
 
     def mark_uncertain(
         self,
@@ -161,6 +172,10 @@ class OpenAICompatibleChatClient:
         self._retry_backoff_seconds = retry_backoff_seconds
         self._extra_body = dict(extra_body or {})
         self._budget_guard = budget_guard
+        if self._budget_guard is not None:
+            self._budget_guard.bind_request_timeout(
+                timeout_seconds=timeout_seconds,
+            )
         self._closed = False
         self._client = httpx.Client(
             timeout=timeout_seconds,
@@ -255,6 +270,12 @@ class OpenAICompatibleChatClient:
                         logical_call_id=logical_call_id,
                         attempt_number=attempt_count,
                     )
+                except BudgetPriceWindowError as exc:
+                    raise ModelAPIError(
+                        "MODEL_PRICE_EXPIRED",
+                        "Paid model request blocked by the local pricing window.",
+                        attempts=attempt_index,
+                    ) from exc
                 except BudgetExceededError as exc:
                     raise ModelAPIError(
                         "MODEL_BUDGET_EXHAUSTED",
@@ -297,6 +318,12 @@ class OpenAICompatibleChatClient:
                 or response.headers.get("request-id")
             )
             if response.status_code >= 400:
+                self._ensure_response_price_window(
+                    reservation,
+                    usage=None,
+                    provider_request_id=request_id,
+                    attempts=attempt_count,
+                )
                 self._mark_budget_uncertain(
                     reservation,
                     error_code="MODEL_HTTP_ERROR",
@@ -335,6 +362,12 @@ class OpenAICompatibleChatClient:
                 raise
 
             if self._budget_guard is not None:
+                self._ensure_response_price_window(
+                    reservation,
+                    usage=turn.usage,
+                    provider_request_id=request_id,
+                    attempts=attempt_count,
+                )
                 if turn.usage is None:
                     self._mark_budget_uncertain(
                         reservation,
@@ -379,6 +412,37 @@ class OpenAICompatibleChatClient:
             "Model provider request loop ended unexpectedly.",
             attempts=self._max_retries + 1,
         )
+
+    def _ensure_response_price_window(
+        self,
+        reservation: Any | None,
+        *,
+        usage: Mapping[str, Any] | None,
+        provider_request_id: str | None,
+        attempts: int,
+    ) -> None:
+        if self._budget_guard is None or reservation is None:
+            return
+        try:
+            self._budget_guard.ensure_response_in_price_window(
+                reservation=reservation,
+                usage=usage,
+                provider_request_id=provider_request_id,
+            )
+        except BudgetPriceWindowError as exc:
+            raise ModelAPIError(
+                "MODEL_PRICE_EXPIRED",
+                "Paid model response crossed the local pricing window.",
+                request_id=provider_request_id,
+                attempts=attempts,
+            ) from exc
+        except BudgetError as exc:
+            raise ModelAPIError(
+                "MODEL_BUDGET_ERROR",
+                "Paid model response could not be recorded safely.",
+                request_id=provider_request_id,
+                attempts=attempts,
+            ) from exc
 
     def _retry_delay(self, attempt_index: int) -> None:
         delay = self._retry_backoff_seconds * (2**attempt_index)

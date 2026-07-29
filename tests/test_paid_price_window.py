@@ -7,7 +7,9 @@ import httpx
 import pytest
 
 from app.agent.deepseek_budget import (
+    PAID_PURPOSES,
     BudgetInvariantError,
+    BudgetPriceWindowError,
     DeepSeekBudgetGuard,
     DeepSeekPriceSnapshot,
     SQLiteBudgetLedger,
@@ -83,6 +85,15 @@ def _success_response() -> httpx.Response:
             },
         },
     )
+
+
+def test_paid_purpose_allowlist_is_closed_and_canonical() -> None:
+    assert PAID_PURPOSES == {
+        "diagnostic",
+        "dev_repeat",
+        "holdout_formal",
+        "semantic_judge_calibration",
+    }
 
 
 @pytest.mark.parametrize(
@@ -239,6 +250,58 @@ def test_response_crossing_price_window_is_uncertain_and_not_retried(
     ]
 
 
+def test_retryable_http_error_crossing_price_window_is_not_retried(
+    tmp_path,
+) -> None:
+    snapshot = _price_snapshot()
+    checked_at = snapshot.valid_until - timedelta(seconds=60)
+    call_count = 0
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        nonlocal checked_at, call_count
+        call_count += 1
+        checked_at = snapshot.valid_until + timedelta(microseconds=1)
+        return httpx.Response(
+            503,
+            headers={"x-request-id": "provider-window-http-error"},
+        )
+
+    guard = DeepSeekBudgetGuard(
+        ledger=_ledger(tmp_path),
+        run_id="eval-http-error-crosses-window",
+        purpose="diagnostic",
+        price_snapshot=snapshot,
+        model="deepseek-v4-flash",
+        max_output_tokens=1024,
+        now_provider=lambda: checked_at,
+    )
+    client = build_deepseek_client(
+        _settings(timeout_seconds=30),
+        budget_guard=guard,
+        transport=httpx.MockTransport(handler),
+    )
+    try:
+        with pytest.raises(ModelAPIError) as caught:
+            client.complete(
+                messages=[{"role": "user", "content": "hello"}],
+                tools=[],
+            )
+    finally:
+        client.close()
+
+    assert caught.value.code == "MODEL_PRICE_EXPIRED"
+    assert call_count == 1
+    assert guard.snapshot()["attempt_evidence"]["run"] == [
+        {
+            "status": "uncertain",
+            "settlement_mode": None,
+            "reserved_cny": "1.002048",
+            "known_cost_cny": None,
+            "count": 1,
+        }
+    ]
+
+
 def test_response_inside_price_window_still_settles_normally(tmp_path) -> None:
     snapshot = _price_snapshot()
     checked_at = snapshot.valid_until - timedelta(seconds=120)
@@ -277,3 +340,111 @@ def test_response_inside_price_window_still_settles_normally(tmp_path) -> None:
     assert report["attempt_count"] == 1
     assert report["uncertain_count"] == 0
     assert report["settled_cny"] == "0.0012"
+
+
+@pytest.mark.parametrize(
+    "invalid_seconds",
+    [-1, True, float("nan"), float("inf")],
+)
+def test_guard_rejects_invalid_minimum_price_window(
+    tmp_path,
+    invalid_seconds: object,
+) -> None:
+    with pytest.raises(BudgetInvariantError, match="finite non-negative"):
+        DeepSeekBudgetGuard(
+            ledger=_ledger(tmp_path),
+            run_id="eval-invalid-price-window",
+            purpose="diagnostic",
+            price_snapshot=_price_snapshot(),
+            model="deepseek-v4-flash",
+            max_output_tokens=1024,
+            now=datetime(2026, 7, 29, 12, tzinfo=UTC),
+            minimum_price_validity_seconds=invalid_seconds,  # type: ignore[arg-type]
+        )
+
+
+def test_closed_guard_rejects_timeout_binding_and_reservation(tmp_path) -> None:
+    guard = DeepSeekBudgetGuard(
+        ledger=_ledger(tmp_path),
+        run_id="eval-closed-price-window",
+        purpose="diagnostic",
+        price_snapshot=_price_snapshot(),
+        model="deepseek-v4-flash",
+        max_output_tokens=1024,
+        now=datetime(2026, 7, 29, 12, tzinfo=UTC),
+    )
+    guard.close()
+    guard.close()
+
+    with pytest.raises(BudgetInvariantError, match="closed"):
+        guard.bind_request_timeout(timeout_seconds=30)
+    with pytest.raises(BudgetInvariantError, match="closed"):
+        guard.reserve_attempt(
+            logical_call_id="must-not-reserve",
+            attempt_number=1,
+        )
+
+
+def test_expired_response_marking_is_idempotent_and_never_downgrades_settled(
+    tmp_path,
+) -> None:
+    snapshot = _price_snapshot()
+    checked_at = snapshot.valid_until - timedelta(seconds=120)
+    guard = DeepSeekBudgetGuard(
+        ledger=_ledger(tmp_path),
+        run_id="eval-price-mark-idempotent",
+        purpose="diagnostic",
+        price_snapshot=snapshot,
+        model="deepseek-v4-flash",
+        max_output_tokens=1024,
+        now_provider=lambda: checked_at,
+    )
+    guard.bind_request_timeout(timeout_seconds=30)
+    expired = guard.reserve_attempt(
+        logical_call_id="expired-response",
+        attempt_number=1,
+    )
+    settled = guard.reserve_attempt(
+        logical_call_id="settled-response",
+        attempt_number=1,
+    )
+    usage = {
+        "prompt_tokens": 1_000,
+        "completion_tokens": 100,
+        "total_tokens": 1_100,
+    }
+    guard.settle_attempt(
+        reservation=settled,
+        usage=usage,
+        provider_request_id="settled-request",
+    )
+    checked_at = snapshot.valid_until + timedelta(microseconds=1)
+
+    for _ in range(2):
+        with pytest.raises(BudgetPriceWindowError):
+            guard.ensure_response_in_price_window(
+                reservation=expired,
+                usage=usage,
+                provider_request_id="expired-request",
+            )
+    guard.mark_uncertain(
+        reservation=settled,
+        error_code="MUST_NOT_DOWNGRADE",
+    )
+
+    assert guard.snapshot()["attempt_evidence"]["run"] == [
+        {
+            "status": "settled_upper_bound",
+            "settlement_mode": "upper_bound",
+            "reserved_cny": "1.002048",
+            "known_cost_cny": "0.0012",
+            "count": 1,
+        },
+        {
+            "status": "uncertain",
+            "settlement_mode": "upper_bound",
+            "reserved_cny": "1.002048",
+            "known_cost_cny": "0.0012",
+            "count": 1,
+        },
+    ]

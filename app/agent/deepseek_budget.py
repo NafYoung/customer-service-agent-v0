@@ -2,15 +2,16 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
 import sqlite3
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import Any, Callable, Literal, Mapping
+from typing import Any, Callable, Literal, Mapping, cast
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -18,6 +19,21 @@ CNY_UNITS_PER_CNY = 100_000_000
 _RUN_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{7,79}$")
 _SETTLED_STATUSES = {"settled_exact", "settled_upper_bound"}
 _COMMITTED_STATUSES = {"reserved", "uncertain", *_SETTLED_STATUSES}
+PAID_PURPOSES = frozenset(
+    {
+        "diagnostic",
+        "dev_repeat",
+        "holdout_formal",
+        "semantic_judge_calibration",
+    }
+)
+PRICE_WINDOW_SAFETY_MARGIN_SECONDS = 2.0
+PaidPurpose = Literal[
+    "diagnostic",
+    "dev_repeat",
+    "holdout_formal",
+    "semantic_judge_calibration",
+]
 
 
 class BudgetError(RuntimeError):
@@ -33,6 +49,10 @@ class BudgetInvariantError(BudgetError):
 
 
 class BudgetUsageError(BudgetError):
+    pass
+
+
+class BudgetPriceWindowError(BudgetInvariantError):
     pass
 
 
@@ -104,10 +124,15 @@ class DeepSeekPriceSnapshot(_StrictModel):
         *,
         expected_model: str,
         now: datetime | None = None,
+        minimum_remaining: timedelta = timedelta(0),
     ) -> None:
         checked_at = now or datetime.now(UTC)
         if checked_at.tzinfo is None:
             raise BudgetInvariantError("Pricing check time must be timezone-aware")
+        if minimum_remaining < timedelta(0):
+            raise BudgetInvariantError(
+                "Minimum pricing validity window cannot be negative."
+            )
         if self.model != expected_model:
             raise BudgetInvariantError(
                 "Pricing snapshot model does not match the configured model."
@@ -116,9 +141,13 @@ class DeepSeekPriceSnapshot(_StrictModel):
             raise BudgetInvariantError(
                 "Pricing snapshot is not active yet."
             )
-        if checked_at > self.valid_until:
-            raise BudgetInvariantError(
+        if checked_at >= self.valid_until:
+            raise BudgetPriceWindowError(
                 "Pricing snapshot has expired; refresh it before paid calls."
+            )
+        if checked_at + minimum_remaining >= self.valid_until:
+            raise BudgetPriceWindowError(
+                "Pricing snapshot validity is too short for a paid request."
             )
 
 
@@ -171,6 +200,27 @@ def format_cny(units: int) -> str:
     amount = units_to_cny(units)
     normalized = amount.normalize()
     return format(normalized, "f")
+
+
+def require_paid_purpose(purpose: object) -> PaidPurpose:
+    if type(purpose) is not str or purpose not in PAID_PURPOSES:
+        raise BudgetInvariantError(
+            "Budget purpose is not an allowed paid-run purpose."
+        )
+    return cast(PaidPurpose, purpose)
+
+
+def _require_nonnegative_seconds(value: object, *, field_name: str) -> float:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(value)
+        or value < 0
+    ):
+        raise BudgetInvariantError(
+            f"{field_name} must be a finite non-negative number."
+        )
+    return float(value)
 
 
 def _usage_token(
@@ -446,13 +496,12 @@ class SQLiteBudgetLedger:
         self,
         *,
         run_id: str,
-        purpose: str,
+        purpose: object,
         price_snapshot: DeepSeekPriceSnapshot,
     ) -> None:
         if not _RUN_ID_PATTERN.fullmatch(run_id):
             raise BudgetInvariantError("Budget run_id is invalid.")
-        if not purpose.strip():
-            raise BudgetInvariantError("Budget purpose cannot be empty.")
+        canonical_purpose = require_paid_purpose(purpose)
         connection = self._connect()
         try:
             connection.execute("BEGIN IMMEDIATE")
@@ -464,7 +513,7 @@ class SQLiteBudgetLedger:
                 """,
                 (
                     run_id,
-                    purpose,
+                    canonical_purpose,
                     price_snapshot.model,
                     price_snapshot.sha256,
                     datetime.now(UTC).isoformat(),
@@ -721,12 +770,33 @@ class SQLiteBudgetLedger:
         *,
         reservation: BudgetReservation,
         error_code: str,
+        price_snapshot: DeepSeekPriceSnapshot | None = None,
+        usage: Mapping[str, Any] | None = None,
+        provider_request_id: str | None = None,
     ) -> None:
+        if (price_snapshot is None) != (usage is None):
+            raise BudgetInvariantError(
+                "Uncertain provider usage requires its pricing snapshot."
+            )
+        known_cost: UsageCost | None = None
+        safe_usage: dict[str, int] | None = None
+        if price_snapshot is not None and usage is not None:
+            try:
+                known_cost = calculate_usage_cost(price_snapshot, usage)
+                safe_usage = {
+                    key: value
+                    for key, value in usage.items()
+                    if isinstance(key, str)
+                    and isinstance(value, int)
+                    and not isinstance(value, bool)
+                }
+            except BudgetUsageError:
+                pass
         connection = self._connect()
         try:
             connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
-                "SELECT status FROM budget_attempts WHERE attempt_id = ?",
+                "SELECT * FROM budget_attempts WHERE attempt_id = ?",
                 (reservation.attempt_id,),
             ).fetchone()
             if row is None:
@@ -736,11 +806,23 @@ class SQLiteBudgetLedger:
                     """
                     UPDATE budget_attempts
                     SET status = 'uncertain',
+                        settled_units = ?,
+                        settlement_mode = ?,
+                        usage_json = ?,
+                        provider_request_id = ?,
                         error_code = ?,
                         settled_at = ?
                     WHERE attempt_id = ?
                     """,
                     (
+                        known_cost.units if known_cost is not None else None,
+                        known_cost.mode if known_cost is not None else None,
+                        (
+                            json.dumps(safe_usage, sort_keys=True)
+                            if safe_usage is not None
+                            else None
+                        ),
+                        provider_request_id,
                         error_code,
                         datetime.now(UTC).isoformat(),
                         reservation.attempt_id,
@@ -1009,8 +1091,14 @@ class DeepSeekBudgetGuard:
         max_output_tokens: int,
         now: datetime | None = None,
         now_provider: Callable[[], datetime] | None = None,
+        minimum_price_validity_seconds: float = 0,
     ):
+        canonical_purpose = require_paid_purpose(purpose)
         self._now_provider = now_provider or (lambda: datetime.now(UTC))
+        self._minimum_price_validity_seconds = _require_nonnegative_seconds(
+            minimum_price_validity_seconds,
+            field_name="Minimum pricing validity window",
+        )
         price_snapshot.require_current(
             expected_model=model,
             now=now or self._now_provider(),
@@ -1026,8 +1114,23 @@ class DeepSeekBudgetGuard:
         self._closed = False
         self._ledger.start_run(
             run_id=run_id,
-            purpose=purpose,
+            purpose=canonical_purpose,
             price_snapshot=price_snapshot,
+        )
+
+    def bind_request_timeout(self, *, timeout_seconds: float) -> None:
+        """Bind the provider's maximum request duration before any HTTP call."""
+
+        if self._closed:
+            raise BudgetInvariantError("Budget guard is already closed.")
+        timeout = _require_nonnegative_seconds(
+            timeout_seconds,
+            field_name="Provider request timeout",
+        )
+        required_window = timeout + PRICE_WINDOW_SAFETY_MARGIN_SECONDS
+        self._minimum_price_validity_seconds = max(
+            self._minimum_price_validity_seconds,
+            required_window,
         )
 
     def reserve_attempt(
@@ -1041,6 +1144,9 @@ class DeepSeekBudgetGuard:
         self._price_snapshot.require_current(
             expected_model=self._model,
             now=self._now_provider(),
+            minimum_remaining=timedelta(
+                seconds=self._minimum_price_validity_seconds
+            ),
         )
         return self._ledger.reserve_attempt(
             run_id=self._run_id,
@@ -1068,6 +1174,32 @@ class DeepSeekBudgetGuard:
             self._ledger.mark_uncertain(
                 reservation=reservation,
                 error_code="INVALID_PROVIDER_USAGE",
+            )
+            raise
+
+    def ensure_response_in_price_window(
+        self,
+        *,
+        reservation: BudgetReservation,
+        usage: Mapping[str, Any] | None,
+        provider_request_id: str | None,
+    ) -> None:
+        """Fail closed if provider processing crossed the price validity edge."""
+
+        try:
+            self._price_snapshot.require_current(
+                expected_model=self._model,
+                now=self._now_provider(),
+            )
+        except BudgetPriceWindowError:
+            self._ledger.mark_uncertain(
+                reservation=reservation,
+                error_code="MODEL_PRICE_EXPIRED",
+                price_snapshot=(
+                    self._price_snapshot if usage is not None else None
+                ),
+                usage=usage,
+                provider_request_id=provider_request_id,
             )
             raise
 
