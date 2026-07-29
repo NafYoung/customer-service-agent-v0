@@ -114,6 +114,28 @@ def _freeze_trusted_validation_context(
     )
 
 
+def _require_trusted_context_still_current(
+    context: _TrustedCalibrationValidationContext,
+) -> None:
+    """Close the source TOCTOU window immediately before acceptance."""
+
+    try:
+        if (
+            current_source_tree_sha256()
+            != context.source_tree_sha256
+        ):
+            raise ValueError(
+                "The trusted source tree changed during validation."
+            )
+        require_clean_git_worktree(
+            expected_commit=context.source_git_commit
+        )
+    except (OSError, ValueError) as exc:
+        raise CalibrationAttestationError(
+            "The trusted calibration source changed before acceptance."
+        ) from exc
+
+
 def require_canonical_calibration_runtime(settings: Settings) -> None:
     """Fail closed unless calibration uses the priced deterministic runtime."""
 
@@ -729,6 +751,7 @@ def validate_calibration_attestation(
         raise CalibrationAttestationError(
             "The calibration budget evidence is unsettled or inconsistent."
         )
+    _require_trusted_context_still_current(trusted_context)
     return ValidatedCalibrationAttestation(
         report_sha256=report_sha256,
         run_id=report.run_id,
