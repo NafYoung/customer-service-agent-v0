@@ -47,7 +47,8 @@ def _verdict_for_fixture(fixture) -> dict[str, object]:
                 [] if relation == "not_mentioned" else [grounded_span]
             ),
         }
-        for claim_id, relation in fixture.expected_relations.items()
+        for claim_id, relation
+        in fixture.effective_expected_relations.items()
     ]
     contradiction_evidence: list[str] = []
     if fixture.expected_material_self_contradiction:
@@ -153,7 +154,9 @@ def _valid_report() -> dict[str, object]:
             contradiction_match=True,
             passed=True,
             error_code=None,
-            observed_relations=dict(fixture.expected_relations),
+            observed_relations=dict(
+                fixture.effective_expected_relations
+            ),
             verdict=_verdict_for_fixture(fixture),
             model_calls=(_model_call(settings.deepseek_model),),
         )
@@ -163,6 +166,7 @@ def _valid_report() -> dict[str, object]:
         "schema_version": "2.0",
         "attestation_kind": "semantic_judge_holdout_eligibility",
         "run_id": "eval-20260729-calibration-attestation",
+        "source_git_commit": "1" * 40,
         "started_at": "2026-07-29T12:00:00+00:00",
         "completed_at": "2026-07-29T12:05:00+00:00",
         "fixture_sha256": _file_sha256(FIXTURE_PATH),
@@ -202,6 +206,7 @@ def test_calibration_attestation_recomputes_results_summary_and_budget(
         load_calibration_fixtures(FIXTURE_PATH)
     )
     assert attestation.run_id == "eval-20260729-calibration-attestation"
+    assert attestation.source_git_commit == "1" * 40
 
     tampered = _valid_report()
     tampered["results"][0]["passed"] = False
@@ -244,6 +249,18 @@ def test_calibration_attestation_recomputes_results_summary_and_budget(
     with pytest.raises(CalibrationAttestationError, match="fresh|old"):
         validate_calibration_attestation(
             report_path=_write_json(tmp_path / "stale.json", stale),
+            settings=settings,
+            now=datetime(2026, 7, 29, 13, tzinfo=UTC),
+        )
+
+    unbound_source = _valid_report()
+    unbound_source.pop("source_git_commit")
+    with pytest.raises(CalibrationAttestationError, match="schema|source"):
+        validate_calibration_attestation(
+            report_path=_write_json(
+                tmp_path / "unbound-source.json",
+                unbound_source,
+            ),
             settings=settings,
             now=datetime(2026, 7, 29, 13, tzinfo=UTC),
         )
