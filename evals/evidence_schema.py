@@ -7,12 +7,19 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Annotated, Any, Literal, Mapping
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
 
 from app.agent.deepseek_budget import (
     BudgetUsageError,
     calculate_usage_cost_from_rates,
     cny_to_units,
+    units_to_cny,
 )
 from evals.canonical_pricing import (
     CanonicalPricingError,
@@ -24,6 +31,7 @@ from evals.evidence import (
     verify_eval_bundle,
     verify_private_eval_bundle_permissions,
 )
+from evals.nonformal_paid_contract import nonformal_paid_contract
 from evals.readonly_eval import SCORE_CATEGORIES
 
 Sha256 = str
@@ -278,6 +286,30 @@ class ReadonlyManifest(StrictEvidenceModel):
                 raise ValueError(
                     "Non-formal evidence cannot claim formal attestations"
                 )
+            if self.purpose == "dev_repeat":
+                contract = nonformal_paid_contract(self.purpose)
+                if (
+                    self.eval.case_set_name != contract.case_set_name
+                    or self.eval.case_count != contract.case_count
+                    or self.eval.case_set_sha256
+                    != contract.case_set_sha256
+                    or self.eval.case_ids != list(contract.case_ids)
+                    or self.execution.planned_trials
+                    != contract.planned_trials
+                    or self.execution.case_order
+                    != list(contract.case_ids)
+                    or self.status != "completed"
+                    or self.execution.completed_trials != 4
+                    or self.budget.enforcement_mode
+                    != "persistent_sqlite"
+                    or self.budget.run_status != "completed"
+                    or self.model.observed_models
+                    != [self.model.requested_model]
+                ):
+                    raise ValueError(
+                        "dev_repeat paid evidence is not canonical "
+                        "and completed"
+                    )
             return self
         if self.eval.split != "holdout":
             raise ValueError("holdout_formal requires the holdout split")
@@ -510,6 +542,93 @@ class BudgetAttemptEvidence(StrictEvidenceModel):
     cumulative: list[BudgetAttemptBucket]
 
 
+def _attempt_bucket_key(
+    bucket: BudgetAttemptBucket,
+) -> tuple[str, str | None, str, str | None]:
+    return (
+        bucket.status,
+        bucket.settlement_mode,
+        bucket.reserved_cny,
+        bucket.known_cost_cny,
+    )
+
+
+def _recompute_attempt_amounts(
+    buckets: list[BudgetAttemptBucket],
+) -> dict[str, int]:
+    committed_units = 0
+    settled_units = 0
+    attempt_count = 0
+    reserved_count = 0
+    uncertain_count = 0
+    for bucket in buckets:
+        reserved_units = cny_to_units(
+            Decimal(bucket.reserved_cny)
+        )
+        known_units = (
+            cny_to_units(Decimal(bucket.known_cost_cny))
+            if bucket.known_cost_cny is not None
+            else None
+        )
+        attempt_count += bucket.count
+        if bucket.status == "reserved":
+            reserved_count += bucket.count
+        if bucket.status == "uncertain":
+            uncertain_count += bucket.count
+        if bucket.status in {
+            "settled_exact",
+            "settled_upper_bound",
+        }:
+            assert known_units is not None
+            committed_units += known_units * bucket.count
+            settled_units += known_units * bucket.count
+        else:
+            committed_units += max(
+                reserved_units,
+                known_units or reserved_units,
+            ) * bucket.count
+    return {
+        "committed_units": committed_units,
+        "settled_units": settled_units,
+        "attempt_count": attempt_count,
+        "reserved_count": reserved_count,
+        "uncertain_count": uncertain_count,
+    }
+
+
+def _require_attempt_amounts(
+    *,
+    buckets: list[BudgetAttemptBucket],
+    amount: BudgetAmountSummary,
+    cumulative: bool,
+) -> None:
+    recomputed = _recompute_attempt_amounts(buckets)
+    if (
+        cny_to_units(Decimal(amount.committed_cny))
+        != recomputed["committed_units"]
+        or cny_to_units(Decimal(amount.settled_cny))
+        != recomputed["settled_units"]
+        or amount.attempt_count != recomputed["attempt_count"]
+        or amount.reserved_count != recomputed["reserved_count"]
+        or amount.uncertain_count != recomputed["uncertain_count"]
+    ):
+        raise ValueError(
+            "budget totals differ from attempt bucket evidence"
+        )
+    if cumulative:
+        expected_remaining = max(
+            0,
+            cny_to_units(Decimal(amount.execution_limit_cny))
+            - recomputed["committed_units"],
+        )
+        if cny_to_units(
+            Decimal(amount.remaining_execution_cny)
+        ) != expected_remaining:
+            raise ValueError(
+                "budget remaining amount differs from attempt evidence"
+            )
+
+
 class BudgetSummary(StrictEvidenceModel):
     schema_version: Literal["1.0"]
     enforcement_mode: Literal[
@@ -540,10 +659,16 @@ class BudgetSummary(StrictEvidenceModel):
                 raise ValueError(
                     "Persistent budget run identity does not match pricing"
                 )
-        elif self.price is not None or self.run_identity is not None:
-            raise ValueError(
-                "Offline mode cannot contain paid pricing or run identity"
-            )
+        else:
+            if (
+                self.price is not None
+                or self.run_identity is not None
+                or self.attempt_evidence is not None
+            ):
+                raise ValueError(
+                    "Offline mode cannot contain paid pricing, identity, "
+                    "or attempt evidence"
+                )
         if (
             self.run.hard_limit_cny
             != self.cumulative.hard_limit_cny
@@ -583,6 +708,46 @@ class BudgetSummary(StrictEvidenceModel):
             raise ValueError(
                 "Cumulative budget evidence is inconsistent"
             )
+        if self.attempt_evidence is not None:
+            if any(
+                bucket.reserved_cny
+                != self.reservation_cny_per_attempt
+                for bucket in self.attempt_evidence.run
+            ):
+                raise ValueError(
+                    "Current-run attempt bucket reservation differs "
+                    "from the paid guard"
+                )
+            _require_attempt_amounts(
+                buckets=self.attempt_evidence.run,
+                amount=self.run,
+                cumulative=False,
+            )
+            _require_attempt_amounts(
+                buckets=self.attempt_evidence.cumulative,
+                amount=self.cumulative,
+                cumulative=True,
+            )
+            run_buckets: Counter[
+                tuple[str, str | None, str, str | None]
+            ] = Counter()
+            cumulative_buckets: Counter[
+                tuple[str, str | None, str, str | None]
+            ] = Counter()
+            for bucket in self.attempt_evidence.run:
+                run_buckets[_attempt_bucket_key(bucket)] += bucket.count
+            for bucket in self.attempt_evidence.cumulative:
+                cumulative_buckets[
+                    _attempt_bucket_key(bucket)
+                ] += bucket.count
+            if any(
+                count > cumulative_buckets[key]
+                for key, count in run_buckets.items()
+            ):
+                raise ValueError(
+                    "Current-run attempt buckets are absent from "
+                    "cumulative evidence"
+                )
         return self
 
 
@@ -632,6 +797,39 @@ class ModelCallRecord(StrictEvidenceModel):
     http_status: int | None
     provider_request_id: str | None
     provider_attempts: int | None
+
+    @field_validator("provider_attempts", mode="before")
+    @classmethod
+    def validate_provider_attempts(
+        cls,
+        value: Any,
+    ) -> Any:
+        if value is None:
+            return value
+        if type(value) is not int or value < 0:
+            raise ValueError(
+                "provider_attempts must be a non-negative integer"
+            )
+        return value
+
+    @field_validator("usage", mode="before")
+    @classmethod
+    def validate_usage_token_types(
+        cls,
+        value: Any,
+    ) -> Any:
+        if value is None:
+            return value
+        if not isinstance(value, dict) or any(
+            not isinstance(key, str)
+            or type(token_count) is not int
+            or token_count < 0
+            for key, token_count in value.items()
+        ):
+            raise ValueError(
+                "usage must map strings to non-negative integers"
+            )
+        return value
 
 
 class ToolTraceRecord(StrictEvidenceModel):
@@ -905,6 +1103,187 @@ def _recompute_summary_without_budget(
     }
 
 
+def _require_completed_paid_bundle_records(
+    *,
+    label: str,
+    manifest: ReadonlyManifest,
+    summary: ReadonlySummary,
+    records: list[ReadonlyCaseRecord],
+    expected_case_count: int,
+    expected_trials: int,
+    expected_case_ids: tuple[str, ...] | None = None,
+) -> None:
+    trials_by_case: dict[str, set[int]] = {}
+    for item in records:
+        trials_by_case.setdefault(item.case_id, set()).add(
+            item.trial
+        )
+    expected_trial_numbers = set(range(1, expected_trials + 1))
+    if (
+        len(records) != expected_case_count * expected_trials
+        or len(trials_by_case) != expected_case_count
+        or any(
+            trials != expected_trial_numbers
+            for trials in trials_by_case.values()
+        )
+        or (
+            expected_case_ids is not None
+            and set(trials_by_case) != set(expected_case_ids)
+        )
+        or summary.planned_trials != expected_trials
+        or summary.total_trials
+        != expected_case_count * expected_trials
+    ):
+        raise ValueError(
+            f"{label} evidence is missing canonical case trials"
+        )
+    budget = summary.budget
+    run_budget = budget.run
+    cumulative_budget = budget.cumulative
+    attempt_evidence = budget.attempt_evidence
+    summary_price = budget.price
+    if (
+        budget.enforcement_mode != "persistent_sqlite"
+        or budget.run_status != "completed"
+        or summary_price is None
+        or attempt_evidence is None
+        or run_budget.reserved_count != 0
+        or run_budget.uncertain_count != 0
+        or cumulative_budget.reserved_count != 0
+        or cumulative_budget.uncertain_count != 0
+        or run_budget.committed_cny != run_budget.settled_cny
+        or cumulative_budget.committed_cny
+        != cumulative_budget.settled_cny
+        or Decimal(run_budget.committed_cny) > Decimal("18")
+        or Decimal(cumulative_budget.committed_cny) > Decimal("18")
+    ):
+        raise ValueError(
+            f"{label} budget is not completed and settled"
+        )
+    try:
+        canonical_price = require_canonical_paid_budget(
+            price=summary_price,
+            expected_model=manifest.model.requested_model,
+            run_hard_limit_cny=run_budget.hard_limit_cny,
+            run_execution_limit_cny=run_budget.execution_limit_cny,
+            cumulative_hard_limit_cny=(
+                cumulative_budget.hard_limit_cny
+            ),
+            cumulative_execution_limit_cny=(
+                cumulative_budget.execution_limit_cny
+            ),
+        )
+        require_canonical_attempt_reservation(
+            canonical_price=canonical_price,
+            max_output_tokens=(
+                manifest.model.generation_config.max_tokens
+            ),
+            reservation_cny_per_attempt=(
+                budget.reservation_cny_per_attempt
+            ),
+        )
+    except CanonicalPricingError as exc:
+        raise ValueError(
+            f"{label} pricing or reservation is not canonical"
+        ) from exc
+    if (
+        manifest.harness.canonical_price_snapshot_sha256
+        != canonical_price_file_sha256()
+        or manifest.created_at < canonical_price.captured_at
+        or manifest.completed_at > canonical_price.valid_until
+    ):
+        raise ValueError(
+            f"{label} run is outside canonical pricing"
+        )
+    model_calls = [
+        call for item in records for call in item.model_calls
+    ]
+    if any(
+        call.status != "success"
+        or call.usage is None
+        or call.provider_attempts != 1
+        or call.observed_model != manifest.model.requested_model
+        for call in model_calls
+    ):
+        raise ValueError(
+            f"{label} model-call usage is not exact"
+        )
+    expected_buckets: Counter[
+        tuple[str, str, str, str]
+    ] = Counter()
+    recomputed_cost_units = 0
+    try:
+        for call in model_calls:
+            assert call.usage is not None
+            cost = calculate_usage_cost_from_rates(
+                rates_cny=canonical_price.rates_cny.model_dump(),
+                tokens_per_price_unit=(
+                    canonical_price.tokens_per_price_unit
+                ),
+                usage=call.usage,
+            )
+            recomputed_cost_units += cost.units
+            expected_buckets[
+                (
+                    (
+                        "settled_exact"
+                        if cost.mode == "exact"
+                        else "settled_upper_bound"
+                    ),
+                    cost.mode,
+                    budget.reservation_cny_per_attempt,
+                    format(units_to_cny(cost.units), "f"),
+                )
+            ] += 1
+    except BudgetUsageError as exc:
+        raise ValueError(
+            f"{label} usage cannot be priced"
+        ) from exc
+    actual_buckets: Counter[
+        tuple[str, str, str, str]
+    ] = Counter()
+    for bucket in attempt_evidence.run:
+        if (
+            bucket.status
+            not in {"settled_exact", "settled_upper_bound"}
+            or bucket.settlement_mode is None
+            or bucket.known_cost_cny is None
+        ):
+            raise ValueError(
+                f"{label} current-run attempt is unsettled"
+            )
+        actual_buckets[
+            (
+                bucket.status,
+                bucket.settlement_mode,
+                bucket.reserved_cny,
+                bucket.known_cost_cny,
+            )
+        ] += bucket.count
+    provider_attempts = sum(
+        call.provider_attempts or 0 for call in model_calls
+    )
+    cumulative_committed = Decimal(
+        cumulative_budget.committed_cny
+    )
+    expected_remaining = max(
+        Decimal("0"),
+        Decimal(cumulative_budget.execution_limit_cny)
+        - cumulative_committed,
+    )
+    if (
+        actual_buckets != expected_buckets
+        or run_budget.attempt_count != provider_attempts
+        or cny_to_units(Decimal(run_budget.settled_cny))
+        != recomputed_cost_units
+        or Decimal(cumulative_budget.remaining_execution_cny)
+        != expected_remaining
+    ):
+        raise ValueError(
+            f"{label} attempt buckets or costs differ from records"
+        )
+
+
 class FileIntegrity(StrictEvidenceModel):
     sha256: Sha256 = Field(pattern=r"^[0-9a-f]{64}$")
     bytes: int = Field(ge=0)
@@ -1024,10 +1403,29 @@ class ReadonlyEvidenceBundle(StrictEvidenceModel):
             raise ValueError(
                 "Summary differs from the evidence records"
             )
+        if self.manifest.purpose == "dev_repeat":
+            contract = nonformal_paid_contract("dev_repeat")
+            _require_completed_paid_bundle_records(
+                label="dev_repeat",
+                manifest=self.manifest,
+                summary=self.summary,
+                records=self.cases,
+                expected_case_count=contract.case_count,
+                expected_trials=contract.planned_trials,
+                expected_case_ids=contract.case_ids,
+            )
         if (
             self.manifest.purpose == "holdout_formal"
             and self.manifest.schema_version == "2.0"
         ):
+            _require_completed_paid_bundle_records(
+                label="formal v2",
+                manifest=self.manifest,
+                summary=self.summary,
+                records=self.cases,
+                expected_case_count=20,
+                expected_trials=4,
+            )
             trials_by_case: dict[str, set[int]] = {}
             for item in self.cases:
                 trials_by_case.setdefault(item.case_id, set()).add(

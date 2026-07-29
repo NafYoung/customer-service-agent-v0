@@ -53,6 +53,9 @@ from evals.holdout_lock import (
     verify_failed_holdout_receipt_chain,
     verify_holdout_receipt_chain,
 )
+from evals.nonformal_paid_contract import (
+    require_nonformal_paid_case_set,
+)
 from evals.private_paths import (
     PrivatePathError,
     prepare_fixed_private_output_root,
@@ -303,6 +306,14 @@ def _validate_args(
     parser: argparse.ArgumentParser,
     args: argparse.Namespace,
 ) -> None:
+    if args.run_id is not None and not re.fullmatch(
+        r"[a-z0-9][a-z0-9._-]{7,79}",
+        args.run_id,
+    ):
+        parser.error(
+            "--run-id must be 8-80 lowercase letters, digits, dots, "
+            "underscores, or hyphens"
+        )
     if not 1 <= args.trials <= 10:
         parser.error("--trials must be between 1 and 10")
     if args.purpose in {"dev_repeat", "holdout_formal"} and args.trials != 4:
@@ -503,7 +514,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     _validate_args(parser, args)
     run_id = args.run_id or create_server_run_id()
-    settings = Settings()
+    if (args.output_root / run_id).exists():
+        print(
+            "EVIDENCE ERROR: output bundle already exists; "
+            "use a fresh server run ID."
+        )
+        return 3
 
     if args.purpose == "holdout_formal":
         try:
@@ -555,13 +571,22 @@ def main(argv: Sequence[str] | None = None) -> int:
         else:
             print(f"CASE ERROR: no Eval cases found in {args.case_dir}")
         return 2
+    if args.purpose != "holdout_formal":
+        try:
+            require_nonformal_paid_case_set(
+                purpose=args.purpose,
+                case_dir=args.case_dir,
+                case_set_name=args.case_set_name,
+                cases=cases,
+                planned_trials=args.trials,
+            )
+        except ValueError:
+            print(
+                "CASE ERROR: non-formal paid case identity is invalid."
+            )
+            return 2
+    settings = Settings()
     bundle_target = args.output_root / run_id
-    if bundle_target.exists():
-        print(
-            "EVIDENCE ERROR: output bundle already exists; "
-            "use a fresh server run ID."
-        )
-        return 3
     declaration: HoldoutDeclaration | None = None
     calibration_attestation: ValidatedCalibrationAttestation | None = None
     calibration_review: ValidatedCalibrationReview | None = None

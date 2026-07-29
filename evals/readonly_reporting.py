@@ -19,6 +19,7 @@ from app.agent.deepseek_budget import (
     BudgetUsageError,
     calculate_usage_cost_from_rates,
     cny_to_units,
+    units_to_cny,
 )
 from app.config import Settings
 from app.tools.contracts import get_read_only_tool_contracts
@@ -33,6 +34,9 @@ from evals.canonical_pricing import (
 from evals.evidence import stable_sha256
 from evals.evidence_schema import BudgetSummary
 from evals.file_snapshot import FileSnapshot, read_file_snapshot
+from evals.nonformal_paid_contract import (
+    require_nonformal_paid_case_payload,
+)
 from evals.readonly_eval import (
     EVAL_DATABASE_URL,
     EVAL_HOST_CONFIRMATION_TOKEN,
@@ -601,6 +605,148 @@ def result_to_record(
     }
 
 
+def _require_completed_paid_evidence(
+    *,
+    label: str,
+    validated_budget: BudgetSummary,
+    results: Sequence[ReadonlyEvalResult],
+    settings: Settings,
+    started_at: datetime,
+    completed_at: datetime,
+) -> None:
+    run_budget = validated_budget.run
+    cumulative_budget = validated_budget.cumulative
+    if (
+        validated_budget.enforcement_mode != "persistent_sqlite"
+        or validated_budget.run_status != "completed"
+        or validated_budget.price is None
+        or validated_budget.attempt_evidence is None
+        or run_budget.reserved_count != 0
+        or run_budget.uncertain_count != 0
+        or cumulative_budget.reserved_count != 0
+        or cumulative_budget.uncertain_count != 0
+        or run_budget.committed_cny != run_budget.settled_cny
+        or cumulative_budget.committed_cny
+        != cumulative_budget.settled_cny
+        or Decimal(run_budget.committed_cny) > Decimal("18")
+        or Decimal(cumulative_budget.committed_cny) > Decimal("18")
+    ):
+        raise ValueError(
+            f"{label} budget must be completed, settled, and within limit"
+        )
+    try:
+        canonical_price = require_canonical_paid_budget(
+            price=validated_budget.price,
+            expected_model=settings.deepseek_model,
+            run_hard_limit_cny=run_budget.hard_limit_cny,
+            run_execution_limit_cny=run_budget.execution_limit_cny,
+            cumulative_hard_limit_cny=(
+                cumulative_budget.hard_limit_cny
+            ),
+            cumulative_execution_limit_cny=(
+                cumulative_budget.execution_limit_cny
+            ),
+        )
+        require_canonical_attempt_reservation(
+            canonical_price=canonical_price,
+            max_output_tokens=settings.deepseek_max_tokens,
+            reservation_cny_per_attempt=(
+                validated_budget.reservation_cny_per_attempt
+            ),
+        )
+    except CanonicalPricingError as exc:
+        raise ValueError(
+            f"{label} pricing or reservation is not canonical"
+        ) from exc
+    if (
+        started_at < canonical_price.captured_at
+        or completed_at > canonical_price.valid_until
+    ):
+        raise ValueError(
+            f"{label} run is outside the canonical price window"
+        )
+    model_calls = [
+        call
+        for result in results
+        for call in result.model_calls
+    ]
+    if any(
+        call.status != "success"
+        or call.usage is None
+        or call.provider_attempts != 1
+        or call.observed_model != settings.deepseek_model
+        for call in model_calls
+    ):
+        raise ValueError(
+            f"{label} calls require the exact model and "
+            "single-attempt usage"
+        )
+    expected_buckets: Counter[
+        tuple[str, str, str, str]
+    ] = Counter()
+    recomputed_cost_units = 0
+    try:
+        for call in model_calls:
+            assert call.usage is not None
+            cost = calculate_usage_cost_from_rates(
+                rates_cny=canonical_price.rates_cny.model_dump(),
+                tokens_per_price_unit=(
+                    canonical_price.tokens_per_price_unit
+                ),
+                usage=call.usage,
+            )
+            recomputed_cost_units += cost.units
+            expected_buckets[
+                (
+                    (
+                        "settled_exact"
+                        if cost.mode == "exact"
+                        else "settled_upper_bound"
+                    ),
+                    cost.mode,
+                    validated_budget.reservation_cny_per_attempt,
+                    format(units_to_cny(cost.units), "f"),
+                )
+            ] += 1
+    except BudgetUsageError as exc:
+        raise ValueError(
+            f"{label} call usage could not be priced"
+        ) from exc
+    actual_buckets: Counter[
+        tuple[str, str, str, str]
+    ] = Counter()
+    for bucket in validated_budget.attempt_evidence.run:
+        if (
+            bucket.status
+            not in {"settled_exact", "settled_upper_bound"}
+            or bucket.settlement_mode is None
+            or bucket.known_cost_cny is None
+        ):
+            raise ValueError(
+                f"{label} current-run attempt evidence is unsettled"
+            )
+        actual_buckets[
+            (
+                bucket.status,
+                bucket.settlement_mode,
+                bucket.reserved_cny,
+                bucket.known_cost_cny,
+            )
+        ] += bucket.count
+    provider_attempts = sum(
+        call.provider_attempts or 0 for call in model_calls
+    )
+    if (
+        actual_buckets != expected_buckets
+        or run_budget.attempt_count != provider_attempts
+        or cny_to_units(Decimal(run_budget.settled_cny))
+        != recomputed_cost_units
+    ):
+        raise ValueError(
+            f"{label} budget attempts or usage costs differ from records"
+        )
+
+
 def build_readonly_manifest(
     *,
     run_id: str,
@@ -654,6 +800,31 @@ def build_readonly_manifest(
         if harness_fingerprints is not None
         else current_readonly_harness_fingerprints(settings)
     )
+    if purpose == "dev_repeat":
+        require_nonformal_paid_case_payload(
+            purpose=purpose,
+            case_set_name=case_set_name,
+            cases=cases,
+            planned_trials=planned_trials,
+        )
+    if purpose == "dev_repeat":
+        result_counts = Counter(result.case_id for result in results)
+        if (
+            len(results) != 28
+            or set(result_counts) != {case.case_id for case in cases}
+            or any(count != 4 for count in result_counts.values())
+        ):
+            raise ValueError(
+                "dev_repeat evidence requires exactly 7 cases by 4 trials"
+            )
+        _require_completed_paid_evidence(
+            label="dev_repeat",
+            validated_budget=validated_budget,
+            results=results,
+            settings=settings,
+            started_at=started_at,
+            completed_at=completed_at,
+        )
     if purpose == "holdout_formal":
         if split != "holdout":
             raise ValueError("holdout_formal requires the holdout split")
@@ -693,6 +864,14 @@ def build_readonly_manifest(
             raise ValueError(
                 "formal holdout evidence is missing case trials"
             )
+        _require_completed_paid_evidence(
+            label="formal holdout",
+            validated_budget=validated_budget,
+            results=results,
+            settings=settings,
+            started_at=started_at,
+            completed_at=completed_at,
+        )
         if (
             validated_budget.enforcement_mode != "persistent_sqlite"
             or validated_budget.run_status != "completed"

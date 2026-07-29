@@ -72,6 +72,14 @@ declared tools and structured results, atomic answer semantics, and whether any
 business state changed. The judge is not a security authority and the result
 does not certify production safety.
 
+Every non-formal paid entry point is fail-closed against a repository-owned
+case allowlist before budget or model construction. `diagnostic` is bound to
+the canonical 10-case development set; `dev_repeat` is bound to the canonical
+7-case regression set, its name, count, and content hash. Completed
+`dev_repeat` evidence must contain 28 settled records whose provider attempts,
+canonical usage costs, and attempt buckets reconcile exactly with the
+persistent run budget and remain within the CNY 18 execution limit.
+
 The first live `deepseek-v4-flash` run on 2026-07-29 passed 7/10 cases under
 the strict tool-call budgets. All three failures were efficiency failures; all
 10 cases added no approval, confirmation, execution or support-ticket records.

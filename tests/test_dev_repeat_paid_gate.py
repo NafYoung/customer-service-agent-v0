@@ -24,14 +24,22 @@ from evals.evidence import (
     BusinessStateDelta,
     ModelCallEvidence,
 )
-from evals.evidence_schema import BudgetSummary, ModelCallRecord
+from evals.evidence_schema import (
+    BudgetSummary,
+    ModelCallRecord,
+    validate_readonly_payload,
+)
 from evals.readonly_eval import (
     DEFAULT_CASE_DIR,
     ReadonlyEvalResult,
     ScoreCheck,
     load_cases,
 )
-from evals.readonly_reporting import build_readonly_manifest
+from evals.readonly_reporting import (
+    build_readonly_manifest,
+    result_to_record,
+    summarize_results,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 REGRESSION_CASE_DIR = ROOT / "evals" / "readonly_regression_cases"
@@ -330,6 +338,77 @@ def test_dev_repeat_manifest_accepts_only_canonical_7_by_4_case_set() -> None:
         manifest["eval"]["case_set_sha256"]
         == "6340394c8edd5d95c2756f3f4753d4e224682b7f84a445c76b3abb675bad2edb"
     )
+
+
+def test_public_validator_recomputes_dev_repeat_bucket_costs() -> None:
+    cases, results = _dev_repeat_inputs()
+    run_id = "eval-20260729-dev-repeat-public"
+    budget = _paid_budget(
+        run_id=run_id,
+        purpose="dev_repeat",
+        attempt_count=len(results),
+    )
+    started = datetime(2026, 7, 29, 12, tzinfo=UTC)
+    manifest = build_readonly_manifest(
+        run_id=run_id,
+        purpose="dev_repeat",
+        split="dev",
+        case_set_name="readonly-regression-v1",
+        cases=cases,
+        results=results,
+        settings=_settings(),
+        planned_trials=4,
+        started_at=started,
+        completed_at=started + timedelta(minutes=5),
+        budget_report=budget,
+    )
+    manifest["artifacts"] = {
+        "cases": "cases.jsonl",
+        "summary": "summary.json",
+        "trajectories": "trajectories/",
+        "integrity": "integrity.json",
+    }
+    records = [
+        result_to_record(result, split="dev")
+        for result in results
+    ]
+    payload = {
+        "manifest": manifest,
+        "cases": records,
+        "summary": summarize_results(
+            run_id=run_id,
+            results=results,
+            planned_trials=4,
+            budget_report=budget,
+        ),
+        "trajectories": deepcopy(records),
+        "integrity": {
+            "schema_version": "1.0",
+            "algorithm": "sha256",
+            "files": {},
+        },
+    }
+    validate_readonly_payload(payload)
+
+    forged = deepcopy(payload)
+    forged_cost = Decimal("0.000013")
+    forged_total = forged_cost * len(results)
+    for scope in ("run", "cumulative"):
+        forged["summary"]["budget"]["attempt_evidence"][scope][0][
+            "known_cost_cny"
+        ] = format(forged_cost, "f")
+        forged["summary"]["budget"][scope][
+            "committed_cny"
+        ] = format(forged_total, "f")
+        forged["summary"]["budget"][scope][
+            "settled_cny"
+        ] = format(forged_total, "f")
+        forged["summary"]["budget"][scope][
+            "remaining_execution_cny"
+        ] = format(Decimal("18") - forged_total, "f")
+
+    with pytest.raises(ValueError, match="attempt|bucket|cost|record"):
+        validate_readonly_payload(forged)
 
 
 @pytest.mark.parametrize(

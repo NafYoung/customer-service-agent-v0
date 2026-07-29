@@ -101,6 +101,26 @@ def _budget_report(
         "reservation_cny_per_attempt": "1.002048",
         "run": dict(amount),
         "cumulative": dict(amount),
+        "attempt_evidence": {
+            "run": [
+                {
+                    "status": "settled_upper_bound",
+                    "settlement_mode": "upper_bound",
+                    "reserved_cny": "1.002048",
+                    "known_cost_cny": "0.000012",
+                    "count": attempt_count,
+                }
+            ],
+            "cumulative": [
+                {
+                    "status": "settled_upper_bound",
+                    "settlement_mode": "upper_bound",
+                    "reserved_cny": "1.002048",
+                    "known_cost_cny": "0.000012",
+                    "count": attempt_count,
+                }
+            ],
+        },
     }
 
 
@@ -421,20 +441,25 @@ def test_manifest_fingerprints_harness_and_never_serializes_secret_or_holdout_id
     )
     assert manifest["budget"]["hard_limit_cny"] == "20"
 
-    dev_cases = load_cases()[:2]
+    dev_cases = load_cases(
+        readonly_reporting.ROOT
+        / "evals"
+        / "readonly_regression_cases"
+    )
     dev_results = [
-        _result(case_id=case.case_id, trial=1, passed=True)
+        _result(case_id=case.case_id, trial=trial, passed=True)
+        for trial in range(1, 5)
         for case in dev_cases
     ]
     dev_manifest = build_readonly_manifest(
         run_id="eval-20260729-abcdef13",
         purpose="dev_repeat",
         split="dev",
-        case_set_name="readonly-dev-v1",
+        case_set_name="readonly-regression-v1",
         cases=dev_cases,
         results=dev_results,
         settings=settings,
-        planned_trials=1,
+        planned_trials=4,
         started_at=started,
         completed_at=completed,
         budget_report=_budget_report(
@@ -797,6 +822,9 @@ def test_formal_bundle_schema_recomputes_cost_instead_of_trusting_summary():
         forged_budget[scope]["committed_cny"] = "0"
         forged_budget[scope]["settled_cny"] = "0"
         forged_budget[scope]["remaining_execution_cny"] = "18"
+        forged_budget["attempt_evidence"][scope][0][
+            "known_cost_cny"
+        ] = "0"
     with pytest.raises(ValueError, match="canonical|pricing|price"):
         validate_readonly_payload(forged_price)
 
@@ -892,5 +920,8 @@ def test_formal_bundle_schema_recomputes_cost_instead_of_trusting_summary():
             "remaining_execution_cny"
         ] = "1"
 
-    with pytest.raises(ValueError, match="cost|usage|[Ff]ormal"):
+    with pytest.raises(
+        ValueError,
+        match="budget|cost|usage|[Ff]ormal",
+    ):
         validate_readonly_payload(payload)

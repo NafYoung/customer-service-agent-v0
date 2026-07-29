@@ -362,6 +362,11 @@ def test_cli_writes_verified_machine_readable_bundle_without_paid_api(
         "build_deepseek_budget_guard",
         lambda **kwargs: budget_guard,
     )
+    monkeypatch.setattr(
+        run_readonly_agent_evals,
+        "require_nonformal_paid_case_set",
+        lambda **kwargs: None,
+    )
 
     exit_code = run_readonly_agent_evals.main(
         [
@@ -494,6 +499,11 @@ def test_cli_runs_isolated_semantic_judge_and_records_its_phase(
         run_readonly_agent_evals,
         "build_deepseek_budget_guard",
         lambda **kwargs: budget_guard,
+    )
+    monkeypatch.setattr(
+        run_readonly_agent_evals,
+        "require_nonformal_paid_case_set",
+        lambda **kwargs: None,
     )
     output_root = tmp_path / "artifacts"
 
