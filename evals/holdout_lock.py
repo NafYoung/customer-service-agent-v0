@@ -7,8 +7,10 @@ import stat
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Literal, Mapping, Sequence
+from typing import Annotated, Any, Literal, Mapping, Sequence
 from urllib.parse import urlparse
+
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from app.config import Settings
 from evals.calibration_attestation import (
@@ -29,6 +31,7 @@ from evals.file_snapshot import (
     read_file_snapshot,
     read_json_object_snapshot,
 )
+from evals.private_paths import PrivatePathError, require_private_input_file
 from evals.readonly_eval import ReadonlyEvalCase
 from evals.readonly_reporting import (
     current_readonly_harness_fingerprints,
@@ -40,6 +43,95 @@ from evals.readonly_reporting import (
 
 class HoldoutLockError(RuntimeError):
     """A declared formal holdout cannot be started or finalized safely."""
+
+
+Sha256 = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
+GitCommit = Annotated[str, Field(pattern=r"^[0-9a-f]{40,64}$")]
+RunId = Annotated[
+    str,
+    Field(pattern=r"^[a-z0-9][a-z0-9._-]{7,79}$"),
+]
+
+
+class _StrictReceiptModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class HoldoutStartReceipt(_StrictReceiptModel):
+    schema_version: Literal["1.0"]
+    case_set_name: Literal["readonly-holdout-v2"]
+    case_set_sha256: Sha256
+    manifest_sha256: Sha256
+    source_git_commit: GitCommit
+    scorer_version: str = Field(min_length=1)
+    harness_sha256: Sha256
+    semantic_calibration_report_sha256: Sha256
+    semantic_calibration_review_sha256: Sha256
+    semantic_calibration_run_id: RunId
+    semantic_calibration_source_git_commit: GitCommit
+    semantic_calibration_fixture_sha256: Sha256
+    semantic_calibration_contract_set_sha256: Sha256
+    semantic_calibration_harness_sha256: Sha256
+    semantic_calibration_reviewer_id: str = Field(min_length=8)
+    semantic_calibration_reviewed_count: int = Field(ge=1)
+    public_regression_bundle_integrity_sha256: Sha256
+    public_regression_gate_sha256: Sha256
+    public_regression_run_id: RunId
+    public_regression_source_git_commit: GitCommit
+    public_regression_case_set_name: Literal["readonly-regression-v1"]
+    public_regression_case_set_sha256: Sha256
+    public_regression_harness_sha256: Sha256
+    run_id: RunId
+    status: Literal["started"]
+    created_at: datetime
+    completed_at: Literal[None]
+
+    @model_validator(mode="after")
+    def require_aware_created_at(self) -> HoldoutStartReceipt:
+        if self.created_at.tzinfo is None:
+            raise ValueError("Holdout start timestamp must be timezone-aware.")
+        return self
+
+
+class HoldoutTerminalReceipt(_StrictReceiptModel):
+    schema_version: Literal["2.0"]
+    run_id: RunId
+    status: Literal["completed", "failed"]
+    lock_start_receipt_sha256: Sha256
+    bundle_integrity_sha256: Sha256 | None
+    attempt_bundle_integrity_sha256: Sha256 | None
+    failure_evidence_status: Literal["captured", "unavailable"] | None
+    completed_at: datetime
+
+    @model_validator(mode="after")
+    def validate_terminal_state(self) -> HoldoutTerminalReceipt:
+        if self.completed_at.tzinfo is None:
+            raise ValueError(
+                "Holdout terminal timestamp must be timezone-aware."
+            )
+        if self.status == "completed":
+            valid = (
+                self.bundle_integrity_sha256 is not None
+                and self.attempt_bundle_integrity_sha256 is None
+                and self.failure_evidence_status is None
+            )
+        else:
+            valid = (
+                self.bundle_integrity_sha256 is None
+                and (
+                    (
+                        self.attempt_bundle_integrity_sha256 is not None
+                        and self.failure_evidence_status == "captured"
+                    )
+                    or (
+                        self.attempt_bundle_integrity_sha256 is None
+                        and self.failure_evidence_status == "unavailable"
+                    )
+                )
+            )
+        if not valid:
+            raise ValueError("Holdout terminal receipt state is inconsistent.")
+        return self
 
 
 def _is_sha256(value: object) -> bool:
@@ -346,6 +438,28 @@ def _read_manifest_with_sha256(
         ) from exc
 
 
+def _validate_start_receipt(
+    payload: Mapping[str, Any],
+) -> HoldoutStartReceipt:
+    try:
+        return HoldoutStartReceipt.model_validate(payload)
+    except ValidationError as exc:
+        raise HoldoutLockError(
+            "The formal holdout start receipt failed its strict schema."
+        ) from exc
+
+
+def _validate_terminal_receipt(
+    payload: Mapping[str, Any],
+) -> HoldoutTerminalReceipt:
+    try:
+        return HoldoutTerminalReceipt.model_validate(payload)
+    except ValidationError as exc:
+        raise HoldoutLockError(
+            "The formal holdout terminal receipt failed its strict schema."
+        ) from exc
+
+
 def validate_holdout_declaration(
     *,
     manifest_path: Path,
@@ -649,9 +763,12 @@ def acquire_holdout_run_lock_with_hash(
     lock_root.mkdir(parents=True, exist_ok=True, mode=0o700)
     lock_root.chmod(0o700)
     lock_path = lock_root / "readonly-holdout-v2.start.json"
+    if lock_path.exists():
+        raise HoldoutLockError(
+            "This formal holdout declaration has already been consumed."
+        )
     created_at = (now or datetime.now(UTC)).astimezone(UTC).isoformat()
-    receipt_sha256 = _write_exclusive_json(
-        lock_path,
+    receipt_payload = _validate_start_receipt(
         {
             "schema_version": "1.0",
             "case_set_name": declaration.case_set_name,
@@ -710,6 +827,10 @@ def acquire_holdout_run_lock_with_hash(
             "completed_at": None,
         },
     )
+    receipt_sha256 = _write_exclusive_json(
+        lock_path,
+        receipt_payload.model_dump(mode="json"),
+    )
     return AcquiredHoldoutRunLock(
         path=lock_path,
         receipt_sha256=receipt_sha256,
@@ -733,31 +854,39 @@ def acquire_holdout_run_lock(
     ).path
 
 
-def _require_private_receipt_file(path: Path, *, label: str) -> None:
+def _require_private_bundle_directory(
+    path: Path,
+    *,
+    private_root: Path,
+) -> Path:
+    absolute = Path(os.path.abspath(path))
+    root = Path(os.path.abspath(private_root))
     try:
-        for ancestor in path.parents:
-            if stat.S_ISLNK(ancestor.lstat().st_mode):
+        absolute.resolve(strict=True).relative_to(root.resolve(strict=True))
+        current = absolute
+        while True:
+            mode = current.lstat().st_mode
+            if (
+                stat.S_ISLNK(mode)
+                or not stat.S_ISDIR(mode)
+                or stat.S_IMODE(mode) != 0o700
+            ):
                 raise HoldoutLockError(
-                    f"The private {label} path cannot contain symlinks."
+                    "The private formal bundle ancestry must use 0700 "
+                    "directories without symlinks."
                 )
-        file_mode = path.lstat().st_mode
-        parent_mode = path.parent.lstat().st_mode
-    except OSError as exc:
+            if current == root:
+                break
+            if root not in current.parents:
+                raise HoldoutLockError(
+                    "The private formal bundle is outside the fixed root."
+                )
+            current = current.parent
+    except (OSError, ValueError) as exc:
         raise HoldoutLockError(
-            f"The private {label} permissions are unreadable."
+            "The private formal bundle is outside the fixed root."
         ) from exc
-    if (
-        stat.S_ISLNK(file_mode)
-        or not stat.S_ISREG(file_mode)
-        or stat.S_IMODE(file_mode) != 0o600
-        or stat.S_ISLNK(parent_mode)
-        or not stat.S_ISDIR(parent_mode)
-        or stat.S_IMODE(parent_mode) != 0o700
-    ):
-        raise HoldoutLockError(
-            f"The private {label} requires a 0600 regular file "
-            "inside a 0700 directory."
-        )
+    return absolute
 
 
 def _require_private_completed_chain_paths(
@@ -766,15 +895,30 @@ def _require_private_completed_chain_paths(
     start_path: Path,
     terminal_path: Path,
     bundle_path: Path,
+    private_root: Path,
 ) -> None:
     for path, label in (
         (manifest_path, "holdout manifest"),
         (start_path, "holdout start receipt"),
         (terminal_path, "holdout terminal receipt"),
     ):
-        _require_private_receipt_file(path, label=label)
+        try:
+            require_private_input_file(
+                path,
+                private_root=private_root,
+                label=label,
+            )
+        except PrivatePathError as exc:
+            raise HoldoutLockError(
+                f"The private {label} is outside the fixed root or "
+                "has unsafe permissions."
+            ) from exc
     try:
-        verify_private_eval_bundle_permissions(bundle_path)
+        private_bundle = _require_private_bundle_directory(
+            bundle_path,
+            private_root=private_root,
+        )
+        verify_private_eval_bundle_permissions(private_bundle)
     except ArtifactIntegrityError as exc:
         raise HoldoutLockError(
             "The private formal bundle permissions are invalid."
@@ -785,10 +929,7 @@ def holdout_lock_receipt_sha256(lock_path: Path) -> str:
     """Hash the immutable start receipt without following a symlink."""
 
     payload, receipt_sha256 = _read_manifest_with_sha256(lock_path)
-    if payload.get("status") != "started":
-        raise HoldoutLockError(
-            "The formal holdout start receipt is invalid."
-        )
+    _validate_start_receipt(payload)
     return receipt_sha256
 
 
@@ -807,6 +948,7 @@ def finalize_holdout_run_lock(
     payload, start_receipt_sha256 = _read_manifest_with_sha256(
         lock_path
     )
+    start_receipt = _validate_start_receipt(payload)
     if (
         not _is_sha256(expected_start_receipt_sha256)
         or start_receipt_sha256 != expected_start_receipt_sha256
@@ -814,7 +956,7 @@ def finalize_holdout_run_lock(
         raise HoldoutLockError(
             "The formal holdout start receipt changed before finalization."
         )
-    if payload.get("run_id") != run_id or payload.get("status") != "started":
+    if start_receipt.run_id != run_id:
         raise HoldoutLockError(
             "The formal holdout lock cannot be finalized in its current state."
         )
@@ -841,8 +983,7 @@ def finalize_holdout_run_lock(
     terminal_path = lock_path.with_name(
         "readonly-holdout-v2.terminal.json"
     )
-    _write_exclusive_json(
-        terminal_path,
+    terminal_payload = HoldoutTerminalReceipt.model_validate(
         {
             "schema_version": "2.0",
             "run_id": run_id,
@@ -866,6 +1007,10 @@ def finalize_holdout_run_lock(
             ).astimezone(UTC).isoformat(),
         },
     )
+    _write_exclusive_json(
+        terminal_path,
+        terminal_payload.model_dump(mode="json"),
+    )
     return terminal_path
 
 
@@ -885,12 +1030,22 @@ def verify_holdout_receipt_chain(
         start_path=start_path,
         terminal_path=terminal_path,
         bundle_path=bundle_path,
+        private_root=private_root,
     )
     manifest, manifest_sha256 = _read_manifest_with_sha256(
         manifest_path
     )
     start, start_sha256 = _read_manifest_with_sha256(start_path)
     terminal, _ = _read_manifest_with_sha256(terminal_path)
+    start_receipt = _validate_start_receipt(start)
+    terminal_receipt = _validate_terminal_receipt(terminal)
+    if (
+        terminal_receipt.status != "completed"
+        or terminal_receipt.completed_at < start_receipt.created_at
+    ):
+        raise HoldoutLockError(
+            "The completed holdout receipt timestamps are invalid."
+        )
     try:
         regression_gate = validate_regression_gate(
             bundle_path=regression_bundle_path,
@@ -1071,12 +1226,22 @@ def verify_failed_holdout_receipt_chain(
         start_path=start_path,
         terminal_path=terminal_path,
         bundle_path=bundle_path,
+        private_root=private_root,
     )
     manifest, manifest_sha256 = _read_manifest_with_sha256(
         manifest_path
     )
     start, start_sha256 = _read_manifest_with_sha256(start_path)
     terminal, _ = _read_manifest_with_sha256(terminal_path)
+    start_receipt = _validate_start_receipt(start)
+    terminal_receipt = _validate_terminal_receipt(terminal)
+    if (
+        terminal_receipt.status != "failed"
+        or terminal_receipt.completed_at < start_receipt.created_at
+    ):
+        raise HoldoutLockError(
+            "The failed holdout receipt timestamps are invalid."
+        )
     try:
         regression_gate = validate_regression_gate(
             bundle_path=regression_bundle_path,

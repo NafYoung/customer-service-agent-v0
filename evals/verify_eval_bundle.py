@@ -77,11 +77,22 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "INVALID: formal v2 requires its bound public regression bundle"
             )
             return 1
+        if complete_chain and not is_formal:
+            print(
+                "INVALID: formal receipt-chain arguments are only valid "
+                "for formal v2 evidence"
+            )
+            return 1
         if complete_chain:
             assert args.holdout_manifest is not None
             assert args.holdout_start is not None
             assert args.holdout_terminal is not None
-            assert args.regression_bundle is not None
+            if args.regression_bundle is None:
+                print(
+                    "INVALID: a complete formal chain requires its bound "
+                    "public regression bundle"
+                )
+                return 1
             if args.failed_attempt:
                 verify_failed_holdout_receipt_chain(
                     manifest_path=args.holdout_manifest,

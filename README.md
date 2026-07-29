@@ -310,7 +310,8 @@ python evals/verify_eval_bundle.py \
   artifacts/private/eval-runs/<run-id> \
   --holdout-manifest <sealed-holdout-v2-manifest.json> \
   --holdout-start <readonly-holdout-v2.start.json> \
-  --holdout-terminal <readonly-holdout-v2.terminal.json>
+  --holdout-terminal <readonly-holdout-v2.terminal.json> \
+  --regression-bundle <private-public-regression-bundle>
 ```
 
 公开仓库后只提交额外生成的脱敏证据投影，不提交原始轨迹、预算账本、

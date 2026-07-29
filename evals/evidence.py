@@ -382,7 +382,8 @@ def write_eval_bundle(
     if manifest.get("run_id") not in {None, run_id}:
         raise ValueError("manifest run_id must match the output run_id")
 
-    output_root.mkdir(parents=True, exist_ok=True)
+    output_root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    output_root.chmod(0o700)
     final_dir = output_root / run_id
     if final_dir.exists():
         raise FileExistsError(f"Eval bundle already exists: {run_id}")

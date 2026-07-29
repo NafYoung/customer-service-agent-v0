@@ -105,7 +105,8 @@ python evals/run_readonly_agent_evals.py \
   --trials 4 \
   --holdout-manifest <sealed-holdout-v2-manifest.json> \
   --calibration-report <private-schema-v2-report.json> \
-  --calibration-review <private-schema-v1-review.json>
+  --calibration-review <private-schema-v1-review.json> \
+  --regression-bundle <private-public-regression-bundle>
 ```
 
 正式运行的控制台只输出聚合结果，不输出私有 case ID、带预期短语的逐例失败
@@ -119,7 +120,8 @@ python evals/verify_eval_bundle.py \
   artifacts/private/eval-runs/<run-id> \
   --holdout-manifest <sealed-holdout-v2-manifest.json> \
   --holdout-start <readonly-holdout-v2.start.json> \
-  --holdout-terminal <readonly-holdout-v2.terminal.json>
+  --holdout-terminal <readonly-holdout-v2.terminal.json> \
+  --regression-bundle <private-public-regression-bundle>
 ```
 
 start receipt 的 SHA-256 直接来自独占写入并 `fsync` 的确切字节，不在创建后
@@ -127,6 +129,10 @@ start receipt 的 SHA-256 直接来自独占写入并 `fsync` 的确切字节，
 `BaseException`，会移除半写文件；一旦有效 start 已存在，后续任意 Python
 异常都会进入 failed terminal 路径。terminal 写入遭遇一次异步中断时会清理
 半写文件并重试，终态落盘后再向调用者重新抛出中断。
+start receipt 使用禁止额外字段的 schema v1，terminal receipt 使用禁止额外
+字段的 schema v2；状态、时间戳、成功/失败哈希字段组合必须严格匹配，且
+terminal 时间不得早于 start。组合校验器还会重新验证命令中给出的实际公开
+回归 bundle，不能只凭回执或正式 bundle 自报的回归哈希通过。
 
 任何可捕获的 Python 异常都会先尝试关闭模型和预算，再把已完成 trial 写入
 独立的 `formal_holdout_failed_attempt` 私有 bundle。该 Schema 与成功

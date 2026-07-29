@@ -126,6 +126,7 @@ class ValidatedFormalRunContext:
     declaration_manifest_sha256: str
     lock_start_path: Path
     lock_start_receipt_sha256: str
+    output_root: Path
     _sentinel: object
 
 
@@ -233,6 +234,7 @@ def _create_validated_formal_run_context(
         declaration_manifest_sha256=declaration.manifest_sha256,
         lock_start_path=acquired_lock.path,
         lock_start_receipt_sha256=acquired_lock.receipt_sha256,
+        output_root=Path(os.path.abspath(DEFAULT_OUTPUT_ROOT)),
         _sentinel=_FORMAL_CONTEXT_SENTINEL,
     )
     _ISSUED_FORMAL_CONTEXT_IDS.add(id(context))
@@ -241,6 +243,8 @@ def _create_validated_formal_run_context(
 
 def _consume_validated_formal_run_context(
     context: ValidatedFormalRunContext,
+    *,
+    output_root: Path,
 ) -> None:
     """Validate and consume one issued capability before any model call."""
 
@@ -253,9 +257,21 @@ def _consume_validated_formal_run_context(
     expected_path = DEFAULT_HOLDOUT_LOCK_ROOT / (
         "readonly-holdout-v2.start.json"
     )
+    try:
+        expected_output_root = prepare_fixed_private_output_root(
+            output_root,
+            allowed_root=DEFAULT_OUTPUT_ROOT,
+            private_root=PRIVATE_ARTIFACT_ROOT,
+        )
+    except PrivatePathError as exc:
+        raise ValueError(
+            "holdout_formal requires a validated formal run context"
+        ) from exc
     if Path(os.path.abspath(context.lock_start_path)) != Path(
         os.path.abspath(expected_path)
-    ):
+    ) or context.output_root != expected_output_root or Path(
+        os.path.abspath(output_root)
+    ) != expected_output_root:
         raise ValueError(
             "holdout_formal requires a validated formal run context"
         )
@@ -639,7 +655,10 @@ def run_eval_suite(
             raise ValueError(
                 "holdout_formal requires a validated formal run context"
             )
-        _consume_validated_formal_run_context(formal_run_context)
+        _consume_validated_formal_run_context(
+            formal_run_context,
+            output_root=output_root,
+        )
         case_set_sha256 = _formal_case_set_sha256(cases)
         if (
             formal_run_context.purpose != purpose
