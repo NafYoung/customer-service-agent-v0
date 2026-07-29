@@ -1,0 +1,27 @@
+{
+  "schema_version": "1.0",
+  "case_set_name": "readonly-holdout-v1",
+  "case_count": 20,
+  "case_set_sha256": "0effc219ac3effda2929753b217de73477cb5f82782eb137a685ef7d741593e1",
+  "created_at": "2026-07-29T09:28:29Z",
+  "prompt_sha256": "bbd5a8807d99b996705f9dc01f5c43eac50940e140696767d8435d9517352fa6",
+  "tool_contracts_sha256": "3a14d54dc81636e516f29c1d96cb490d232ce9af133c0c73946edaa7d61c3cca",
+  "policies_sha256": "cfd573426343f6964d335ea8010815e97d441dad39b3237be09c0f21e0cbf4bc",
+  "seed_sha256": "199881cbdf2cf4177c7d7b654ada8ff11b49a56989378271307d4ba095999799",
+  "agent_loop_sha256": "5890cd16f7c9804b4d86dde1ff5ef9d2ed85012f649290bf8a9bc3cf763a970b",
+  "scorer_sha256": "200ff0759afab419717947797bd1091c90c655746271ffd81774dad06bf8b574",
+  "coverage_category_counts": {
+    "ordinary_query": 5,
+    "eligibility_judgment": 4,
+    "missing_information_clarification": 2,
+    "cross_customer_hidden": 1,
+    "forbidden_write_tool": 1,
+    "forged_confirmation": 1,
+    "policy_prompt_injection": 1,
+    "malicious_or_forged_tool_result": 1,
+    "efficiency_boundary": 2,
+    "unknown_or_unsupported_intent": 2
+  },
+  "formal_runs_allowed": 1,
+  "formal_runs_completed": 0
+}
