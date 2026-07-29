@@ -68,6 +68,17 @@ def _review() -> ValidatedCalibrationReview:
 
 
 def _regression_gate(**overrides: object) -> SimpleNamespace:
+    source_snapshot = {
+        "git_commit": "2" * 40,
+        "git_dirty": False,
+        "source_tree_sha256": "8" * 64,
+        "python_version": "3.11-test",
+        "platform": "test-platform",
+        "package_versions": {
+            "fastapi": "test",
+            "httpx": "test",
+        },
+    }
     values: dict[str, object] = {
         "bundle_path": Path("/private/regression/eval-public-regression"),
         "bundle_integrity_sha256": "6" * 64,
@@ -81,6 +92,12 @@ def _regression_gate(**overrides: object) -> SimpleNamespace:
         "harness_sha256": stable_sha256(
             current_readonly_harness_fingerprints()
         ),
+        "source_tree_sha256": source_snapshot[
+            "source_tree_sha256"
+        ],
+        "source_identity_sha256": stable_sha256(source_snapshot),
+        "source_snapshot": source_snapshot,
+        "runtime_identity_sha256": "5" * 64,
         "passed_trials": 28,
     }
     values.update(overrides)
@@ -612,10 +629,13 @@ def test_failed_terminal_binds_only_failed_attempt_evidence(
         )
 
 
+@pytest.mark.parametrize("source_tree_attack", [False, True])
 def test_failed_holdout_chain_binds_private_attempt_bundle(
     tmp_path: Path,
     monkeypatch,
+    source_tree_attack: bool,
 ) -> None:
+    regression_gate = _regression_gate()
     manifest_path = _manifest(tmp_path / "manifest.json")
     declaration = validate_holdout_declaration(
         manifest_path=manifest_path,
@@ -623,7 +643,7 @@ def test_failed_holdout_chain_binds_private_attempt_bundle(
         cases=_cases(),
         calibration_attestation=_attestation(),
         calibration_review=_review(),
-        regression_gate=_regression_gate(),
+        regression_gate=regression_gate,
     )
     run_id = "eval-20260729-failed-chain"
     start_path = acquire_holdout_run_lock(
@@ -645,7 +665,11 @@ def test_failed_holdout_chain_binds_private_attempt_bundle(
                 "source": {
                     "git_commit": declaration.source_git_commit,
                     "git_dirty": False,
-                    "source_tree_sha256": "9" * 64,
+                    "source_tree_sha256": (
+                        "9" * 64
+                        if source_tree_attack
+                        else regression_gate.source_tree_sha256
+                    ),
                 },
                 "case_set": {
                     "name": declaration.case_set_name,
@@ -708,20 +732,37 @@ def test_failed_holdout_chain_binds_private_attempt_bundle(
         lambda **kwargs: _regression_gate(),
     )
 
-    verify_failed_holdout_receipt_chain(
-        manifest_path=manifest_path,
-        start_path=start_path,
-        terminal_path=terminal_path,
-        bundle_path=failure_bundle,
-        regression_bundle_path=tmp_path / "regression-bundle",
-        private_root=tmp_path,
-    )
+    if source_tree_attack:
+        with pytest.raises(
+            HoldoutLockError,
+            match="source|runtime|chain|match",
+        ):
+            verify_failed_holdout_receipt_chain(
+                manifest_path=manifest_path,
+                start_path=start_path,
+                terminal_path=terminal_path,
+                bundle_path=failure_bundle,
+                regression_bundle_path=tmp_path / "regression-bundle",
+                private_root=tmp_path,
+            )
+    else:
+        verify_failed_holdout_receipt_chain(
+            manifest_path=manifest_path,
+            start_path=start_path,
+            terminal_path=terminal_path,
+            bundle_path=failure_bundle,
+            regression_bundle_path=tmp_path / "regression-bundle",
+            private_root=tmp_path,
+        )
 
 
+@pytest.mark.parametrize("source_runtime_attack", [False, True])
 def test_completed_holdout_chain_links_manifest_start_bundle_and_terminal(
     tmp_path: Path,
     monkeypatch,
+    source_runtime_attack: bool,
 ) -> None:
+    regression_gate = _regression_gate()
     manifest_path = _manifest(tmp_path / "manifest.json")
     declaration = validate_holdout_declaration(
         manifest_path=manifest_path,
@@ -729,7 +770,7 @@ def test_completed_holdout_chain_links_manifest_start_bundle_and_terminal(
         cases=_cases(),
         calibration_attestation=_attestation(),
         calibration_review=_review(),
-        regression_gate=_regression_gate(),
+        regression_gate=regression_gate,
     )
     run_id = "eval-20260729-complete-chain"
     start_path = acquire_holdout_run_lock(
@@ -738,11 +779,15 @@ def test_completed_holdout_chain_links_manifest_start_bundle_and_terminal(
         run_id=run_id,
     )
     start_sha256 = holdout_lock_receipt_sha256(start_path)
+    source_snapshot = dict(regression_gate.source_snapshot)
+    source_snapshot["package_versions"] = dict(
+        source_snapshot["package_versions"]
+    )
+    if source_runtime_attack:
+        source_snapshot["package_versions"]["httpx"] = "forged"
     bundle_manifest = {
         "run_id": run_id,
-        "source": {
-            "git_commit": declaration.source_git_commit,
-        },
+        "source": source_snapshot,
         "harness": {
             "runtime_harness_sha256": declaration.harness_sha256,
         },
@@ -837,6 +882,20 @@ def test_completed_holdout_chain_links_manifest_start_bundle_and_terminal(
         bundle_integrity_sha256=integrity_sha256,
     )
 
+    if source_runtime_attack:
+        with pytest.raises(
+            HoldoutLockError,
+            match="source|runtime|chain|match",
+        ):
+            holdout_protocol.verify_holdout_receipt_chain(
+                manifest_path=manifest_path,
+                start_path=start_path,
+                terminal_path=terminal_path,
+                bundle_path=bundle_path,
+                regression_bundle_path=tmp_path / "regression-bundle",
+                private_root=tmp_path,
+            )
+        return
     holdout_protocol.verify_holdout_receipt_chain(
         manifest_path=manifest_path,
         start_path=start_path,

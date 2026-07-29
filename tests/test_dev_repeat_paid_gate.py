@@ -774,6 +774,19 @@ def test_formal_regression_gate_rejects_mixed_source_snapshot(
         )
 
 
+def test_public_dev_repeat_rejects_budget_identity_before_price_window() -> None:
+    payload = _dev_repeat_payload()
+    payload["summary"]["budget"]["run_identity"]["started_at"] = (
+        "2026-07-28T00:00:00+00:00"
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="price|window|identity|budget",
+    ):
+        validate_readonly_payload(payload)
+
+
 @pytest.mark.parametrize(
     ("field_path", "forged_value"),
     [

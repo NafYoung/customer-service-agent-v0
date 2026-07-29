@@ -413,6 +413,31 @@ def test_partial_failed_attempt_cross_validates_records_and_budget(
     ]
 
 
+def test_failed_attempt_rejects_budget_identity_before_price_window(
+    tmp_path: Path,
+) -> None:
+    run_id = "formal-failed-20260729-early-budget"
+    budget = _persistent_budget_report(
+        run_id=run_id,
+        attempt_count=0,
+    )
+    budget["run_identity"]["started_at"] = (
+        "2026-07-28T00:00:00+00:00"
+    )
+
+    with pytest.raises(
+        (ValidationError, ValueError),
+        match="price|window|identity|budget",
+    ):
+        write_formal_failure_bundle(
+            output_root=tmp_path / "failed-attempts",
+            context=_context(run_id=run_id),
+            case_records=[],
+            records_captured=True,
+            budget_summary=budget,
+        )
+
+
 def test_failed_attempt_rejects_offline_or_underreported_budget(
     tmp_path: Path,
 ) -> None:

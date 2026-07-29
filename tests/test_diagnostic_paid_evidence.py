@@ -257,6 +257,20 @@ def _paid_budget(
     }
 
 
+def test_paid_budget_identity_cannot_start_before_price_window() -> None:
+    _, results = _diagnostic_inputs()
+    budget = _paid_budget(results)
+    budget["run_identity"]["started_at"] = (
+        "2026-07-28T00:00:00+00:00"
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="price|window|identity|budget",
+    ):
+        _build_manifest(results=results, budget=budget)
+
+
 def _build_manifest(
     *,
     results: list[ReadonlyEvalResult],
