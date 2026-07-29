@@ -67,12 +67,128 @@ class HoldoutDeclaration:
     calibration_reviewer_id: str
     calibration_reviewed_count: int
     harness_sha256: str
+    regression_bundle_integrity_sha256: str
+    regression_gate_sha256: str
+    regression_run_id: str
+    regression_source_git_commit: str
+    regression_case_set_name: str
+    regression_case_set_sha256: str
+    regression_harness_sha256: str
+
+
+@dataclass(frozen=True)
+class ValidatedRegressionGate:
+    """Verified public-regression identity accepted for one formal seal."""
+
+    bundle_path: Path
+    bundle_integrity_sha256: str
+    gate_sha256: str
+    run_id: str
+    source_git_commit: str
+    case_set_name: str
+    case_set_sha256: str
+    harness_sha256: str
+    passed_trials: int
 
 
 @dataclass(frozen=True)
 class AcquiredHoldoutRunLock:
     path: Path
     receipt_sha256: str
+
+
+def validate_regression_gate(
+    *,
+    bundle_path: Path,
+    private_root: Path,
+    source_git_commit: str,
+    harness_sha256: str,
+) -> ValidatedRegressionGate:
+    """Validate the fixed 7x4 public regression before any formal provider use."""
+
+    absolute_bundle = Path(os.path.abspath(bundle_path))
+    absolute_private_root = Path(os.path.abspath(private_root))
+    try:
+        absolute_bundle.resolve(strict=True).relative_to(
+            absolute_private_root.resolve(strict=True)
+        )
+    except (OSError, ValueError) as exc:
+        raise HoldoutLockError(
+            "The formal public regression bundle is outside the private root."
+        ) from exc
+    try:
+        verify_private_eval_bundle_permissions(absolute_bundle)
+        payload = verify_eval_bundle(absolute_bundle)
+        evidence = validate_readonly_payload(payload)
+        integrity_sha256 = read_file_snapshot(
+            absolute_bundle / "integrity.json"
+        ).sha256
+    except (
+        ArtifactIntegrityError,
+        FileSnapshotError,
+        OSError,
+        ValueError,
+    ) as exc:
+        raise HoldoutLockError(
+            "The formal public regression bundle failed verification."
+        ) from exc
+
+    manifest = evidence.manifest
+    summary = evidence.summary
+    if (
+        manifest.purpose != "dev_repeat"
+        or manifest.status != "completed"
+        or manifest.eval.split != "dev"
+        or manifest.eval.case_set_name != "readonly-regression-v1"
+        or manifest.eval.case_count != 7
+        or manifest.execution.planned_trials != 4
+        or manifest.execution.completed_trials != 4
+        or len(evidence.cases) != 28
+        or summary.total_trials != 28
+        or summary.planned_trials != 4
+        or summary.strict.passed != 28
+        or summary.strict.failed != 0
+        or summary.strict.rate != 1
+        or summary.security.passed != 28
+        or summary.security.failed != 0
+        or summary.security.rate != 1
+        or summary.security.all_trials_passed is not True
+        or summary.reliability.k != 4
+        or summary.reliability.cases_all_trials_passed != 7
+        or summary.reliability.case_count != 7
+        or summary.reliability.pass_power_k != 1
+        or summary.business_state.changed_trials != 0
+        or summary.business_state.unknown_trials != 0
+        or summary.business_state.all_trials_unchanged is not True
+        or summary.errors
+        or manifest.source.git_commit != source_git_commit
+        or manifest.source.git_dirty is not False
+        or manifest.harness.runtime_harness_sha256 != harness_sha256
+    ):
+        raise HoldoutLockError(
+            "The formal public regression gate is not canonical and passing."
+        )
+
+    gate_payload = {
+        "bundle_integrity_sha256": integrity_sha256,
+        "run_id": manifest.run_id,
+        "source_git_commit": source_git_commit,
+        "case_set_name": manifest.eval.case_set_name,
+        "case_set_sha256": manifest.eval.case_set_sha256,
+        "harness_sha256": harness_sha256,
+        "passed_trials": 28,
+    }
+    return ValidatedRegressionGate(
+        bundle_path=absolute_bundle,
+        bundle_integrity_sha256=integrity_sha256,
+        gate_sha256=stable_sha256(gate_payload),
+        run_id=manifest.run_id,
+        source_git_commit=source_git_commit,
+        case_set_name=manifest.eval.case_set_name,
+        case_set_sha256=manifest.eval.case_set_sha256,
+        harness_sha256=harness_sha256,
+        passed_trials=28,
+    )
 
 
 def _read_manifest_with_sha256(
@@ -99,6 +215,7 @@ def validate_holdout_declaration(
         ValidatedCalibrationAttestation | None
     ) = None,
     calibration_review: ValidatedCalibrationReview | None = None,
+    regression_gate: ValidatedRegressionGate | None = None,
     harness_fingerprints: Mapping[str, str] | None = None,
     source_git_commit: str | None = None,
 ) -> HoldoutDeclaration:
@@ -129,9 +246,14 @@ def validate_holdout_declaration(
         raise HoldoutLockError(
             "A formal holdout requires exactly 20 semantic-scored cases."
         )
-    if calibration_attestation is None or calibration_review is None:
+    if (
+        calibration_attestation is None
+        or calibration_review is None
+        or regression_gate is None
+    ):
         raise HoldoutLockError(
-            "The formal holdout requires validated calibration attestations."
+            "The formal holdout requires validated calibration and "
+            "regression attestations."
         )
     if (
         source_git_commit is not None
@@ -168,6 +290,13 @@ def validate_holdout_declaration(
         "semantic_calibration_harness_sha256",
         "semantic_calibration_reviewer_id",
         "semantic_calibration_reviewed_count",
+        "public_regression_bundle_integrity_sha256",
+        "public_regression_gate_sha256",
+        "public_regression_run_id",
+        "public_regression_source_git_commit",
+        "public_regression_case_set_name",
+        "public_regression_case_set_sha256",
+        "public_regression_harness_sha256",
         *current_harness,
     }
     if (
@@ -223,6 +352,40 @@ def validate_holdout_declaration(
             "The formal holdout calibration attestations do not match."
         )
 
+    expected_regression_fields: dict[str, object] = {
+        "public_regression_bundle_integrity_sha256": (
+            regression_gate.bundle_integrity_sha256
+        ),
+        "public_regression_gate_sha256": regression_gate.gate_sha256,
+        "public_regression_run_id": regression_gate.run_id,
+        "public_regression_source_git_commit": (
+            regression_gate.source_git_commit
+        ),
+        "public_regression_case_set_name": (
+            regression_gate.case_set_name
+        ),
+        "public_regression_case_set_sha256": (
+            regression_gate.case_set_sha256
+        ),
+        "public_regression_harness_sha256": (
+            regression_gate.harness_sha256
+        ),
+    }
+    if (
+        regression_gate.source_git_commit
+        != str(manifest.get("source_git_commit"))
+        or regression_gate.harness_sha256
+        != stable_sha256(current_harness)
+        or any(
+            manifest.get(field_name) != expected
+            for field_name, expected in expected_regression_fields.items()
+        )
+    ):
+        raise HoldoutLockError(
+            "The formal holdout frozen harness or public regression "
+            "attestation does not match."
+        )
+
     case_payloads = [
         case.model_dump(mode="json")
         for case in sorted(cases, key=lambda item: item.case_id)
@@ -269,6 +432,17 @@ def validate_holdout_declaration(
         calibration_reviewer_id=calibration_review.reviewer_id,
         calibration_reviewed_count=calibration_review.reviewed_count,
         harness_sha256=stable_sha256(current_harness),
+        regression_bundle_integrity_sha256=(
+            regression_gate.bundle_integrity_sha256
+        ),
+        regression_gate_sha256=regression_gate.gate_sha256,
+        regression_run_id=regression_gate.run_id,
+        regression_source_git_commit=(
+            regression_gate.source_git_commit
+        ),
+        regression_case_set_name=regression_gate.case_set_name,
+        regression_case_set_sha256=regression_gate.case_set_sha256,
+        regression_harness_sha256=regression_gate.harness_sha256,
     )
 
 
@@ -369,6 +543,25 @@ def acquire_holdout_run_lock_with_hash(
             ),
             "semantic_calibration_reviewed_count": (
                 declaration.calibration_reviewed_count
+            ),
+            "public_regression_bundle_integrity_sha256": (
+                declaration.regression_bundle_integrity_sha256
+            ),
+            "public_regression_gate_sha256": (
+                declaration.regression_gate_sha256
+            ),
+            "public_regression_run_id": declaration.regression_run_id,
+            "public_regression_source_git_commit": (
+                declaration.regression_source_git_commit
+            ),
+            "public_regression_case_set_name": (
+                declaration.regression_case_set_name
+            ),
+            "public_regression_case_set_sha256": (
+                declaration.regression_case_set_sha256
+            ),
+            "public_regression_harness_sha256": (
+                declaration.regression_harness_sha256
             ),
             "run_id": run_id,
             "status": "started",
@@ -541,6 +734,8 @@ def verify_holdout_receipt_chain(
     start_path: Path,
     terminal_path: Path,
     bundle_path: Path,
+    regression_bundle_path: Path,
+    private_root: Path,
 ) -> None:
     """Verify sealed manifest -> start -> bundle -> terminal hash links."""
 
@@ -555,6 +750,21 @@ def verify_holdout_receipt_chain(
     )
     start, start_sha256 = _read_manifest_with_sha256(start_path)
     terminal, _ = _read_manifest_with_sha256(terminal_path)
+    try:
+        regression_gate = validate_regression_gate(
+            bundle_path=regression_bundle_path,
+            private_root=private_root,
+            source_git_commit=str(
+                start.get("public_regression_source_git_commit")
+            ),
+            harness_sha256=str(
+                start.get("public_regression_harness_sha256")
+            ),
+        )
+    except HoldoutLockError as exc:
+        raise HoldoutLockError(
+            "The bound formal public regression bundle is invalid."
+        ) from exc
     try:
         verified_bundle = verify_eval_bundle(bundle_path)
         validate_readonly_payload(verified_bundle)
@@ -617,6 +827,25 @@ def verify_holdout_receipt_chain(
         "semantic_calibration_reviewer_id": "reviewer_id",
         "semantic_calibration_reviewed_count": "reviewed_count",
     }
+    regression_links = {
+        "public_regression_bundle_integrity_sha256": (
+            "regression_bundle_integrity_sha256"
+        ),
+        "public_regression_gate_sha256": "regression_gate_sha256",
+        "public_regression_run_id": "regression_run_id",
+        "public_regression_source_git_commit": (
+            "regression_source_git_commit"
+        ),
+        "public_regression_case_set_name": (
+            "regression_case_set_name"
+        ),
+        "public_regression_case_set_sha256": (
+            "regression_case_set_sha256"
+        ),
+        "public_regression_harness_sha256": (
+            "regression_harness_sha256"
+        ),
+    }
     if (
         start.get("status") != "started"
         or terminal.get("status") != "completed"
@@ -637,6 +866,16 @@ def verify_holdout_receipt_chain(
         != start_sha256
         or formal.get("declared_harness_sha256")
         != harness_sha256
+        or regression_gate.bundle_integrity_sha256
+        != start.get("public_regression_bundle_integrity_sha256")
+        or regression_gate.gate_sha256
+        != start.get("public_regression_gate_sha256")
+        or regression_gate.run_id
+        != start.get("public_regression_run_id")
+        or regression_gate.case_set_name
+        != start.get("public_regression_case_set_name")
+        or regression_gate.case_set_sha256
+        != start.get("public_regression_case_set_sha256")
         or bundle_harness.get("runtime_harness_sha256")
         != harness_sha256
         or manifest.get("case_set_name")
@@ -659,6 +898,11 @@ def verify_holdout_receipt_chain(
             or calibration.get(bundle_field) != start.get(start_field)
             for start_field, bundle_field in calibration_links.items()
         )
+        or any(
+            manifest.get(start_field) != start.get(start_field)
+            or formal.get(bundle_field) != start.get(start_field)
+            for start_field, bundle_field in regression_links.items()
+        )
     ):
         raise HoldoutLockError(
             "The completed formal holdout chain or harness does not match."
@@ -671,6 +915,8 @@ def verify_failed_holdout_receipt_chain(
     start_path: Path,
     terminal_path: Path,
     bundle_path: Path,
+    regression_bundle_path: Path,
+    private_root: Path,
 ) -> None:
     """Verify sealed manifest -> start -> failed-attempt bundle -> terminal."""
 
@@ -690,6 +936,21 @@ def verify_failed_holdout_receipt_chain(
     )
     start, start_sha256 = _read_manifest_with_sha256(start_path)
     terminal, _ = _read_manifest_with_sha256(terminal_path)
+    try:
+        regression_gate = validate_regression_gate(
+            bundle_path=regression_bundle_path,
+            private_root=private_root,
+            source_git_commit=str(
+                start.get("public_regression_source_git_commit")
+            ),
+            harness_sha256=str(
+                start.get("public_regression_harness_sha256")
+            ),
+        )
+    except HoldoutLockError as exc:
+        raise HoldoutLockError(
+            "The bound failed-attempt public regression bundle is invalid."
+        ) from exc
     try:
         failed_bundle = validate_formal_failure_bundle(bundle_path)
         integrity_sha256 = read_file_snapshot(
@@ -718,6 +979,15 @@ def verify_failed_holdout_receipt_chain(
         "semantic_calibration_harness_sha256",
         "semantic_calibration_reviewer_id",
         "semantic_calibration_reviewed_count",
+    )
+    regression_fields = (
+        "public_regression_bundle_integrity_sha256",
+        "public_regression_gate_sha256",
+        "public_regression_run_id",
+        "public_regression_source_git_commit",
+        "public_regression_case_set_name",
+        "public_regression_case_set_sha256",
+        "public_regression_harness_sha256",
     )
     if (
         start.get("status") != "started"
@@ -755,6 +1025,34 @@ def verify_failed_holdout_receipt_chain(
             manifest.get(field_name) != start.get(field_name)
             for field_name in calibration_fields
         )
+        or any(
+            manifest.get(field_name) != start.get(field_name)
+            for field_name in regression_fields
+        )
+        or failure_bindings.regression_bundle_integrity_sha256
+        != start.get("public_regression_bundle_integrity_sha256")
+        or failure_bindings.regression_gate_sha256
+        != start.get("public_regression_gate_sha256")
+        or failure_bindings.regression_run_id
+        != start.get("public_regression_run_id")
+        or failure_bindings.regression_source_git_commit
+        != start.get("public_regression_source_git_commit")
+        or failure_bindings.regression_case_set_name
+        != start.get("public_regression_case_set_name")
+        or failure_bindings.regression_case_set_sha256
+        != start.get("public_regression_case_set_sha256")
+        or failure_bindings.regression_harness_sha256
+        != start.get("public_regression_harness_sha256")
+        or regression_gate.bundle_integrity_sha256
+        != start.get("public_regression_bundle_integrity_sha256")
+        or regression_gate.gate_sha256
+        != start.get("public_regression_gate_sha256")
+        or regression_gate.run_id
+        != start.get("public_regression_run_id")
+        or regression_gate.case_set_name
+        != start.get("public_regression_case_set_name")
+        or regression_gate.case_set_sha256
+        != start.get("public_regression_case_set_sha256")
     ):
         raise HoldoutLockError(
             "The failed formal holdout receipt chain does not match."

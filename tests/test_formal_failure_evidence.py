@@ -48,6 +48,15 @@ def _context(*, run_id: str = "formal-failed-20260729-a1") -> FormalFailureConte
                 "lock_start_receipt_sha256": "5" * 64,
                 "declared_harness_sha256": "6" * 64,
                 "runtime_harness_sha256": "6" * 64,
+                "regression_bundle_integrity_sha256": "7" * 64,
+                "regression_gate_sha256": "8" * 64,
+                "regression_run_id": (
+                    "eval-20260729-dev-repeat-public-binding"
+                ),
+                "regression_source_git_commit": "1" * 40,
+                "regression_case_set_name": "readonly-regression-v1",
+                "regression_case_set_sha256": "9" * 64,
+                "regression_harness_sha256": "6" * 64,
             },
         }
     )

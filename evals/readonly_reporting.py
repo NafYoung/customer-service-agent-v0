@@ -113,6 +113,13 @@ class FormalHoldoutEvidence:
     declaration_manifest_sha256: str
     lock_start_receipt_sha256: str
     declared_harness_sha256: str
+    regression_bundle_integrity_sha256: str
+    regression_gate_sha256: str
+    regression_run_id: str
+    regression_source_git_commit: str
+    regression_case_set_name: str
+    regression_case_set_sha256: str
+    regression_harness_sha256: str
 
 
 @dataclass(frozen=True)
@@ -930,6 +937,16 @@ def build_readonly_manifest(
         if (
             formal_holdout_evidence.declared_harness_sha256
             != stable_sha256(runtime_harness_fingerprints)
+            or formal_holdout_evidence.regression_harness_sha256
+            != stable_sha256(runtime_harness_fingerprints)
+            or (
+                source_git_commit is not None
+                and formal_holdout_evidence
+                .regression_source_git_commit
+                != source_git_commit
+            )
+            or formal_holdout_evidence.regression_case_set_name
+            != "readonly-regression-v1"
         ):
             raise ValueError(
                 "formal holdout declaration does not match runtime harness"

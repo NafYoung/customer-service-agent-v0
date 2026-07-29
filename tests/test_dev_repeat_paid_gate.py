@@ -289,8 +289,6 @@ def _write_dev_repeat_bundle(
     payload: dict,
 ) -> Path:
     manifest = payload["manifest"]
-    manifest["source"]["git_commit"] = "a" * 40
-    manifest["source"]["git_dirty"] = False
     output_root = tmp_path / "private-regression"
     output_root.mkdir(mode=0o700)
     return write_eval_bundle(
@@ -348,6 +346,65 @@ def test_programmatic_formal_run_rejects_forged_context_before_model_call(
     assert list(tmp_path.iterdir()) == []
 
 
+@pytest.mark.parametrize("attack", ["forged_sentinel", "case_hash"])
+def test_programmatic_formal_context_rejects_internal_binding_attacks(
+    tmp_path: Path,
+    attack: str,
+) -> None:
+    model = _CountingModel()
+    cases = load_cases(REGRESSION_CASE_DIR)[:1]
+    context = runner.ValidatedFormalRunContext(
+        run_id="eval-20260729-formal-context-attack",
+        purpose="holdout_formal",
+        split="holdout",
+        case_set_name="readonly-holdout-v2",
+        case_set_sha256=(
+            "f" * 64
+            if attack == "case_hash"
+            else runner._formal_case_set_sha256(cases)
+        ),
+        planned_case_count=1,
+        planned_trials=4,
+        source_git_commit="a" * 40,
+        source_tree_sha256="b" * 64,
+        harness_sha256="c" * 64,
+        calibration_report_sha256="d" * 64,
+        calibration_review_sha256="e" * 64,
+        regression_bundle_integrity_sha256="1" * 64,
+        regression_gate_sha256="2" * 64,
+        regression_run_id="eval-20260729-dev-repeat-public-binding",
+        regression_source_git_commit="a" * 40,
+        regression_case_set_name="readonly-regression-v1",
+        regression_case_set_sha256="3" * 64,
+        regression_harness_sha256="c" * 64,
+        declaration_manifest_sha256="4" * 64,
+        lock_start_path=tmp_path / "readonly-holdout-v2.start.json",
+        lock_start_receipt_sha256="5" * 64,
+        _sentinel=(
+            object()
+            if attack == "forged_sentinel"
+            else runner._FORMAL_CONTEXT_SENTINEL
+        ),
+    )
+
+    with pytest.raises(ValueError, match="validated formal"):
+        runner.run_eval_suite(
+            model=model,
+            settings=_settings(),
+            cases=cases,
+            run_id="eval-20260729-formal-context-attack",
+            purpose="holdout_formal",
+            split="holdout",
+            case_set_name="readonly-holdout-v2",
+            trials=4,
+            output_root=tmp_path,
+            formal_run_context=context,
+        )
+
+    assert model.calls == 0
+    assert list(tmp_path.iterdir()) == []
+
+
 @pytest.mark.parametrize(
     "attack",
     [
@@ -363,6 +420,8 @@ def test_formal_regression_gate_rejects_noncanonical_public_bundle(
     attack: str,
 ) -> None:
     payload = _dev_repeat_payload()
+    payload["manifest"]["source"]["git_commit"] = "a" * 40
+    payload["manifest"]["source"]["git_dirty"] = False
     expected_harness = payload["manifest"]["harness"][
         "runtime_harness_sha256"
     ]
@@ -399,6 +458,8 @@ def test_formal_regression_gate_accepts_only_verified_28_of_28_bundle(
     tmp_path: Path,
 ) -> None:
     payload = _dev_repeat_payload()
+    payload["manifest"]["source"]["git_commit"] = "a" * 40
+    payload["manifest"]["source"]["git_dirty"] = False
     expected_harness = payload["manifest"]["harness"][
         "runtime_harness_sha256"
     ]
@@ -415,6 +476,31 @@ def test_formal_regression_gate_accepts_only_verified_28_of_28_bundle(
     assert gate.source_git_commit == "a" * 40
     assert gate.case_set_name == "readonly-regression-v1"
     assert gate.passed_trials == 28
+
+
+def test_formal_regression_gate_rejects_renamed_or_replaced_bundle(
+    tmp_path: Path,
+) -> None:
+    payload = _dev_repeat_payload()
+    payload["manifest"]["source"]["git_commit"] = "a" * 40
+    payload["manifest"]["source"]["git_dirty"] = False
+    expected_harness = payload["manifest"]["harness"][
+        "runtime_harness_sha256"
+    ]
+    bundle_path = _write_dev_repeat_bundle(tmp_path, payload)
+    renamed_path = bundle_path.with_name("renamed-regression-bundle")
+    bundle_path.rename(renamed_path)
+
+    with pytest.raises(
+        holdout_protocol.HoldoutLockError,
+        match="regression",
+    ):
+        holdout_protocol.validate_regression_gate(
+            bundle_path=renamed_path,
+            private_root=tmp_path,
+            source_git_commit="a" * 40,
+            harness_sha256=expected_harness,
+        )
 
 
 @pytest.mark.parametrize(

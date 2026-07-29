@@ -78,7 +78,9 @@ def _regression_gate(**overrides: object) -> SimpleNamespace:
         "case_set_sha256": (
             "6340394c8edd5d95c2756f3f4753d4e224682b7f84a445c76b3abb675bad2edb"
         ),
-        "harness_sha256": "8" * 64,
+        "harness_sha256": stable_sha256(
+            current_readonly_harness_fingerprints()
+        ),
         "passed_trials": 28,
     }
     values.update(overrides)
@@ -218,6 +220,23 @@ def _manifest(
         ),
         "semantic_calibration_reviewer_id": _review().reviewer_id,
         "semantic_calibration_reviewed_count": _review().reviewed_count,
+        "public_regression_bundle_integrity_sha256": (
+            _regression_gate().bundle_integrity_sha256
+        ),
+        "public_regression_gate_sha256": _regression_gate().gate_sha256,
+        "public_regression_run_id": _regression_gate().run_id,
+        "public_regression_source_git_commit": (
+            _regression_gate().source_git_commit
+        ),
+        "public_regression_case_set_name": (
+            _regression_gate().case_set_name
+        ),
+        "public_regression_case_set_sha256": (
+            _regression_gate().case_set_sha256
+        ),
+        "public_regression_harness_sha256": (
+            _regression_gate().harness_sha256
+        ),
         "formal_runs_allowed": formal_runs_allowed,
         "formal_runs_completed": formal_runs_completed,
         "lifecycle_status": "sealed",
@@ -246,6 +265,7 @@ def test_holdout_lock_is_exclusive_and_final_status_is_persisted(
         cases=_cases(),
         calibration_attestation=_attestation(),
         calibration_review=_review(),
+        regression_gate=_regression_gate(),
     )
     lock_root = tmp_path / "private-locks"
     lock_path = acquire_holdout_run_lock(
@@ -342,6 +362,7 @@ def test_lock_acquisition_returns_exact_receipt_hash_without_reread(
         cases=_cases(),
         calibration_attestation=_attestation(),
         calibration_review=_review(),
+        regression_gate=_regression_gate(),
     )
     monkeypatch.setattr(
         holdout_protocol,
@@ -370,6 +391,7 @@ def test_holdout_declaration_requires_calibration_from_same_source_commit(
             cases=_cases(),
             calibration_attestation=_attestation(),
             calibration_review=_review(),
+            regression_gate=_regression_gate(),
             source_git_commit="2" * 40,
         )
 
@@ -490,6 +512,7 @@ def test_holdout_finalize_rejects_a_replaced_start_receipt(
         cases=_cases(),
         calibration_attestation=_attestation(),
         calibration_review=_review(),
+        regression_gate=_regression_gate(),
     )
     lock_path = acquire_holdout_run_lock(
         lock_root=tmp_path / "private-locks",
@@ -522,6 +545,7 @@ def test_failed_terminal_binds_only_failed_attempt_evidence(
         cases=_cases(),
         calibration_attestation=_attestation(),
         calibration_review=_review(),
+        regression_gate=_regression_gate(),
     )
     lock_path = acquire_holdout_run_lock(
         lock_root=tmp_path / "private-locks",
@@ -562,6 +586,7 @@ def test_failed_terminal_binds_only_failed_attempt_evidence(
 
 def test_failed_holdout_chain_binds_private_attempt_bundle(
     tmp_path: Path,
+    monkeypatch,
 ) -> None:
     manifest_path = _manifest(tmp_path / "manifest.json")
     declaration = validate_holdout_declaration(
@@ -570,6 +595,7 @@ def test_failed_holdout_chain_binds_private_attempt_bundle(
         cases=_cases(),
         calibration_attestation=_attestation(),
         calibration_review=_review(),
+        regression_gate=_regression_gate(),
     )
     run_id = "eval-20260729-failed-chain"
     start_path = acquire_holdout_run_lock(
@@ -610,6 +636,25 @@ def test_failed_holdout_chain_binds_private_attempt_bundle(
                     "runtime_harness_sha256": (
                         declaration.harness_sha256
                     ),
+                    "regression_bundle_integrity_sha256": (
+                        declaration.regression_bundle_integrity_sha256
+                    ),
+                    "regression_gate_sha256": (
+                        declaration.regression_gate_sha256
+                    ),
+                    "regression_run_id": declaration.regression_run_id,
+                    "regression_source_git_commit": (
+                        declaration.regression_source_git_commit
+                    ),
+                    "regression_case_set_name": (
+                        declaration.regression_case_set_name
+                    ),
+                    "regression_case_set_sha256": (
+                        declaration.regression_case_set_sha256
+                    ),
+                    "regression_harness_sha256": (
+                        declaration.regression_harness_sha256
+                    ),
                 },
             }
         ),
@@ -629,12 +674,19 @@ def test_failed_holdout_chain_binds_private_attempt_bundle(
             failure_integrity_sha256
         ),
     )
+    monkeypatch.setattr(
+        holdout_protocol,
+        "validate_regression_gate",
+        lambda **kwargs: _regression_gate(),
+    )
 
     verify_failed_holdout_receipt_chain(
         manifest_path=manifest_path,
         start_path=start_path,
         terminal_path=terminal_path,
         bundle_path=failure_bundle,
+        regression_bundle_path=tmp_path / "regression-bundle",
+        private_root=tmp_path,
     )
 
 
@@ -649,6 +701,7 @@ def test_completed_holdout_chain_links_manifest_start_bundle_and_terminal(
         cases=_cases(),
         calibration_attestation=_attestation(),
         calibration_review=_review(),
+        regression_gate=_regression_gate(),
     )
     run_id = "eval-20260729-complete-chain"
     start_path = acquire_holdout_run_lock(
@@ -672,6 +725,25 @@ def test_completed_holdout_chain_links_manifest_start_bundle_and_terminal(
                 ),
                 "lock_start_receipt_sha256": start_sha256,
                 "declared_harness_sha256": declaration.harness_sha256,
+                "regression_bundle_integrity_sha256": (
+                    declaration.regression_bundle_integrity_sha256
+                ),
+                "regression_gate_sha256": (
+                    declaration.regression_gate_sha256
+                ),
+                "regression_run_id": declaration.regression_run_id,
+                "regression_source_git_commit": (
+                    declaration.regression_source_git_commit
+                ),
+                "regression_case_set_name": (
+                    declaration.regression_case_set_name
+                ),
+                "regression_case_set_sha256": (
+                    declaration.regression_case_set_sha256
+                ),
+                "regression_harness_sha256": (
+                    declaration.regression_harness_sha256
+                ),
             },
             "semantic_calibration": {
                 "report_sha256": declaration.calibration_report_sha256,
@@ -724,6 +796,11 @@ def test_completed_holdout_chain_links_manifest_start_bundle_and_terminal(
         accept_minimal_schema,
         raising=False,
     )
+    monkeypatch.setattr(
+        holdout_protocol,
+        "validate_regression_gate",
+        lambda **kwargs: _regression_gate(),
+    )
     terminal_path = finalize_holdout_run_lock(
         lock_path=start_path,
         status="completed",
@@ -737,6 +814,8 @@ def test_completed_holdout_chain_links_manifest_start_bundle_and_terminal(
         start_path=start_path,
         terminal_path=terminal_path,
         bundle_path=bundle_path,
+        regression_bundle_path=tmp_path / "regression-bundle",
+        private_root=tmp_path,
     )
     assert validation_calls == 1
 
@@ -755,6 +834,8 @@ def test_completed_holdout_chain_links_manifest_start_bundle_and_terminal(
                 start_path=start_path,
                 terminal_path=terminal_path,
                 bundle_path=bundle_path,
+                regression_bundle_path=tmp_path / "regression-bundle",
+                private_root=tmp_path,
             )
         private_path.chmod(0o600)
 
@@ -768,6 +849,8 @@ def test_completed_holdout_chain_links_manifest_start_bundle_and_terminal(
             start_path=start_path,
             terminal_path=terminal_path,
             bundle_path=bundle_path,
+            regression_bundle_path=tmp_path / "regression-bundle",
+            private_root=tmp_path,
         )
     bundle_path.chmod(0o700)
 
@@ -784,6 +867,8 @@ def test_completed_holdout_chain_links_manifest_start_bundle_and_terminal(
             start_path=start_path,
             terminal_path=terminal_path,
             bundle_path=bundle_path,
+            regression_bundle_path=tmp_path / "regression-bundle",
+            private_root=tmp_path,
         )
     summary_path.unlink()
     real_summary_path.rename(summary_path)
@@ -804,6 +889,8 @@ def test_completed_holdout_chain_links_manifest_start_bundle_and_terminal(
             start_path=start_path,
             terminal_path=terminal_path,
             bundle_path=bundle_path,
+            regression_bundle_path=tmp_path / "regression-bundle",
+            private_root=tmp_path,
         )
 
 
@@ -833,6 +920,7 @@ def test_completed_chain_cross_checks_every_declared_evidence_field(
         cases=_cases(),
         calibration_attestation=_attestation(),
         calibration_review=_review(),
+        regression_gate=_regression_gate(),
     )
     run_id = "eval-20260729-forged-chain"
     start_path = acquire_holdout_run_lock(
@@ -861,6 +949,23 @@ def test_completed_chain_cross_checks_every_declared_evidence_field(
             ),
             "lock_start_receipt_sha256": start_sha256,
             "declared_harness_sha256": declaration.harness_sha256,
+            "regression_bundle_integrity_sha256": (
+                declaration.regression_bundle_integrity_sha256
+            ),
+            "regression_gate_sha256": declaration.regression_gate_sha256,
+            "regression_run_id": declaration.regression_run_id,
+            "regression_source_git_commit": (
+                declaration.regression_source_git_commit
+            ),
+            "regression_case_set_name": (
+                declaration.regression_case_set_name
+            ),
+            "regression_case_set_sha256": (
+                declaration.regression_case_set_sha256
+            ),
+            "regression_harness_sha256": (
+                declaration.regression_harness_sha256
+            ),
         },
         "semantic_calibration": calibration,
         "case_set_name": declaration.case_set_name,
@@ -894,6 +999,11 @@ def test_completed_chain_cross_checks_every_declared_evidence_field(
         "validate_readonly_payload",
         lambda payload: payload,
     )
+    monkeypatch.setattr(
+        holdout_protocol,
+        "validate_regression_gate",
+        lambda **kwargs: _regression_gate(),
+    )
     terminal_path = finalize_holdout_run_lock(
         lock_path=start_path,
         status="completed",
@@ -910,6 +1020,8 @@ def test_completed_chain_cross_checks_every_declared_evidence_field(
             start_path=start_path,
             terminal_path=terminal_path,
             bundle_path=bundle_path,
+            regression_bundle_path=tmp_path / "regression-bundle",
+            private_root=tmp_path,
         )
 
 
@@ -922,6 +1034,7 @@ def test_same_case_hash_cannot_get_a_second_lock_by_renaming(
         cases=_cases(),
         calibration_attestation=_attestation(),
         calibration_review=_review(),
+        regression_gate=_regression_gate(),
     )
     acquire_holdout_run_lock(
         lock_root=tmp_path / "private-locks",
@@ -951,6 +1064,7 @@ def test_formal_v2_global_lock_rejects_a_different_case_set(
         cases=_cases(),
         calibration_attestation=_attestation(),
         calibration_review=_review(),
+        regression_gate=_regression_gate(),
     )
     lock_root = tmp_path / "private-locks"
     acquire_holdout_run_lock(
@@ -1005,6 +1119,7 @@ def test_holdout_declaration_fails_closed_before_model_use(
             cases=_cases(),
             calibration_attestation=_attestation(),
             calibration_review=_review(),
+            regression_gate=_regression_gate(),
         )
 
 
@@ -1026,6 +1141,7 @@ def test_holdout_manifest_v2_rejects_unknown_fields(
             cases=_cases(),
             calibration_attestation=_attestation(),
             calibration_review=_review(),
+            regression_gate=_regression_gate(),
         )
 
 
@@ -1067,6 +1183,13 @@ def test_holdout_declaration_freezes_paid_model_runtime(
             settings=changed_settings,
             calibration_attestation=_attestation(),
             calibration_review=_review(),
+            regression_gate=_regression_gate(
+                harness_sha256=stable_sha256(
+                    current_readonly_harness_fingerprints(
+                        changed_settings
+                    )
+                )
+            ),
         )
 
 

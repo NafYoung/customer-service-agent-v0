@@ -274,6 +274,19 @@ def _formal_holdout_evidence(
         declared_harness_sha256=stable_sha256(
             current_readonly_harness_fingerprints(settings)
         ),
+        regression_bundle_integrity_sha256="8" * 64,
+        regression_gate_sha256="9" * 64,
+        regression_run_id=(
+            "eval-20260729-dev-repeat-public-binding"
+        ),
+        regression_source_git_commit="a" * 40,
+        regression_case_set_name="readonly-regression-v1",
+        regression_case_set_sha256=(
+            "6340394c8edd5d95c2756f3f4753d4e224682b7f84a445c76b3abb675bad2edb"
+        ),
+        regression_harness_sha256=stable_sha256(
+            current_readonly_harness_fingerprints(settings)
+        ),
     )
 
 
@@ -436,6 +449,19 @@ def test_manifest_fingerprints_harness_and_never_serializes_secret_or_holdout_id
         "declaration_manifest_sha256": "6" * 64,
         "lock_start_receipt_sha256": "7" * 64,
         "declared_harness_sha256": stable_sha256(
+            current_readonly_harness_fingerprints(settings)
+        ),
+        "regression_bundle_integrity_sha256": "8" * 64,
+        "regression_gate_sha256": "9" * 64,
+        "regression_run_id": (
+            "eval-20260729-dev-repeat-public-binding"
+        ),
+        "regression_source_git_commit": "a" * 40,
+        "regression_case_set_name": "readonly-regression-v1",
+        "regression_case_set_sha256": (
+            "6340394c8edd5d95c2756f3f4753d4e224682b7f84a445c76b3abb675bad2edb"
+        ),
+        "regression_harness_sha256": stable_sha256(
             current_readonly_harness_fingerprints(settings)
         ),
     }

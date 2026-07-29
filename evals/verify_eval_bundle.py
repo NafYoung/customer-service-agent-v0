@@ -31,6 +31,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--holdout-manifest", type=Path)
     parser.add_argument("--holdout-start", type=Path)
     parser.add_argument("--holdout-terminal", type=Path)
+    parser.add_argument("--regression-bundle", type=Path)
     parser.add_argument(
         "--failed-attempt",
         action="store_true",
@@ -71,16 +72,24 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "INVALID: formal v2 requires a complete formal receipt chain"
             )
             return 1
+        if is_formal and args.regression_bundle is None:
+            print(
+                "INVALID: formal v2 requires its bound public regression bundle"
+            )
+            return 1
         if complete_chain:
             assert args.holdout_manifest is not None
             assert args.holdout_start is not None
             assert args.holdout_terminal is not None
+            assert args.regression_bundle is not None
             if args.failed_attempt:
                 verify_failed_holdout_receipt_chain(
                     manifest_path=args.holdout_manifest,
                     start_path=args.holdout_start,
                     terminal_path=args.holdout_terminal,
                     bundle_path=args.bundle_path,
+                    regression_bundle_path=args.regression_bundle,
+                    private_root=ROOT / "artifacts" / "private",
                 )
             else:
                 verify_holdout_receipt_chain(
@@ -88,6 +97,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                     start_path=args.holdout_start,
                     terminal_path=args.holdout_terminal,
                     bundle_path=args.bundle_path,
+                    regression_bundle_path=args.regression_bundle,
+                    private_root=ROOT / "artifacts" / "private",
                 )
     except (
         ArtifactIntegrityError,

@@ -28,7 +28,11 @@ from evals.evidence_schema import (
     validate_readonly_bundle,
     validate_readonly_payload,
 )
-from evals.holdout_lock import HoldoutDeclaration, HoldoutLockError
+from evals.holdout_lock import (
+    HoldoutDeclaration,
+    HoldoutLockError,
+    ValidatedRegressionGate,
+)
 from evals.readonly_eval import (
     DEFAULT_CASE_DIR,
     ReadonlyEvalCase,
@@ -319,6 +323,8 @@ def test_formal_case_precheck_error_does_not_disclose_private_path(
             str(tmp_path / "calibration.json"),
             "--calibration-review",
             str(tmp_path / "review.json"),
+            "--regression-bundle",
+            str(tmp_path / "regression-bundle"),
         ]
     )
 
@@ -616,6 +622,12 @@ def test_formal_cli_validates_calibration_chain_before_budget_or_model(
         calls.append("review")
         return review
 
+    def validate_regression(**kwargs):
+        assert kwargs["source_git_commit"] == expected_source_commit
+        assert kwargs["harness_sha256"]
+        calls.append("regression")
+        return object()
+
     def reject_declaration(**kwargs):
         assert kwargs["calibration_attestation"] is attestation
         assert kwargs["calibration_review"] is review
@@ -644,6 +656,12 @@ def test_formal_cli_validates_calibration_chain_before_budget_or_model(
         run_readonly_agent_evals,
         "validate_calibration_review",
         validate_review,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        run_readonly_agent_evals,
+        "validate_regression_gate",
+        validate_regression,
         raising=False,
     )
     monkeypatch.setattr(
@@ -679,6 +697,8 @@ def test_formal_cli_validates_calibration_chain_before_budget_or_model(
             str(tmp_path / "calibration.json"),
             "--calibration-review",
             str(tmp_path / "review.json"),
+            "--regression-bundle",
+            str(tmp_path / "regression-bundle"),
         ]
     )
 
@@ -688,6 +708,7 @@ def test_formal_cli_validates_calibration_chain_before_budget_or_model(
         "clean",
         "attestation",
         "review",
+        "regression",
         "declaration",
     ]
 
@@ -793,6 +814,8 @@ def test_formal_cli_rejects_dirty_source_before_attestation_or_budget(
             str(tmp_path / "calibration.json"),
             "--calibration-review",
             str(tmp_path / "review.json"),
+            "--regression-bundle",
+            str(tmp_path / "regression-bundle"),
         ]
     )
 
@@ -837,7 +860,15 @@ def test_formal_runtime_failure_keeps_partial_evidence_and_terminal(
     harness_sha256 = stable_sha256(dict(frozen.fingerprints))
     declaration = HoldoutDeclaration(
         case_set_name="readonly-holdout-v2",
-        case_set_sha256="3" * 64,
+        case_set_sha256=stable_sha256(
+            [
+                case.model_dump(mode="json")
+                for case in sorted(
+                    cases,
+                    key=lambda item: item.case_id,
+                )
+            ]
+        ),
         manifest_sha256="4" * 64,
         source_git_commit="1" * 40,
         scorer_version="readonly-scorer-v6",
@@ -851,6 +882,28 @@ def test_formal_runtime_failure_keeps_partial_evidence_and_terminal(
         calibration_reviewer_id="independent-reviewer-v1",
         calibration_reviewed_count=5,
         harness_sha256=harness_sha256,
+        regression_bundle_integrity_sha256="6" * 64,
+        regression_gate_sha256="7" * 64,
+        regression_run_id="eval-20260729-dev-repeat-public-binding",
+        regression_source_git_commit="1" * 40,
+        regression_case_set_name="readonly-regression-v1",
+        regression_case_set_sha256=(
+            "6340394c8edd5d95c2756f3f4753d4e224682b7f84a445c76b3abb675bad2edb"
+        ),
+        regression_harness_sha256=harness_sha256,
+    )
+    regression_gate = ValidatedRegressionGate(
+        bundle_path=tmp_path / "regression-bundle",
+        bundle_integrity_sha256="6" * 64,
+        gate_sha256="7" * 64,
+        run_id="eval-20260729-dev-repeat-public-binding",
+        source_git_commit="1" * 40,
+        case_set_name="readonly-regression-v1",
+        case_set_sha256=(
+            "6340394c8edd5d95c2756f3f4753d4e224682b7f84a445c76b3abb675bad2edb"
+        ),
+        harness_sha256=harness_sha256,
+        passed_trials=28,
     )
     attestation = ValidatedCalibrationAttestation(
         report_sha256="a" * 64,
@@ -974,6 +1027,11 @@ def test_formal_runtime_failure_keeps_partial_evidence_and_terminal(
     )
     monkeypatch.setattr(
         run_readonly_agent_evals,
+        "validate_regression_gate",
+        lambda **kwargs: regression_gate,
+    )
+    monkeypatch.setattr(
+        run_readonly_agent_evals,
         "build_deepseek_budget_guard",
         lambda **kwargs: budget_guard,
     )
@@ -1052,6 +1110,8 @@ def test_formal_runtime_failure_keeps_partial_evidence_and_terminal(
         str(tmp_path / "calibration.json"),
         "--calibration-review",
         str(tmp_path / "review.json"),
+        "--regression-bundle",
+        str(tmp_path / "regression-bundle"),
     ]
     if interrupt_stage is not None:
         with pytest.raises(KeyboardInterrupt):

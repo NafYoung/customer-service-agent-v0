@@ -66,12 +66,28 @@ class FormalFailureHoldoutBindings(StrictFailureModel):
     lock_start_receipt_sha256: Sha256
     declared_harness_sha256: Sha256
     runtime_harness_sha256: Sha256
+    regression_bundle_integrity_sha256: Sha256
+    regression_gate_sha256: Sha256
+    regression_run_id: str = Field(
+        pattern=r"^[a-z0-9][a-z0-9._-]{7,79}$"
+    )
+    regression_source_git_commit: GitCommit
+    regression_case_set_name: Literal["readonly-regression-v1"]
+    regression_case_set_sha256: Sha256
+    regression_harness_sha256: Sha256
 
     @model_validator(mode="after")
     def require_declared_runtime_harness(self) -> FormalFailureHoldoutBindings:
         if self.declared_harness_sha256 != self.runtime_harness_sha256:
             raise ValueError(
                 "Declared and runtime harness fingerprints differ"
+            )
+        if (
+            self.regression_harness_sha256
+            != self.runtime_harness_sha256
+        ):
+            raise ValueError(
+                "Regression and runtime harness fingerprints differ"
             )
         return self
 
@@ -353,6 +369,13 @@ class FormalFailureEvidenceBundle(StrictFailureModel):
         ):
             raise ValueError(
                 "Failed-attempt manifest and summary identity differ"
+            )
+        if (
+            manifest.formal_holdout.regression_source_git_commit
+            != manifest.source.git_commit
+        ):
+            raise ValueError(
+                "Failed-attempt regression source differs from the run"
             )
         if summary.budget is not None:
             budget_identity = summary.budget.run_identity

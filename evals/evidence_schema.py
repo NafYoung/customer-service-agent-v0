@@ -87,6 +87,25 @@ class FormalHoldoutSnapshot(StrictEvidenceModel):
     declared_harness_sha256: Sha256 = Field(
         pattern=r"^[0-9a-f]{64}$"
     )
+    regression_bundle_integrity_sha256: Sha256 = Field(
+        pattern=r"^[0-9a-f]{64}$"
+    )
+    regression_gate_sha256: Sha256 = Field(
+        pattern=r"^[0-9a-f]{64}$"
+    )
+    regression_run_id: str = Field(
+        pattern=r"^[a-z0-9][a-z0-9._-]{7,79}$"
+    )
+    regression_source_git_commit: str = Field(
+        pattern=r"^[0-9a-f]{40,64}$"
+    )
+    regression_case_set_name: Literal["readonly-regression-v1"]
+    regression_case_set_sha256: Sha256 = Field(
+        pattern=r"^[0-9a-f]{64}$"
+    )
+    regression_harness_sha256: Sha256 = Field(
+        pattern=r"^[0-9a-f]{64}$"
+    )
 
 
 class EvalSnapshot(StrictEvidenceModel):
@@ -372,6 +391,15 @@ class ReadonlyManifest(StrictEvidenceModel):
                 and self.eval.formal_holdout.declared_harness_sha256
                 != self.harness.runtime_harness_sha256
             )
+            or (
+                self.eval.formal_holdout is not None
+                and (
+                    self.eval.formal_holdout.regression_source_git_commit
+                    != self.source.git_commit
+                    or self.eval.formal_holdout.regression_harness_sha256
+                    != self.harness.runtime_harness_sha256
+                )
+            )
         ):
             raise ValueError(
                 "Formal v2 evidence is missing mandatory attestations"
@@ -550,10 +578,6 @@ class BudgetAttemptBucket(StrictEvidenceModel):
             if (self.settlement_mode is None) != (known is None):
                 raise ValueError(
                     "Uncertain budget attempt settlement is incomplete"
-                )
-            if known is not None and known <= reserved:
-                raise ValueError(
-                    "Known uncertain cost must exceed its reservation"
                 )
         else:
             required_mode = (

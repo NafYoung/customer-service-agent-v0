@@ -42,10 +42,14 @@ model runtime.
 An independent reviewer must then create a private schema-v1 review receipt
 that references the exact report SHA-256, records a `GO` conclusion, and lists
 the five canonical fixture IDs selected by the deterministic stratified sample.
-The sealed holdout
-manifest binds both files; the formal runner validates them before constructing
-the budget guard or model client. Their hashes are copied into the exclusive
-run lock and final Eval manifest.
+The sealed holdout manifest binds both files and the exact private evidence
+bundle from the canonical 7-case by 4-trial public regression. The formal
+runner requires `--regression-bundle`, verifies its integrity, owner-only
+permissions, 28/28 strict and security results, unchanged business state,
+settled canonical budget, source commit, and frozen harness before constructing
+the budget guard or model client. Those identities are copied into the sealed
+manifest, exclusive start receipt, completed or failed evidence, and terminal
+receipt chain.
 
 The independence field is a procedural reviewer declaration, not a
 cryptographic third-party identity proof. The exclusive local receipts and
@@ -120,9 +124,20 @@ python evals/verify_eval_bundle.py artifacts/private/eval-runs/<run-id>
 
 Formal v2 completed and failed-attempt bundles are not valid as standalone
 artifacts. The public verifier requires the sealed manifest plus the immutable
-start and terminal receipts, and rejects symlinks or any formal directory/file
-whose mode is not exactly `0700`/`0600`. The formal runner's console output
-withholds both case details and private filesystem paths.
+start and terminal receipts and the bound `--regression-bundle`. It rejects a
+renamed, replaced, out-of-root, stale-commit, stale-harness, non-28/28, unsafe,
+state-changing, unsettled, or non-owner-only regression artifact. It also
+rejects symlinks or any formal directory/file whose mode is not exactly
+`0700`/`0600`. The formal runner's console output withholds both case details
+and private filesystem paths.
+
+The programmatic `run_eval_suite` entry point cannot start a formal run from
+ordinary arguments. The CLI creates a one-use in-process formal context only
+after the `O_EXCL` start receipt succeeds. Before the first model call, the
+suite consumes that context and rechecks the fixed receipt path, owner-only
+permissions, exact bytes hash, run/case/source/harness/calibration/regression
+bindings, purpose, and split. This is a local fail-closed coordination control,
+not protection against an actor with the same operating-system user privileges.
 
 See `docs/testing/eval-evidence-budget-guard.tdd.md` for the artifact contract,
 budget semantics, official pricing sources, and evidence boundaries. See

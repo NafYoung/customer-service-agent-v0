@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import os
 import re
+import stat
 import sys
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Callable, Literal, Protocol, Sequence
@@ -32,7 +35,7 @@ from evals.canonical_pricing import (
     CanonicalPricingError,
     require_frozen_canonical_price,
 )
-from evals.evidence import write_eval_bundle
+from evals.evidence import stable_sha256, write_eval_bundle
 from evals.evidence_schema import validate_readonly_bundle
 from evals.file_snapshot import (
     FileSnapshotError,
@@ -47,9 +50,11 @@ from evals.holdout_lock import (
     AcquiredHoldoutRunLock,
     HoldoutDeclaration,
     HoldoutLockError,
+    ValidatedRegressionGate,
     acquire_holdout_run_lock_with_hash,
     finalize_holdout_run_lock,
     validate_holdout_declaration,
+    validate_regression_gate,
     verify_failed_holdout_receipt_chain,
     verify_holdout_receipt_chain,
 )
@@ -91,6 +96,232 @@ DEFAULT_BUDGET_LEDGER = (
 DEFAULT_HOLDOUT_LOCK_ROOT = (
     ROOT / "artifacts" / "private" / "holdout" / "formal-run-locks"
 )
+_FORMAL_CONTEXT_SENTINEL = object()
+_ISSUED_FORMAL_CONTEXT_IDS: set[int] = set()
+
+
+@dataclass(frozen=True)
+class ValidatedFormalRunContext:
+    """In-process capability created only after the formal start receipt."""
+
+    run_id: str
+    purpose: Literal["holdout_formal"]
+    split: Literal["holdout"]
+    case_set_name: str
+    case_set_sha256: str
+    planned_case_count: int
+    planned_trials: int
+    source_git_commit: str
+    source_tree_sha256: str
+    harness_sha256: str
+    calibration_report_sha256: str
+    calibration_review_sha256: str
+    regression_bundle_integrity_sha256: str
+    regression_gate_sha256: str
+    regression_run_id: str
+    regression_source_git_commit: str
+    regression_case_set_name: str
+    regression_case_set_sha256: str
+    regression_harness_sha256: str
+    declaration_manifest_sha256: str
+    lock_start_path: Path
+    lock_start_receipt_sha256: str
+    _sentinel: object
+
+
+def _formal_case_set_sha256(
+    cases: Sequence[ReadonlyEvalCase],
+) -> str:
+    return stable_sha256(
+        [
+            case.model_dump(mode="json")
+            for case in sorted(cases, key=lambda item: item.case_id)
+        ]
+    )
+
+
+def _create_validated_formal_run_context(
+    *,
+    run_id: str,
+    purpose: str,
+    split: str,
+    cases: Sequence[ReadonlyEvalCase],
+    case_set_name: str,
+    trials: int,
+    source_git_commit: str,
+    source_tree_sha256: str,
+    frozen_harness: FrozenReadonlyHarness,
+    calibration_attestation: ValidatedCalibrationAttestation,
+    calibration_review: ValidatedCalibrationReview,
+    declaration: HoldoutDeclaration,
+    regression_gate: ValidatedRegressionGate,
+    acquired_lock: AcquiredHoldoutRunLock,
+) -> ValidatedFormalRunContext:
+    """Create the formal execution capability after an exclusive start."""
+
+    case_set_sha256 = _formal_case_set_sha256(cases)
+    harness_sha256 = stable_sha256(dict(frozen_harness.fingerprints))
+    if (
+        purpose != "holdout_formal"
+        or split != "holdout"
+        or case_set_name != "readonly-holdout-v2"
+        or len(cases) != 20
+        or trials != 4
+        or declaration.case_set_name != case_set_name
+        or declaration.case_set_sha256 != case_set_sha256
+        or declaration.source_git_commit != source_git_commit
+        or declaration.harness_sha256 != harness_sha256
+        or calibration_attestation.report_sha256
+        != declaration.calibration_report_sha256
+        or calibration_review.review_sha256
+        != declaration.calibration_review_sha256
+        or calibration_attestation.run_id
+        != declaration.calibration_run_id
+        or calibration_attestation.source_git_commit
+        != declaration.calibration_source_git_commit
+        or calibration_attestation.fixture_sha256
+        != declaration.calibration_fixture_sha256
+        or calibration_attestation.contract_set_sha256
+        != declaration.calibration_contract_set_sha256
+        or calibration_attestation.harness_sha256
+        != declaration.calibration_harness_sha256
+        or calibration_review.reviewer_id
+        != declaration.calibration_reviewer_id
+        or calibration_review.reviewed_count
+        != declaration.calibration_reviewed_count
+        or regression_gate.bundle_integrity_sha256
+        != declaration.regression_bundle_integrity_sha256
+        or regression_gate.gate_sha256
+        != declaration.regression_gate_sha256
+        or regression_gate.run_id != declaration.regression_run_id
+        or regression_gate.source_git_commit != source_git_commit
+        or regression_gate.case_set_name
+        != declaration.regression_case_set_name
+        or regression_gate.case_set_sha256
+        != declaration.regression_case_set_sha256
+        or regression_gate.harness_sha256 != harness_sha256
+        or acquired_lock.path.name
+        != "readonly-holdout-v2.start.json"
+    ):
+        raise ValueError(
+            "The validated formal run context inputs do not match."
+        )
+    context = ValidatedFormalRunContext(
+        run_id=run_id,
+        purpose="holdout_formal",
+        split="holdout",
+        case_set_name=case_set_name,
+        case_set_sha256=case_set_sha256,
+        planned_case_count=20,
+        planned_trials=4,
+        source_git_commit=source_git_commit,
+        source_tree_sha256=source_tree_sha256,
+        harness_sha256=harness_sha256,
+        calibration_report_sha256=calibration_attestation.report_sha256,
+        calibration_review_sha256=calibration_review.review_sha256,
+        regression_bundle_integrity_sha256=(
+            regression_gate.bundle_integrity_sha256
+        ),
+        regression_gate_sha256=regression_gate.gate_sha256,
+        regression_run_id=regression_gate.run_id,
+        regression_source_git_commit=(
+            regression_gate.source_git_commit
+        ),
+        regression_case_set_name=regression_gate.case_set_name,
+        regression_case_set_sha256=regression_gate.case_set_sha256,
+        regression_harness_sha256=regression_gate.harness_sha256,
+        declaration_manifest_sha256=declaration.manifest_sha256,
+        lock_start_path=acquired_lock.path,
+        lock_start_receipt_sha256=acquired_lock.receipt_sha256,
+        _sentinel=_FORMAL_CONTEXT_SENTINEL,
+    )
+    _ISSUED_FORMAL_CONTEXT_IDS.add(id(context))
+    return context
+
+
+def _consume_validated_formal_run_context(
+    context: ValidatedFormalRunContext,
+) -> None:
+    """Validate and consume one issued capability before any model call."""
+
+    context_id = id(context)
+    if context_id not in _ISSUED_FORMAL_CONTEXT_IDS:
+        raise ValueError(
+            "holdout_formal requires a validated formal run context"
+        )
+    _ISSUED_FORMAL_CONTEXT_IDS.discard(context_id)
+    expected_path = DEFAULT_HOLDOUT_LOCK_ROOT / (
+        "readonly-holdout-v2.start.json"
+    )
+    if Path(os.path.abspath(context.lock_start_path)) != Path(
+        os.path.abspath(expected_path)
+    ):
+        raise ValueError(
+            "holdout_formal requires a validated formal run context"
+        )
+    try:
+        file_mode = context.lock_start_path.lstat().st_mode
+        parent_mode = context.lock_start_path.parent.lstat().st_mode
+        receipt, receipt_sha256 = read_json_object_snapshot(
+            context.lock_start_path,
+            label="formal holdout start receipt",
+        )
+    except (FileSnapshotError, OSError) as exc:
+        raise ValueError(
+            "holdout_formal requires a validated formal run context"
+        ) from exc
+    expected_receipt_values: dict[str, object] = {
+        "schema_version": "1.0",
+        "run_id": context.run_id,
+        "status": "started",
+        "completed_at": None,
+        "case_set_name": context.case_set_name,
+        "case_set_sha256": context.case_set_sha256,
+        "manifest_sha256": context.declaration_manifest_sha256,
+        "source_git_commit": context.source_git_commit,
+        "harness_sha256": context.harness_sha256,
+        "semantic_calibration_report_sha256": (
+            context.calibration_report_sha256
+        ),
+        "semantic_calibration_review_sha256": (
+            context.calibration_review_sha256
+        ),
+        "public_regression_bundle_integrity_sha256": (
+            context.regression_bundle_integrity_sha256
+        ),
+        "public_regression_gate_sha256": (
+            context.regression_gate_sha256
+        ),
+        "public_regression_run_id": context.regression_run_id,
+        "public_regression_source_git_commit": (
+            context.regression_source_git_commit
+        ),
+        "public_regression_case_set_name": (
+            context.regression_case_set_name
+        ),
+        "public_regression_case_set_sha256": (
+            context.regression_case_set_sha256
+        ),
+        "public_regression_harness_sha256": (
+            context.regression_harness_sha256
+        ),
+    }
+    if (
+        stat.S_ISLNK(file_mode)
+        or not stat.S_ISREG(file_mode)
+        or stat.S_IMODE(file_mode) != 0o600
+        or stat.S_ISLNK(parent_mode)
+        or not stat.S_ISDIR(parent_mode)
+        or stat.S_IMODE(parent_mode) != 0o700
+        or receipt_sha256 != context.lock_start_receipt_sha256
+        or any(
+            receipt.get(field_name) != expected
+            for field_name, expected in expected_receipt_values.items()
+        )
+    ):
+        raise ValueError(
+            "holdout_formal requires a validated formal run context"
+        )
 class ClosableChatModel(ChatModel, Protocol):
     def close(self) -> None: ...
 
@@ -280,6 +511,15 @@ def _build_parser() -> argparse.ArgumentParser:
             "bound to the calibration attestation."
         ),
     )
+    parser.add_argument(
+        "--regression-bundle",
+        type=Path,
+        default=None,
+        help=(
+            "Required for holdout_formal; the private verified 7x4 public "
+            "regression evidence bundle bound by the holdout manifest."
+        ),
+    )
     parser.add_argument("--run-id", default=None)
     parser.add_argument(
         "--purpose",
@@ -328,19 +568,21 @@ def _validate_args(
     if args.purpose == "holdout_formal" and (
         args.calibration_report is None
         or args.calibration_review is None
+        or args.regression_bundle is None
     ):
         parser.error(
             "holdout_formal requires --calibration-report and "
-            "--calibration-review"
+            "--calibration-review and --regression-bundle"
         )
     if args.purpose != "holdout_formal" and args.holdout_manifest is not None:
         parser.error("--holdout-manifest is only valid for holdout_formal")
     if args.purpose != "holdout_formal" and (
         args.calibration_report is not None
         or args.calibration_review is not None
+        or args.regression_bundle is not None
     ):
         parser.error(
-            "calibration attestations are only valid for holdout_formal"
+            "formal attestations are only valid for holdout_formal"
         )
     if args.split == "holdout" and args.case_dir.resolve() == DEFAULT_CASE_DIR.resolve():
         parser.error("holdout runs require an explicit non-development --case-dir")
@@ -374,6 +616,8 @@ def run_eval_suite(
     formal_holdout_evidence: FormalHoldoutEvidence | None = None,
     frozen_harness: FrozenReadonlyHarness | None = None,
     source_git_commit: str | None = None,
+    source_tree_sha256: str | None = None,
+    formal_run_context: ValidatedFormalRunContext | object | None = None,
     partial_results: list[ReadonlyEvalResult] | None = None,
     pre_write_check: Callable[[], None] | None = None,
 ) -> tuple[list[ReadonlyEvalResult], dict, Path]:
@@ -383,6 +627,71 @@ def run_eval_suite(
         "holdout_formal",
     }:
         raise ValueError("Unsupported Eval purpose")
+    if purpose == "holdout_formal":
+        if (
+            not isinstance(
+                formal_run_context,
+                ValidatedFormalRunContext,
+            )
+            or formal_run_context._sentinel
+            is not _FORMAL_CONTEXT_SENTINEL
+        ):
+            raise ValueError(
+                "holdout_formal requires a validated formal run context"
+            )
+        _consume_validated_formal_run_context(formal_run_context)
+        case_set_sha256 = _formal_case_set_sha256(cases)
+        if (
+            formal_run_context.purpose != purpose
+            or formal_run_context.split != split
+            or formal_run_context.run_id != run_id
+            or formal_run_context.case_set_name != case_set_name
+            or formal_run_context.case_set_sha256 != case_set_sha256
+            or formal_run_context.planned_case_count != len(cases)
+            or formal_run_context.planned_trials != trials
+            or frozen_harness is None
+            or formal_run_context.harness_sha256
+            != stable_sha256(dict(frozen_harness.fingerprints))
+            or source_git_commit
+            != formal_run_context.source_git_commit
+            or source_tree_sha256
+            != formal_run_context.source_tree_sha256
+            or calibration_attestation is None
+            or calibration_attestation.report_sha256
+            != formal_run_context.calibration_report_sha256
+            or calibration_review is None
+            or calibration_review.review_sha256
+            != formal_run_context.calibration_review_sha256
+            or formal_holdout_evidence is None
+            or formal_holdout_evidence.declaration_manifest_sha256
+            != formal_run_context.declaration_manifest_sha256
+            or formal_holdout_evidence.lock_start_receipt_sha256
+            != formal_run_context.lock_start_receipt_sha256
+            or formal_holdout_evidence.declared_harness_sha256
+            != formal_run_context.harness_sha256
+            or formal_holdout_evidence
+            .regression_bundle_integrity_sha256
+            != formal_run_context.regression_bundle_integrity_sha256
+            or formal_holdout_evidence.regression_gate_sha256
+            != formal_run_context.regression_gate_sha256
+            or formal_holdout_evidence.regression_run_id
+            != formal_run_context.regression_run_id
+            or formal_holdout_evidence.regression_source_git_commit
+            != formal_run_context.regression_source_git_commit
+            or formal_holdout_evidence.regression_case_set_name
+            != formal_run_context.regression_case_set_name
+            or formal_holdout_evidence.regression_case_set_sha256
+            != formal_run_context.regression_case_set_sha256
+            or formal_holdout_evidence.regression_harness_sha256
+            != formal_run_context.regression_harness_sha256
+        ):
+            raise ValueError(
+                "holdout_formal requires a validated formal run context"
+            )
+    elif formal_run_context is not None:
+        raise ValueError(
+            "validated formal run context is only valid for holdout_formal"
+        )
     if purpose in {"diagnostic", "dev_repeat"}:
         require_nonformal_paid_case_payload(
             purpose=purpose,
@@ -549,6 +858,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             assert args.holdout_manifest is not None
             assert args.calibration_report is not None
             assert args.calibration_review is not None
+            assert args.regression_bundle is not None
             args.holdout_manifest = require_private_input_file(
                 args.holdout_manifest,
                 private_root=PRIVATE_ARTIFACT_ROOT,
@@ -607,6 +917,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     frozen_harness: FrozenReadonlyHarness | None = None
     source_git_commit: str | None = None
     formal_source_tree_sha256: str | None = None
+    regression_gate: ValidatedRegressionGate | None = None
     if args.purpose == "holdout_formal":
         try:
             source_git_commit = require_clean_git_worktree()
@@ -629,6 +940,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                 review_path=args.calibration_review,
                 attestation=calibration_attestation,
             )
+            regression_gate = validate_regression_gate(
+                bundle_path=args.regression_bundle,
+                private_root=PRIVATE_ARTIFACT_ROOT,
+                source_git_commit=source_git_commit,
+                harness_sha256=stable_sha256(
+                    dict(frozen_harness.fingerprints)
+                ),
+            )
             declaration = validate_holdout_declaration(
                 manifest_path=args.holdout_manifest,
                 case_set_name=args.case_set_name,
@@ -636,6 +955,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 settings=settings,
                 calibration_attestation=calibration_attestation,
                 calibration_review=calibration_review,
+                regression_gate=regression_gate,
                 harness_fingerprints=dict(
                     frozen_harness.fingerprints
                 ),
@@ -704,6 +1024,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     formal_holdout_evidence: FormalHoldoutEvidence | None = None
     formal_attempt_started_at: datetime | None = None
     acquired_lock: AcquiredHoldoutRunLock | None = None
+    formal_run_context: ValidatedFormalRunContext | None = None
     if declaration is not None:
         holdout_lock_path = DEFAULT_HOLDOUT_LOCK_ROOT / (
             "readonly-holdout-v2.start.json"
@@ -712,6 +1033,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             assert source_git_commit is not None
             assert frozen_harness is not None
             assert formal_source_tree_sha256 is not None
+            assert calibration_attestation is not None
+            assert calibration_review is not None
+            assert regression_gate is not None
             require_clean_git_worktree(
                 expected_commit=source_git_commit
             )
@@ -731,6 +1055,41 @@ def main(argv: Sequence[str] | None = None) -> int:
                 declared_harness_sha256=(
                     declaration.harness_sha256
                 ),
+                regression_bundle_integrity_sha256=(
+                    declaration.regression_bundle_integrity_sha256
+                ),
+                regression_gate_sha256=(
+                    declaration.regression_gate_sha256
+                ),
+                regression_run_id=declaration.regression_run_id,
+                regression_source_git_commit=(
+                    declaration.regression_source_git_commit
+                ),
+                regression_case_set_name=(
+                    declaration.regression_case_set_name
+                ),
+                regression_case_set_sha256=(
+                    declaration.regression_case_set_sha256
+                ),
+                regression_harness_sha256=(
+                    declaration.regression_harness_sha256
+                ),
+            )
+            formal_run_context = _create_validated_formal_run_context(
+                run_id=run_id,
+                purpose=args.purpose,
+                split=args.split,
+                cases=cases,
+                case_set_name=args.case_set_name,
+                trials=args.trials,
+                source_git_commit=source_git_commit,
+                source_tree_sha256=formal_source_tree_sha256,
+                frozen_harness=frozen_harness,
+                calibration_attestation=calibration_attestation,
+                calibration_review=calibration_review,
+                declaration=declaration,
+                regression_gate=regression_gate,
+                acquired_lock=acquired_lock,
             )
         except BaseException as exc:
             for close_resource in (model.close, budget_guard.close):
@@ -821,6 +1180,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             formal_holdout_evidence=formal_holdout_evidence,
             frozen_harness=frozen_harness,
             source_git_commit=source_git_commit,
+            source_tree_sha256=formal_source_tree_sha256,
+            formal_run_context=formal_run_context,
             partial_results=partial_results,
             pre_write_check=pre_write_check,
         )
@@ -907,6 +1268,33 @@ def main(argv: Sequence[str] | None = None) -> int:
                                 formal_holdout_evidence
                                 .declared_harness_sha256
                             ),
+                            "regression_bundle_integrity_sha256": (
+                                formal_holdout_evidence
+                                .regression_bundle_integrity_sha256
+                            ),
+                            "regression_gate_sha256": (
+                                formal_holdout_evidence
+                                .regression_gate_sha256
+                            ),
+                            "regression_run_id": (
+                                formal_holdout_evidence.regression_run_id
+                            ),
+                            "regression_source_git_commit": (
+                                formal_holdout_evidence
+                                .regression_source_git_commit
+                            ),
+                            "regression_case_set_name": (
+                                formal_holdout_evidence
+                                .regression_case_set_name
+                            ),
+                            "regression_case_set_sha256": (
+                                formal_holdout_evidence
+                                .regression_case_set_sha256
+                            ),
+                            "regression_harness_sha256": (
+                                formal_holdout_evidence
+                                .regression_harness_sha256
+                            ),
                         },
                     }
                 ),
@@ -965,22 +1353,28 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             if lock_status == "completed" and bundle_path is not None:
                 assert args.holdout_manifest is not None
+                assert args.regression_bundle is not None
                 verify_holdout_receipt_chain(
                     manifest_path=args.holdout_manifest,
                     start_path=holdout_lock_path,
                     terminal_path=terminal_path,
                     bundle_path=bundle_path,
+                    regression_bundle_path=args.regression_bundle,
+                    private_root=PRIVATE_ARTIFACT_ROOT,
                 )
             elif (
                 lock_status == "failed"
                 and failed_attempt_bundle is not None
             ):
                 assert args.holdout_manifest is not None
+                assert args.regression_bundle is not None
                 verify_failed_holdout_receipt_chain(
                     manifest_path=args.holdout_manifest,
                     start_path=holdout_lock_path,
                     terminal_path=terminal_path,
                     bundle_path=failed_attempt_bundle,
+                    regression_bundle_path=args.regression_bundle,
+                    private_root=PRIVATE_ARTIFACT_ROOT,
                 )
             if isinstance(
                 terminal_write_error,
