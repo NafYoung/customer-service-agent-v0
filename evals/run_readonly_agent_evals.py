@@ -947,6 +947,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                 harness_sha256=stable_sha256(
                     dict(frozen_harness.fingerprints)
                 ),
+                expected_source_tree_sha256=(
+                    formal_source_tree_sha256
+                ),
+                expected_harness_fingerprints=dict(
+                    frozen_harness.fingerprints
+                ),
+                settings=settings,
             )
             declaration = validate_holdout_declaration(
                 manifest_path=args.holdout_manifest,

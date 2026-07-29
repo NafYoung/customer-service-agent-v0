@@ -231,6 +231,20 @@ def _package_versions() -> dict[str, str]:
     return versions
 
 
+def current_readonly_source_snapshot() -> dict[str, object]:
+    """Build the source/runtime identity used by read-only evidence."""
+
+    commit, dirty = _git_snapshot()
+    return {
+        "git_commit": commit,
+        "git_dirty": dirty,
+        "source_tree_sha256": current_source_tree_sha256(),
+        "python_version": platform.python_version(),
+        "platform": platform.platform(),
+        "package_versions": _package_versions(),
+    }
+
+
 def freeze_readonly_harness(
     settings: Settings | None = None,
 ) -> FrozenReadonlyHarness:

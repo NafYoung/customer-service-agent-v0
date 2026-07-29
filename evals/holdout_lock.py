@@ -8,11 +8,14 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal, Mapping, Sequence
+from urllib.parse import urlparse
 
 from app.config import Settings
 from evals.calibration_attestation import (
+    CalibrationAttestationError,
     ValidatedCalibrationAttestation,
     ValidatedCalibrationReview,
+    require_canonical_calibration_runtime,
 )
 from evals.evidence import (
     ArtifactIntegrityError,
@@ -27,7 +30,12 @@ from evals.file_snapshot import (
     read_json_object_snapshot,
 )
 from evals.readonly_eval import ReadonlyEvalCase
-from evals.readonly_reporting import current_readonly_harness_fingerprints
+from evals.readonly_reporting import (
+    current_readonly_harness_fingerprints,
+    current_readonly_source_snapshot,
+    current_source_tree_sha256,
+    require_clean_git_worktree,
+)
 
 
 class HoldoutLockError(RuntimeError):
@@ -88,6 +96,7 @@ class ValidatedRegressionGate:
     case_set_name: str
     case_set_sha256: str
     harness_sha256: str
+    runtime_identity_sha256: str
     passed_trials: int
 
 
@@ -103,6 +112,9 @@ def validate_regression_gate(
     private_root: Path,
     source_git_commit: str,
     harness_sha256: str,
+    expected_source_tree_sha256: str | None = None,
+    expected_harness_fingerprints: Mapping[str, str] | None = None,
+    settings: Settings | None = None,
 ) -> ValidatedRegressionGate:
     """Validate the fixed 7x4 public regression before any formal provider use."""
 
@@ -135,6 +147,121 @@ def validate_regression_gate(
 
     manifest = evidence.manifest
     summary = evidence.summary
+    runtime_settings = settings or Settings()
+    try:
+        require_canonical_calibration_runtime(runtime_settings)
+        trusted_source_git_commit = require_clean_git_worktree(
+            expected_commit=source_git_commit
+        )
+        source_tree_before = current_source_tree_sha256()
+        harness_fingerprints = current_readonly_harness_fingerprints(
+            runtime_settings
+        )
+        source_snapshot = current_readonly_source_snapshot()
+        source_tree_after = current_source_tree_sha256()
+        require_clean_git_worktree(
+            expected_commit=trusted_source_git_commit
+        )
+    except CalibrationAttestationError as exc:
+        raise HoldoutLockError(
+            "The formal public regression runtime is not canonical."
+        ) from exc
+    except (OSError, ValueError) as exc:
+        raise HoldoutLockError(
+            "The formal public regression trusted runtime is not clean."
+        ) from exc
+    current_harness_sha256 = stable_sha256(harness_fingerprints)
+    if (
+        source_tree_before != source_tree_after
+        or source_snapshot["git_commit"] != source_git_commit
+        or (
+            expected_source_tree_sha256 is not None
+            and source_snapshot["source_tree_sha256"]
+            != expected_source_tree_sha256
+        )
+        or (
+            expected_harness_fingerprints is not None
+            and dict(expected_harness_fingerprints)
+            != harness_fingerprints
+        )
+        or harness_sha256 != current_harness_sha256
+    ):
+        raise HoldoutLockError(
+            "The formal public regression trusted runtime changed."
+        )
+
+    expected_source = {
+        **source_snapshot,
+        "git_dirty": False,
+    }
+    expected_harness = {
+        "runtime_harness_sha256": current_harness_sha256,
+        "prompt_sha256": harness_fingerprints["prompt_sha256"],
+        "tool_contracts_sha256": harness_fingerprints[
+            "tool_contracts_sha256"
+        ],
+        "policies_sha256": harness_fingerprints["policies_sha256"],
+        "seed_data_sha256": harness_fingerprints["seed_sha256"],
+        "agent_loop_sha256": harness_fingerprints["agent_loop_sha256"],
+        "model_runtime_sha256": harness_fingerprints[
+            "model_runtime_sha256"
+        ],
+        "semantic_judge_version": harness_fingerprints[
+            "semantic_judge_version"
+        ],
+        "semantic_judge_prompt_sha256": harness_fingerprints[
+            "semantic_judge_prompt_sha256"
+        ],
+        "semantic_judge_source_sha256": harness_fingerprints[
+            "semantic_judge_source_sha256"
+        ],
+        "semantic_calibration_source_sha256": harness_fingerprints[
+            "semantic_calibration_source_sha256"
+        ],
+        "semantic_calibration_validator_sha256": harness_fingerprints[
+            "semantic_calibration_validator_sha256"
+        ],
+        "semantic_calibration_runner_sha256": harness_fingerprints[
+            "semantic_calibration_runner_sha256"
+        ],
+        "semantic_calibration_corpus_sha256": harness_fingerprints[
+            "semantic_calibration_corpus_sha256"
+        ],
+        "evidence_protocol_sha256": harness_fingerprints[
+            "evidence_protocol_sha256"
+        ],
+        "canonical_price_snapshot_sha256": harness_fingerprints[
+            "canonical_price_snapshot_sha256"
+        ],
+        "max_tool_rounds": runtime_settings.agent_max_tool_rounds,
+        "max_tool_calls": runtime_settings.agent_max_tool_calls,
+    }
+    endpoint = urlparse(runtime_settings.deepseek_base_url)
+    expected_model = {
+        "provider": "deepseek",
+        "requested_model": runtime_settings.deepseek_model,
+        "observed_models": [runtime_settings.deepseek_model],
+        "base_url_host": endpoint.hostname,
+        "generation_config": {
+            "stream": False,
+            "thinking": "disabled",
+            "temperature": runtime_settings.deepseek_temperature,
+            "seed": None,
+            "max_tokens": runtime_settings.deepseek_max_tokens,
+        },
+        "timeout_seconds": runtime_settings.deepseek_timeout_seconds,
+        "retry_policy": {
+            "max_retries": runtime_settings.deepseek_max_retries,
+            "backoff": "bounded_exponential_with_jitter",
+        },
+        "semantic_judge": {
+            "version": harness_fingerprints["semantic_judge_version"],
+            "response_format": "json_object",
+            "tools_enabled": False,
+            "temperature": runtime_settings.deepseek_temperature,
+            "thinking": "disabled",
+        },
+    }
     if (
         manifest.purpose != "dev_repeat"
         or manifest.status != "completed"
@@ -161,21 +288,34 @@ def validate_regression_gate(
         or summary.business_state.unknown_trials != 0
         or summary.business_state.all_trials_unchanged is not True
         or summary.errors
-        or manifest.source.git_commit != source_git_commit
-        or manifest.source.git_dirty is not False
-        or manifest.harness.runtime_harness_sha256 != harness_sha256
+        or manifest.source.model_dump(mode="json") != expected_source
+        or manifest.eval.scorer_version
+        != harness_fingerprints["scorer_version"]
+        or manifest.eval.scorer_sha256
+        != harness_fingerprints["scorer_sha256"]
+        or manifest.harness.model_dump(mode="json") != expected_harness
+        or manifest.model.model_dump(mode="json") != expected_model
     ):
         raise HoldoutLockError(
             "The formal public regression gate is not canonical and passing."
         )
 
+    runtime_identity_sha256 = stable_sha256(
+        {
+            "source": expected_source,
+            "harness": expected_harness,
+            "model": expected_model,
+        }
+    )
     gate_payload = {
         "bundle_integrity_sha256": integrity_sha256,
         "run_id": manifest.run_id,
         "source_git_commit": source_git_commit,
+        "source_tree_sha256": source_snapshot["source_tree_sha256"],
         "case_set_name": manifest.eval.case_set_name,
         "case_set_sha256": manifest.eval.case_set_sha256,
-        "harness_sha256": harness_sha256,
+        "harness_sha256": current_harness_sha256,
+        "runtime_identity_sha256": runtime_identity_sha256,
         "passed_trials": 28,
     }
     return ValidatedRegressionGate(
@@ -186,7 +326,8 @@ def validate_regression_gate(
         source_git_commit=source_git_commit,
         case_set_name=manifest.eval.case_set_name,
         case_set_sha256=manifest.eval.case_set_sha256,
-        harness_sha256=harness_sha256,
+        harness_sha256=current_harness_sha256,
+        runtime_identity_sha256=runtime_identity_sha256,
         passed_trials=28,
     )
 

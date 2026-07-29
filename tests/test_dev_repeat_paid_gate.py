@@ -60,7 +60,7 @@ def _settings() -> Settings:
         deepseek_base_url="https://api.deepseek.com",
         deepseek_model="deepseek-v4-flash",
         deepseek_max_tokens=1024,
-        deepseek_temperature=0,
+        deepseek_temperature=0.0,
     )
 
 
@@ -300,6 +300,17 @@ def _write_dev_repeat_bundle(
     )
 
 
+def _trust_current_test_source(
+    monkeypatch: pytest.MonkeyPatch,
+    source_git_commit: str,
+) -> None:
+    monkeypatch.setattr(
+        holdout_protocol,
+        "require_clean_git_worktree",
+        lambda **_: source_git_commit,
+    )
+
+
 def test_programmatic_formal_run_requires_validated_context_before_model_call(
     tmp_path: Path,
 ) -> None:
@@ -417,11 +428,13 @@ def test_programmatic_formal_context_rejects_internal_binding_attacks(
 )
 def test_formal_regression_gate_rejects_noncanonical_public_bundle(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
     attack: str,
 ) -> None:
     payload = _dev_repeat_payload()
     source_git_commit = payload["manifest"]["source"]["git_commit"]
     assert isinstance(source_git_commit, str)
+    _trust_current_test_source(monkeypatch, source_git_commit)
     payload["manifest"]["source"]["git_dirty"] = False
     expected_harness = payload["manifest"]["harness"][
         "runtime_harness_sha256"
@@ -457,10 +470,12 @@ def test_formal_regression_gate_rejects_noncanonical_public_bundle(
 
 def test_formal_regression_gate_accepts_only_verified_28_of_28_bundle(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     payload = _dev_repeat_payload()
     source_git_commit = payload["manifest"]["source"]["git_commit"]
     assert isinstance(source_git_commit, str)
+    _trust_current_test_source(monkeypatch, source_git_commit)
     payload["manifest"]["source"]["git_dirty"] = False
     expected_harness = payload["manifest"]["harness"][
         "runtime_harness_sha256"
@@ -537,12 +552,14 @@ def test_formal_regression_gate_accepts_only_verified_28_of_28_bundle(
 )
 def test_formal_regression_gate_rejects_self_attested_runtime_identity(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
     field_path: tuple[str, ...],
     forged_value: object,
 ) -> None:
     payload = _dev_repeat_payload()
     source_git_commit = payload["manifest"]["source"]["git_commit"]
     assert isinstance(source_git_commit, str)
+    _trust_current_test_source(monkeypatch, source_git_commit)
     payload["manifest"]["source"]["git_dirty"] = False
     expected_harness = payload["manifest"]["harness"][
         "runtime_harness_sha256"
@@ -569,10 +586,12 @@ def test_formal_regression_gate_rejects_self_attested_runtime_identity(
 
 def test_formal_regression_gate_rejects_renamed_or_replaced_bundle(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     payload = _dev_repeat_payload()
     source_git_commit = payload["manifest"]["source"]["git_commit"]
     assert isinstance(source_git_commit, str)
+    _trust_current_test_source(monkeypatch, source_git_commit)
     payload["manifest"]["source"]["git_dirty"] = False
     expected_harness = payload["manifest"]["harness"][
         "runtime_harness_sha256"
