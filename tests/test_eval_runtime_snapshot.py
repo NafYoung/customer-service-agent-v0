@@ -8,7 +8,11 @@ import pytest
 from app.agent.openai_compatible import AssistantTurn
 from app.config import Settings
 from evals import readonly_reporting, semantic_calibration
-from evals.file_snapshot import FileSnapshotError, read_file_snapshot
+from evals.file_snapshot import (
+    FileSnapshotError,
+    read_file_snapshot,
+    require_private_regular_file,
+)
 from evals.readonly_eval import ReadonlyEvalCase, run_case
 from evals.run_readonly_agent_evals import run_eval_suite
 
@@ -28,6 +32,36 @@ def test_file_snapshot_rejects_symlink_and_oversized_input(
         read_file_snapshot(symlink)
     with pytest.raises(FileSnapshotError, match="size"):
         read_file_snapshot(target, max_bytes=3)
+
+
+def test_private_input_requires_owner_only_file_and_parent(
+    tmp_path: Path,
+) -> None:
+    private_dir = tmp_path / "private"
+    private_dir.mkdir(mode=0o700)
+    private_dir.chmod(0o700)
+    private_file = private_dir / "report.json"
+    private_file.write_text("{}", encoding="utf-8")
+    private_file.chmod(0o600)
+
+    require_private_regular_file(
+        private_file,
+        label="test report",
+    )
+
+    private_file.chmod(0o644)
+    with pytest.raises(FileSnapshotError, match="owner-only"):
+        require_private_regular_file(
+            private_file,
+            label="test report",
+        )
+    private_file.chmod(0o600)
+    private_dir.chmod(0o755)
+    with pytest.raises(FileSnapshotError, match="parent|owner-only"):
+        require_private_regular_file(
+            private_file,
+            label="test report",
+        )
 
 
 def test_calibration_fixture_parse_and_hash_share_one_snapshot() -> None:
@@ -224,3 +258,55 @@ def test_eval_suite_reuses_one_snapshot_after_source_file_drift(
         bundle_path / "manifest.json"
     ).read_text(encoding="utf-8")
     assert frozen.fingerprints["prompt_sha256"] in manifest
+
+
+def test_runtime_fingerprint_changes_with_auth_session_behavior() -> None:
+    default_auth = readonly_reporting.freeze_readonly_harness(
+        Settings(auth_session_minutes=60)
+    )
+    immediate_expiry = readonly_reporting.freeze_readonly_harness(
+        Settings(auth_session_minutes=0)
+    )
+
+    assert (
+        default_auth.fingerprints["model_runtime_sha256"]
+        != immediate_expiry.fingerprints["model_runtime_sha256"]
+    )
+
+
+def test_eval_suite_keeps_partial_results_and_checks_source_before_write(
+    tmp_path: Path,
+) -> None:
+    prompt_path = tmp_path / "mutated-source.md"
+    prompt_path.write_text("initial", encoding="utf-8")
+    model = _PromptMutationModel(prompt_path)
+    cases = [
+        ReadonlyEvalCase.model_validate(
+            {
+                "case_id": "prewrite-source-gate",
+                "user_message": "查询订单。",
+                "expected": {},
+            }
+        )
+    ]
+    partial_results = []
+
+    with pytest.raises(RuntimeError, match="source drift"):
+        run_eval_suite(
+            model=model,
+            settings=Settings(deepseek_api_key=None),
+            cases=cases,
+            run_id="eval-prewrite-source-gate",
+            purpose="diagnostic",
+            split="dev",
+            case_set_name="prewrite-source-gate",
+            trials=1,
+            output_root=tmp_path / "bundles",
+            partial_results=partial_results,
+            pre_write_check=lambda: (_ for _ in ()).throw(
+                RuntimeError("source drift")
+            ),
+        )
+
+    assert len(partial_results) == 1
+    assert not (tmp_path / "bundles").exists()

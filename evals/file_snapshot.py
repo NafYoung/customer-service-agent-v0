@@ -27,6 +27,34 @@ class FileSnapshot:
             ) from exc
 
 
+def require_private_regular_file(path: Path, *, label: str) -> None:
+    """Require an owner-only regular file in an owner-only directory."""
+
+    try:
+        file_status = path.lstat()
+        parent_status = path.parent.lstat()
+    except OSError as exc:
+        raise FileSnapshotError(
+            f"The private {label} metadata could not be inspected."
+        ) from exc
+    if (
+        not stat.S_ISREG(file_status.st_mode)
+        or stat.S_ISLNK(file_status.st_mode)
+        or stat.S_IMODE(file_status.st_mode) & 0o077
+    ):
+        raise FileSnapshotError(
+            f"The private {label} must be an owner-only regular file."
+        )
+    if (
+        not stat.S_ISDIR(parent_status.st_mode)
+        or stat.S_ISLNK(parent_status.st_mode)
+        or stat.S_IMODE(parent_status.st_mode) & 0o077
+    ):
+        raise FileSnapshotError(
+            f"The private {label} parent must be owner-only."
+        )
+
+
 def read_file_snapshot(
     path: Path,
     *,

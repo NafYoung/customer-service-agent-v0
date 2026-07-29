@@ -40,6 +40,15 @@ class _ClosedBudgetGuard:
             "schema_version": "1.0",
             "enforcement_mode": "persistent_sqlite",
             "run_status": "completed",
+            "run_identity": {
+                "run_id": "eval-20260729-calibration-cli",
+                "purpose": "semantic_judge_calibration",
+                "model": "deepseek-v4-flash",
+                "price_sha256": "d" * 64,
+                "status": "completed",
+                "started_at": "2026-07-29T12:00:00+00:00",
+                "completed_at": "2026-07-29T12:05:00+00:00",
+            },
             "price": {
                 "provider": "deepseek",
                 "model": "deepseek-v4-flash",
@@ -83,10 +92,31 @@ class _CanonicalCalibrationModel:
         request = json.loads(messages[1]["content"])
         answer = request["assistant_answer"]
         fixture = self.fixture_by_answer[answer]
-        grounded_span = answer[: min(300, len(answer))]
         contradiction_evidence = []
         if fixture.expected_material_self_contradiction:
-            contradiction_evidence = [answer[0], answer[-1]]
+            contradiction_evidence = [
+                fixture.contradiction_evidence_sides[0][0],
+                fixture.contradiction_evidence_sides[1][0],
+            ]
+
+        def evidence_spans(
+            claim_id: str,
+            relation: str,
+        ) -> list[str]:
+            if relation == "not_mentioned":
+                return []
+            regions = fixture.acceptable_evidence_regions[claim_id]
+            if relation == "both_or_ambiguous":
+                return [
+                    next(
+                        region
+                        for region in regions
+                        if region in side
+                    )
+                    for side in fixture.contradiction_evidence_sides
+                ]
+            return [regions[0]]
+
         return AssistantTurn(
             content=json.dumps(
                 {
@@ -94,10 +124,9 @@ class _CanonicalCalibrationModel:
                         {
                             "id": claim_id,
                             "relation": relation,
-                            "evidence_spans": (
-                                []
-                                if relation == "not_mentioned"
-                                else [grounded_span]
+                            "evidence_spans": evidence_spans(
+                                claim_id,
+                                relation,
                             ),
                         }
                         for claim_id, relation
@@ -136,6 +165,16 @@ def test_holdout_eligible_calibration_writes_a_validated_closed_report(
     budget_guard = _ClosedBudgetGuard(len(fixtures))
     model = _CanonicalCalibrationModel(budget_guard)
     clean_checks: list[str | None] = []
+    monkeypatch.setattr(
+        calibration_cli,
+        "DEFAULT_OUTPUT_ROOT",
+        tmp_path,
+    )
+    monkeypatch.setattr(
+        calibration_cli,
+        "PRIVATE_ARTIFACT_ROOT",
+        tmp_path,
+    )
 
     def require_clean_source(*, expected_commit=None):
         clean_checks.append(expected_commit)
@@ -178,7 +217,7 @@ def test_holdout_eligible_calibration_writes_a_validated_closed_report(
         == "semantic_judge_holdout_eligibility"
     )
     assert report["source_git_commit"] == "1" * 40
-    assert clean_checks == [None, "1" * 40]
+    assert clean_checks == [None, "1" * 40, "1" * 40]
     validate_calibration_attestation(
         report_path=report_path,
         settings=calibration_cli.Settings(),
@@ -196,6 +235,16 @@ def test_holdout_eligible_calibration_rejects_custom_corpus_before_model(
     monkeypatch,
 ):
     called = False
+    monkeypatch.setattr(
+        calibration_cli,
+        "DEFAULT_OUTPUT_ROOT",
+        tmp_path,
+    )
+    monkeypatch.setattr(
+        calibration_cli,
+        "PRIVATE_ARTIFACT_ROOT",
+        tmp_path,
+    )
 
     def fail_if_called(**kwargs):
         nonlocal called
@@ -230,6 +279,16 @@ def test_holdout_eligible_calibration_checks_clean_git_before_budget(
     monkeypatch,
 ):
     budget_called = False
+    monkeypatch.setattr(
+        calibration_cli,
+        "DEFAULT_OUTPUT_ROOT",
+        tmp_path,
+    )
+    monkeypatch.setattr(
+        calibration_cli,
+        "PRIVATE_ARTIFACT_ROOT",
+        tmp_path,
+    )
 
     def reject_dirty_source(**kwargs):
         del kwargs

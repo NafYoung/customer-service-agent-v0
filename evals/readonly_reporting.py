@@ -26,6 +26,9 @@ from evals.evidence import stable_sha256
 from evals.evidence_schema import BudgetSummary
 from evals.file_snapshot import FileSnapshot, read_file_snapshot
 from evals.readonly_eval import (
+    EVAL_DATABASE_URL,
+    EVAL_HOST_CONFIRMATION_TOKEN,
+    EVAL_VERIFICATION_CODE,
     SCORE_CATEGORIES,
     ReadonlyEvalCase,
     ReadonlyEvalResult,
@@ -68,6 +71,10 @@ HOLDOUT_LOCK_PATH = ROOT / "evals" / "holdout_lock.py"
 EVIDENCE_SCHEMA_PATH = ROOT / "evals" / "evidence_schema.py"
 READONLY_REPORTING_PATH = ROOT / "evals" / "readonly_reporting.py"
 EVIDENCE_SOURCE_PATH = ROOT / "evals" / "evidence.py"
+PRIVATE_PATHS_SOURCE_PATH = ROOT / "evals" / "private_paths.py"
+FORMAL_FAILURE_SOURCE_PATH = (
+    ROOT / "evals" / "formal_failure_evidence.py"
+)
 BUDGET_GUARD_PATH = ROOT / "app" / "agent" / "deepseek_budget.py"
 POLICY_DIR = ROOT / "policies"
 _SOURCE_SUFFIXES = {".py", ".md", ".json", ".toml", ".txt", ".yml", ".yaml"}
@@ -133,6 +140,12 @@ def _source_fingerprints() -> dict[str, str]:
         path.relative_to(ROOT).as_posix(): _file_sha256(path)
         for path in sorted(paths)
     }
+
+
+def current_source_tree_sha256() -> str:
+    """Fingerprint the current non-secret repository source tree."""
+
+    return stable_sha256(_source_fingerprints())
 
 
 def _git_snapshot() -> tuple[str | None, bool | None]:
@@ -229,6 +242,8 @@ def freeze_readonly_harness(
         EVIDENCE_SCHEMA_PATH,
         READONLY_REPORTING_PATH,
         EVIDENCE_SOURCE_PATH,
+        PRIVATE_PATHS_SOURCE_PATH,
+        FORMAL_FAILURE_SOURCE_PATH,
         BUDGET_GUARD_PATH,
     )
     evidence_protocol_fingerprints = {
@@ -287,6 +302,17 @@ def freeze_readonly_harness(
                     runtime_settings.agent_max_tool_rounds
                 ),
                 "agent_max_tool_calls": runtime_settings.agent_max_tool_calls,
+                "auth_session_minutes": (
+                    runtime_settings.auth_session_minutes
+                ),
+                "approval_ttl_minutes": (
+                    runtime_settings.approval_ttl_minutes
+                ),
+                "eval_database_url": EVAL_DATABASE_URL,
+                "eval_host_confirmation_token": (
+                    EVAL_HOST_CONFIRMATION_TOKEN
+                ),
+                "eval_verification_code": EVAL_VERIFICATION_CODE,
             }
         ),
     }
@@ -581,6 +607,27 @@ def build_readonly_manifest(
         raise ValueError("Unsupported Eval split")
     if planned_trials < 1:
         raise ValueError("planned_trials must be at least 1")
+    effective_budget_report = (
+        budget_report
+        if budget_report is not None
+        else offline_budget_report()
+    )
+    try:
+        validated_budget = BudgetSummary.model_validate(
+            effective_budget_report
+        )
+    except ValueError as exc:
+        raise ValueError("Eval budget evidence is invalid") from exc
+    if validated_budget.enforcement_mode == "persistent_sqlite":
+        budget_identity = validated_budget.run_identity
+        if (
+            budget_identity is None
+            or budget_identity.run_id != run_id
+            or budget_identity.purpose != purpose
+        ):
+            raise ValueError(
+                "Eval budget identity does not match the run"
+            )
     runtime_harness_fingerprints = (
         dict(harness_fingerprints)
         if harness_fingerprints is not None
@@ -625,14 +672,6 @@ def build_readonly_manifest(
             raise ValueError(
                 "formal holdout evidence is missing case trials"
             )
-        try:
-            validated_budget = BudgetSummary.model_validate(
-                budget_report
-            )
-        except ValueError as exc:
-            raise ValueError(
-                "formal holdout budget evidence is invalid"
-            ) from exc
         if (
             validated_budget.enforcement_mode != "persistent_sqlite"
             or validated_budget.run_status != "completed"
@@ -893,6 +932,6 @@ def build_readonly_manifest(
             ),
         },
         "budget": _budget_manifest(
-            budget_report or offline_budget_report()
+            effective_budget_report
         ),
     }

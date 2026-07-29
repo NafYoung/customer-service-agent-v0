@@ -404,6 +404,30 @@ class BudgetPriceSummary(StrictEvidenceModel):
         return self
 
 
+class BudgetRunIdentity(StrictEvidenceModel):
+    run_id: str = Field(pattern=r"^[a-z0-9][a-z0-9._-]{7,79}$")
+    purpose: str = Field(min_length=1, max_length=120)
+    model: str = Field(min_length=1, max_length=160)
+    price_sha256: Sha256 = Field(pattern=r"^[0-9a-f]{64}$")
+    status: Literal["active", "completed"]
+    started_at: datetime
+    completed_at: datetime | None
+
+    @model_validator(mode="after")
+    def validate_lifecycle(self) -> BudgetRunIdentity:
+        if self.started_at.tzinfo is None:
+            raise ValueError("Budget run start time must be timezone-aware")
+        if self.status == "active" and self.completed_at is not None:
+            raise ValueError("Active budget run cannot be completed")
+        if self.status == "completed" and (
+            self.completed_at is None
+            or self.completed_at.tzinfo is None
+            or self.completed_at < self.started_at
+        ):
+            raise ValueError("Completed budget run has invalid timestamps")
+        return self
+
+
 class BudgetSummary(StrictEvidenceModel):
     schema_version: Literal["1.0"]
     enforcement_mode: Literal[
@@ -411,6 +435,7 @@ class BudgetSummary(StrictEvidenceModel):
         "offline_no_paid_provider",
     ]
     run_status: Literal["active", "completed"] | None = None
+    run_identity: BudgetRunIdentity | None = None
     price: BudgetPriceSummary | None
     reservation_cny_per_attempt: MoneyCny
     run: BudgetAmountSummary
@@ -419,10 +444,23 @@ class BudgetSummary(StrictEvidenceModel):
     @model_validator(mode="after")
     def validate_mode(self) -> BudgetSummary:
         if self.enforcement_mode == "persistent_sqlite":
-            if self.price is None:
-                raise ValueError("Persistent paid mode requires pricing")
-        elif self.price is not None:
-            raise ValueError("Offline mode cannot contain paid pricing")
+            if self.price is None or self.run_identity is None:
+                raise ValueError(
+                    "Persistent paid mode requires pricing and run identity"
+                )
+            if (
+                self.run_status != self.run_identity.status
+                or self.run_identity.model != self.price.model
+                or self.run_identity.price_sha256
+                != self.price.snapshot_sha256
+            ):
+                raise ValueError(
+                    "Persistent budget run identity does not match pricing"
+                )
+        elif self.price is not None or self.run_identity is not None:
+            raise ValueError(
+                "Offline mode cannot contain paid pricing or run identity"
+            )
         if (
             self.run.hard_limit_cny
             != self.cumulative.hard_limit_cny
@@ -432,6 +470,36 @@ class BudgetSummary(StrictEvidenceModel):
             != self.cumulative.remaining_execution_cny
         ):
             raise ValueError("Run and cumulative budget limits differ")
+        run_committed = Decimal(self.run.committed_cny)
+        run_settled = Decimal(self.run.settled_cny)
+        cumulative_committed = Decimal(
+            self.cumulative.committed_cny
+        )
+        cumulative_settled = Decimal(
+            self.cumulative.settled_cny
+        )
+        expected_remaining = max(
+            Decimal("0"),
+            Decimal(self.cumulative.execution_limit_cny)
+            - cumulative_committed,
+        )
+        if (
+            cumulative_committed < run_committed
+            or cumulative_settled < run_settled
+            or self.cumulative.attempt_count
+            < self.run.attempt_count
+            or self.cumulative.reserved_count
+            < self.run.reserved_count
+            or self.cumulative.uncertain_count
+            < self.run.uncertain_count
+            or Decimal(
+                self.cumulative.remaining_execution_cny
+            )
+            != expected_remaining
+        ):
+            raise ValueError(
+                "Cumulative budget evidence is inconsistent"
+            )
         return self
 
 
@@ -593,6 +661,16 @@ class ReadonlyEvidenceBundle(StrictEvidenceModel):
             != self.summary.budget.run_status
         ):
             raise ValueError("Manifest and summary budget status differ")
+        budget_identity = self.summary.budget.run_identity
+        if self.manifest.budget.enforcement_mode == "persistent_sqlite":
+            if (
+                budget_identity is None
+                or budget_identity.run_id != self.manifest.run_id
+                or budget_identity.purpose != self.manifest.purpose
+            ):
+                raise ValueError(
+                    "Manifest and persisted budget run identity differ"
+                )
         summary_price = self.summary.budget.price
         if self.manifest.budget.enforcement_mode == "persistent_sqlite":
             if (
@@ -622,6 +700,20 @@ class ReadonlyEvidenceBundle(StrictEvidenceModel):
             raise ValueError("Duplicate case/trial records")
         if sorted(case_keys) != sorted(trajectory_keys):
             raise ValueError("Case index and trajectories differ")
+        cases_by_key = {
+            (item.case_id, item.trial): item
+            for item in self.cases
+        }
+        trajectories_by_key = {
+            (item.case_id, item.trial): item
+            for item in self.trajectories
+        }
+        if any(
+            case.model_dump(mode="json")
+            != trajectories_by_key[key].model_dump(mode="json")
+            for key, case in cases_by_key.items()
+        ):
+            raise ValueError("Case records and trajectories differ")
         if self.summary.total_trials != len(self.cases):
             raise ValueError("Summary trial count differs from cases")
         if self.manifest.eval.case_count != len({item.case_id for item in self.cases}):

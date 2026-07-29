@@ -36,7 +36,12 @@ from evals.readonly_reporting import (
 )
 
 
-def _budget_report(attempt_count: int = 4) -> dict:
+def _budget_report(
+    attempt_count: int = 4,
+    *,
+    run_id: str = "eval-20260729-abcdef12",
+    purpose: str = "holdout_formal",
+) -> dict:
     settled = Decimal(attempt_count) * Decimal("0.000012")
     settled_cny = format(settled, "f")
     amount = {
@@ -57,6 +62,15 @@ def _budget_report(attempt_count: int = 4) -> dict:
         "schema_version": "1.0",
         "enforcement_mode": "persistent_sqlite",
         "run_status": "completed",
+        "run_identity": {
+            "run_id": run_id,
+            "purpose": purpose,
+            "model": "deepseek-v4-flash",
+            "price_sha256": "f" * 64,
+            "status": "completed",
+            "started_at": "2026-07-29T12:00:00+00:00",
+            "completed_at": "2026-07-29T12:05:00+00:00",
+        },
         "price": {
             "provider": "deepseek",
             "model": "deepseek-v4-flash",
@@ -406,7 +420,11 @@ def test_manifest_fingerprints_harness_and_never_serializes_secret_or_holdout_id
         planned_trials=1,
         started_at=started,
         completed_at=completed,
-        budget_report=_budget_report(len(dev_results)),
+        budget_report=_budget_report(
+            len(dev_results),
+            run_id="eval-20260729-abcdef13",
+            purpose="dev_repeat",
+        ),
     )
     assert dev_manifest["eval"]["case_ids"] == [
         case.case_id for case in dev_cases
@@ -433,7 +451,9 @@ def test_formal_manifest_requires_bound_calibration_attestations():
             planned_trials=1,
             started_at=started,
             completed_at=started + timedelta(seconds=1),
-            budget_report=_budget_report(),
+            budget_report=_budget_report(
+                run_id="eval-20260729-missing-calibration",
+            ),
         )
     except ValueError as exc:
         assert "calibration" in str(exc)
@@ -466,7 +486,10 @@ def test_formal_manifest_rejects_unsettled_budget_and_model_drift():
         "calibration_review": _review(),
         "formal_holdout_evidence": _formal_holdout_evidence(),
     }
-    unsettled = _budget_report(len(results))
+    unsettled = _budget_report(
+        len(results),
+        run_id="eval-20260729-formal-gates",
+    )
     unsettled["run"]["uncertain_count"] = 1
 
     try:
@@ -491,7 +514,10 @@ def test_formal_manifest_rejects_unsettled_budget_and_model_drift():
         build_readonly_manifest(
             **common,
             results=drifted,
-            budget_report=_budget_report(len(results)),
+            budget_report=_budget_report(
+                len(results),
+                run_id="eval-20260729-formal-gates",
+            ),
         )
     except ValueError as exc:
         assert "model" in str(exc)
@@ -523,7 +549,10 @@ def test_formal_manifest_recomputes_exact_cost_from_every_model_call():
         "calibration_review": _review(),
         "formal_holdout_evidence": _formal_holdout_evidence(),
     }
-    overstated = _budget_report(len(results))
+    overstated = _budget_report(
+        len(results),
+        run_id="eval-20260729-formal-cost",
+    )
     for scope in ("run", "cumulative"):
         overstated[scope]["committed_cny"] = "17"
         overstated[scope]["settled_cny"] = "17"
@@ -542,7 +571,10 @@ def test_formal_manifest_recomputes_exact_cost_from_every_model_call():
             provider_attempts=2,
         ),
     )
-    retry_budget = _budget_report(len(results) + 1)
+    retry_budget = _budget_report(
+        len(results) + 1,
+        run_id="eval-20260729-formal-cost",
+    )
     with pytest.raises(ValueError, match="attempt|cost|usage"):
         build_readonly_manifest(
             **{**common, "results": retried},
@@ -558,7 +590,10 @@ def test_formal_bundle_schema_recomputes_cost_instead_of_trusting_summary():
         for trial in range(1, 5)
         for case in cases
     ]
-    budget = _budget_report(len(results))
+    budget = _budget_report(
+        len(results),
+        run_id="eval-20260729-formal-schema-cost",
+    )
     started = datetime.now(UTC)
     manifest = build_readonly_manifest(
         run_id="eval-20260729-formal-schema-cost",
@@ -606,6 +641,13 @@ def test_formal_bundle_schema_recomputes_cost_instead_of_trusting_summary():
     }
 
     validate_readonly_payload(payload)
+    mismatched_trajectory = deepcopy(payload)
+    mismatched_trajectory["trajectories"][0]["final_text"] = (
+        "forged trajectory content"
+    )
+    with pytest.raises(ValueError, match="Case|trajectory|differ"):
+        validate_readonly_payload(mismatched_trajectory)
+
     mismatched_execution_limit = deepcopy(payload)
     mismatched_execution_limit["manifest"]["budget"][
         "execution_limit_cny"

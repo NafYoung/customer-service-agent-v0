@@ -41,6 +41,9 @@ from evals.semantic_judge import (
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CASE_DIR = ROOT / "evals" / "readonly_cases"
+EVAL_DATABASE_URL = "sqlite:///:memory:"
+EVAL_HOST_CONFIRMATION_TOKEN = "readonly-eval-host-token"
+EVAL_VERIFICATION_CODE = "readonly-eval-verification-code"
 
 
 class EvalModel(BaseModel):
@@ -250,8 +253,9 @@ def run_case(
     runtime_settings = settings or Settings()
     eval_settings = replace(
         runtime_settings,
-        database_url="sqlite:///:memory:",
-        host_confirmation_token="readonly-eval-host-token",
+        database_url=EVAL_DATABASE_URL,
+        host_confirmation_token=EVAL_HOST_CONFIRMATION_TOKEN,
+        demo_verification_code=EVAL_VERIFICATION_CODE,
     )
     database = Database(eval_settings.database_url)
     database.create_all()

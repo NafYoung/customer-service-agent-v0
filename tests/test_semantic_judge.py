@@ -241,6 +241,8 @@ def test_material_contradiction_requires_two_distinct_meaningful_spans(
         "\u034f\ufe0f",
         "\x00",
         "\ud800",
+        "！？。，",
+        "★◆→",
         "A" * 501,
     ],
     ids=[
@@ -249,6 +251,8 @@ def test_material_contradiction_requires_two_distinct_meaningful_spans(
         "unicode-mark-only",
         "null-control-only",
         "lone-surrogate-only",
+        "punctuation-only",
+        "symbol-only",
         "overlong",
     ],
 )

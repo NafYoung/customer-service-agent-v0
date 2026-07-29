@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import unicodedata
 from collections import Counter
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Literal, Sequence
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from evals.evidence import stable_sha256
 from evals.file_snapshot import FileSnapshot, read_file_snapshot
@@ -14,6 +15,7 @@ from evals.semantic_judge import (
     EVALUATOR_MANIPULATION_CLAIM_ID,
     SemanticJsonModel,
     SemanticJudgeError,
+    SemanticJudgeVerdict,
     effective_semantic_contract,
     evaluate_semantic_contract,
     score_semantic_verdict,
@@ -64,7 +66,7 @@ CANONICAL_KIND_COUNTS = {
     "unsafe_prompt_injection": 7,
 }
 CANONICAL_FIXTURE_CONTENT_SHA256 = (
-    "ad873b22830ac9d40e1c21f28badb2ced32fde016da71d7f52416df59e78fefa"
+    "226fd8c8b5ad1d2c19c7987df1c3026ba09b242165a2be56640a1bc89411b202"
 )
 CANONICAL_CASE_CONTENT_SHA256 = (
     "6340394c8edd5d95c2756f3f4753d4e224682b7f84a445c76b3abb675bad2edb"
@@ -109,6 +111,8 @@ class CalibrationFixture(BaseModel):
     expected_material_self_contradiction: bool
     expected_gate_pass: bool
     evaluator_manipulation_relation: ExpectedRelation = "not_mentioned"
+    acceptable_evidence_regions: dict[str, list[str]]
+    contradiction_evidence_sides: list[list[str]]
 
     @property
     def effective_expected_relations(
@@ -120,6 +124,229 @@ class CalibrationFixture(BaseModel):
                 self.evaluator_manipulation_relation
             ),
         }
+
+    @model_validator(mode="after")
+    def validate_grounding_annotations(self) -> CalibrationFixture:
+        expected_relations = self.effective_expected_relations
+        if set(self.acceptable_evidence_regions) != set(
+            expected_relations
+        ):
+            raise ValueError(
+                "Calibration evidence regions must cover every claim."
+            )
+        for claim_id, relation in expected_relations.items():
+            regions = self.acceptable_evidence_regions[claim_id]
+            if bool(regions) is (relation == "not_mentioned"):
+                raise ValueError(
+                    "Calibration evidence regions must be empty only "
+                    "for not-mentioned claims."
+                )
+            _validate_annotated_regions(
+                regions=regions,
+                assistant_answer=self.assistant_answer,
+                kind="claim",
+            )
+
+        sides = self.contradiction_evidence_sides
+        if self.expected_material_self_contradiction:
+            if len(sides) != 2 or any(not side for side in sides):
+                raise ValueError(
+                    "A calibration contradiction requires two annotated "
+                    "evidence sides."
+                )
+            for side in sides:
+                _validate_annotated_regions(
+                    regions=side,
+                    assistant_answer=self.assistant_answer,
+                    kind="contradiction",
+                )
+            if set(sides[0]) & set(sides[1]):
+                raise ValueError(
+                    "Calibration contradiction sides must be distinct."
+                )
+            claim_regions = {
+                region
+                for regions in self.acceptable_evidence_regions.values()
+                for region in regions
+            }
+            if any(
+                region not in claim_regions
+                for side in sides
+                for region in side
+            ):
+                raise ValueError(
+                    "Contradiction sides must use claim evidence regions."
+                )
+            for claim_id, relation in expected_relations.items():
+                if relation != "both_or_ambiguous":
+                    continue
+                claim_region_set = set(
+                    self.acceptable_evidence_regions[claim_id]
+                )
+                if any(
+                    not claim_region_set.intersection(side)
+                    for side in sides
+                ):
+                    raise ValueError(
+                        "An ambiguous claim requires evidence regions "
+                        "on both contradiction sides."
+                    )
+        elif sides:
+            raise ValueError(
+                "Non-contradictory calibration fixtures cannot annotate "
+                "contradiction sides."
+            )
+        elif "both_or_ambiguous" in expected_relations.values():
+            raise ValueError(
+                "An ambiguous claim requires a material contradiction."
+            )
+        return self
+
+
+def _validate_annotated_regions(
+    *,
+    regions: Sequence[str],
+    assistant_answer: str,
+    kind: str,
+) -> None:
+    if len(regions) != len(set(regions)):
+        raise ValueError(f"Duplicate {kind} evidence region.")
+    for region in regions:
+        categories = [
+            unicodedata.category(character)
+            for character in region
+        ]
+        if (
+            not any(category[0] in {"L", "N"} for category in categories)
+            or any(category[0] == "C" for category in categories)
+            or region not in assistant_answer
+        ):
+            raise ValueError(
+                f"Invalid {kind} evidence region in calibration fixture."
+            )
+
+
+def _semantic_text_core(text: str) -> str:
+    start = 0
+    end = len(text)
+    while (
+        start < end
+        and unicodedata.category(text[start])[0] in {"P", "S", "Z"}
+    ):
+        start += 1
+    while (
+        end > start
+        and unicodedata.category(text[end - 1])[0] in {"P", "S", "Z"}
+    ):
+        end -= 1
+    return text[start:end]
+
+
+def _matching_region_indexes(
+    *,
+    span: str,
+    regions: Sequence[str],
+    assistant_answer: str,
+) -> set[int]:
+    core = _semantic_text_core(span)
+    if not core or span not in assistant_answer:
+        return set()
+    return {
+        index
+        for index, region in enumerate(regions)
+        if core in _semantic_text_core(region)
+    }
+
+
+def validate_calibration_verdict_grounding(
+    *,
+    fixture: CalibrationFixture,
+    verdict: SemanticJudgeVerdict,
+) -> None:
+    """Bind judge quotes to the fixture's claim-specific human labels."""
+
+    expected_claim_ids = set(fixture.effective_expected_relations)
+    observed_claim_ids = [claim.id for claim in verdict.claims]
+    if (
+        len(observed_claim_ids) != len(set(observed_claim_ids))
+        or set(observed_claim_ids) != expected_claim_ids
+    ):
+        raise SemanticJudgeError(
+            "SEMANTIC_JUDGE_PROTOCOL_ERROR",
+            "Calibration verdict claim ids did not match the fixture.",
+        )
+
+    for claim in verdict.claims:
+        allowed_regions = fixture.acceptable_evidence_regions[claim.id]
+        covered_claim_sides: set[int] = set()
+        for span in claim.evidence_spans:
+            matching_regions = _matching_region_indexes(
+                span=span,
+                regions=allowed_regions,
+                assistant_answer=fixture.assistant_answer,
+            )
+            if len(matching_regions) != 1:
+                raise SemanticJudgeError(
+                    "SEMANTIC_JUDGE_PROTOCOL_ERROR",
+                    "A calibration evidence span was not uniquely within "
+                    "a claim-specific annotated region.",
+                )
+            if claim.relation == "both_or_ambiguous":
+                matching_sides = {
+                    side_index
+                    for side_index, regions in enumerate(
+                        fixture.contradiction_evidence_sides
+                    )
+                    if _matching_region_indexes(
+                        span=span,
+                        regions=regions,
+                        assistant_answer=fixture.assistant_answer,
+                    )
+                }
+                if len(matching_sides) != 1:
+                    raise SemanticJudgeError(
+                        "SEMANTIC_JUDGE_PROTOCOL_ERROR",
+                        "Ambiguous claim evidence was not uniquely grounded "
+                        "to an annotated contradiction side.",
+                    )
+                covered_claim_sides.update(matching_sides)
+        if (
+            claim.relation == "both_or_ambiguous"
+            and covered_claim_sides != {0, 1}
+        ):
+            raise SemanticJudgeError(
+                "SEMANTIC_JUDGE_PROTOCOL_ERROR",
+                "Ambiguous claim evidence did not cover opposing sides.",
+            )
+
+    if not verdict.material_self_contradiction:
+        return
+
+    covered_sides: set[int] = set()
+    for span in verdict.contradiction_evidence:
+        matching_sides = {
+            side_index
+            for side_index, regions in enumerate(
+                fixture.contradiction_evidence_sides
+            )
+            if _matching_region_indexes(
+                span=span,
+                regions=regions,
+                assistant_answer=fixture.assistant_answer,
+            )
+        }
+        if len(matching_sides) != 1:
+            raise SemanticJudgeError(
+                "SEMANTIC_JUDGE_PROTOCOL_ERROR",
+                "Contradiction evidence was not uniquely grounded to an "
+                "annotated side.",
+            )
+        covered_sides.update(matching_sides)
+    if covered_sides != {0, 1}:
+        raise SemanticJudgeError(
+            "SEMANTIC_JUDGE_PROTOCOL_ERROR",
+            "Calibration contradiction evidence did not cover opposing sides.",
+        )
 
 
 @dataclass(frozen=True)
@@ -326,6 +553,17 @@ def run_calibration_fixture(
             contract=contract,
             system_prompt=system_prompt,
         )
+        try:
+            validate_calibration_verdict_grounding(
+                fixture=fixture,
+                verdict=evaluation.verdict,
+            )
+        except SemanticJudgeError as exc:
+            raise SemanticJudgeError(
+                exc.code,
+                str(exc),
+                model_calls=evaluation.model_calls,
+            ) from exc
     except SemanticJudgeError as exc:
         return CalibrationResult(
             fixture_id=fixture.fixture_id,

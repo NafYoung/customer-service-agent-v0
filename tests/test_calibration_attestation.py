@@ -37,24 +37,37 @@ def _file_sha256(path: Path) -> str:
 
 
 def _verdict_for_fixture(fixture) -> dict[str, object]:
-    visible_answer = fixture.assistant_answer
-    grounded_span = visible_answer[: min(300, len(visible_answer))]
-    claims = [
-        {
-            "id": claim_id,
-            "relation": relation,
-            "evidence_spans": (
-                [] if relation == "not_mentioned" else [grounded_span]
-            ),
-        }
-        for claim_id, relation
-        in fixture.effective_expected_relations.items()
-    ]
+    claims = []
+    for claim_id, relation in (
+        fixture.effective_expected_relations.items()
+    ):
+        regions = fixture.acceptable_evidence_regions[claim_id]
+        evidence_spans: list[str]
+        if relation == "not_mentioned":
+            evidence_spans = []
+        elif relation == "both_or_ambiguous":
+            evidence_spans = [
+                next(
+                    region
+                    for region in regions
+                    if region in side
+                )
+                for side in fixture.contradiction_evidence_sides
+            ]
+        else:
+            evidence_spans = [regions[0]]
+        claims.append(
+            {
+                "id": claim_id,
+                "relation": relation,
+                "evidence_spans": evidence_spans,
+            }
+        )
     contradiction_evidence: list[str] = []
     if fixture.expected_material_self_contradiction:
         contradiction_evidence = [
-            visible_answer[0],
-            visible_answer[-1],
+            fixture.contradiction_evidence_sides[0][0],
+            fixture.contradiction_evidence_sides[1][0],
         ]
     return {
         "claims": claims,
@@ -111,6 +124,15 @@ def _settled_budget(attempt_count: int) -> dict[str, object]:
         "schema_version": "1.0",
         "enforcement_mode": "persistent_sqlite",
         "run_status": "completed",
+        "run_identity": {
+            "run_id": "eval-20260729-calibration-attestation",
+            "purpose": "semantic_judge_calibration",
+            "model": "deepseek-v4-flash",
+            "price_sha256": "c" * 64,
+            "status": "completed",
+            "started_at": "2026-07-29T12:00:00+00:00",
+            "completed_at": "2026-07-29T12:05:00+00:00",
+        },
         "price": {
             "provider": "deepseek",
             "model": "deepseek-v4-flash",
@@ -183,6 +205,7 @@ def _write_json(path: Path, payload: dict[str, object]) -> Path:
         json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2),
         encoding="utf-8",
     )
+    path.chmod(0o600)
     return path
 
 
@@ -222,9 +245,35 @@ def test_calibration_attestation_recomputes_results_summary_and_budget(
 
     unsettled = _valid_report()
     unsettled["budget"]["run"]["uncertain_count"] = 1
-    with pytest.raises(CalibrationAttestationError, match="budget"):
+    with pytest.raises(
+        CalibrationAttestationError,
+        match="budget|schema",
+    ):
         validate_calibration_attestation(
             report_path=_write_json(tmp_path / "unsettled.json", unsettled),
+            settings=settings,
+            now=datetime(2026, 7, 29, 13, tzinfo=UTC),
+        )
+
+    understated_cumulative = _valid_report()
+    understated_cumulative["budget"]["cumulative"][
+        "committed_cny"
+    ] = "0"
+    understated_cumulative["budget"]["cumulative"][
+        "settled_cny"
+    ] = "0"
+    understated_cumulative["budget"]["cumulative"][
+        "remaining_execution_cny"
+    ] = "18"
+    with pytest.raises(
+        CalibrationAttestationError,
+        match="budget|cumulative|commit|schema",
+    ):
+        validate_calibration_attestation(
+            report_path=_write_json(
+                tmp_path / "understated-cumulative.json",
+                understated_cumulative,
+            ),
             settings=settings,
             now=datetime(2026, 7, 29, 13, tzinfo=UTC),
         )
@@ -378,5 +427,29 @@ def test_independent_review_is_bound_and_samples_ten_percent(
                 before_report,
             ),
             attestation=attestation,
+            now=datetime(2026, 7, 29, 13, tzinfo=UTC),
+        )
+
+
+def test_calibration_attestations_reject_public_file_permissions(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        deepseek_model="deepseek-v4-flash",
+        deepseek_temperature=0,
+    )
+    report_path = _write_json(
+        tmp_path / "public-report.json",
+        _valid_report(),
+    )
+    report_path.chmod(0o644)
+
+    with pytest.raises(
+        CalibrationAttestationError,
+        match="schema|owner-only|private",
+    ):
+        validate_calibration_attestation(
+            report_path=report_path,
+            settings=settings,
             now=datetime(2026, 7, 29, 13, tzinfo=UTC),
         )

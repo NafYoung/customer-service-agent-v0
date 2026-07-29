@@ -237,6 +237,59 @@ def test_settlement_releases_unused_reservation_and_is_idempotent(tmp_path):
     )
 
 
+def test_cost_over_reservation_commits_observed_cost_and_blocks_next_attempt(
+    tmp_path,
+):
+    ledger_path = tmp_path / "private" / "budget.sqlite3"
+    ledger = _ledger(tmp_path, execution_limit_cny="1.1")
+    snapshot = _price_snapshot()
+    ledger.start_run(
+        run_id="eval-budget-overrun-0001",
+        purpose="diagnostic",
+        price_snapshot=snapshot,
+    )
+    reservation = ledger.reserve_attempt(
+        run_id="eval-budget-overrun-0001",
+        logical_call_id="logical-call-1",
+        attempt_number=1,
+        model=snapshot.model,
+        reserved_units=cny_to_units(Decimal("0.4")),
+    )
+
+    with pytest.raises(
+        BudgetInvariantError,
+        match="exceeded the reserved upper bound",
+    ):
+        ledger.settle_attempt(
+            reservation=reservation,
+            price_snapshot=snapshot,
+            usage={
+                "prompt_tokens": 800_000,
+                "completion_tokens": 0,
+                "total_tokens": 800_000,
+            },
+            provider_request_id="request-overrun-1",
+        )
+
+    reopened = SQLiteBudgetLedger(
+        path=ledger_path,
+        hard_limit_cny=Decimal("20"),
+        execution_limit_cny=Decimal("1.1"),
+    )
+    report = reopened.snapshot()
+    assert report["committed_cny"] == "0.8"
+    assert report["remaining_execution_cny"] == "0.3"
+    assert report["uncertain_count"] == 1
+    with pytest.raises(BudgetExceededError):
+        reopened.reserve_attempt(
+            run_id="eval-budget-overrun-0001",
+            logical_call_id="logical-call-2",
+            attempt_number=1,
+            model=snapshot.model,
+            reserved_units=cny_to_units(Decimal("0.30000001")),
+        )
+
+
 def test_uncertain_attempt_remains_committed_across_connections(tmp_path):
     ledger_path = tmp_path / "private" / "budget.sqlite3"
     first = SQLiteBudgetLedger(
@@ -348,6 +401,127 @@ def test_snapshot_serializes_amounts_as_strings_without_float(tmp_path):
     assert not any(
         isinstance(value, float)
         for value in ledger.snapshot().values()
+    )
+
+
+def test_run_snapshot_reopens_with_persisted_identity_and_closed_status(
+    tmp_path,
+):
+    ledger_path = tmp_path / "private" / "budget.sqlite3"
+    ledger = _ledger(tmp_path)
+    snapshot = _price_snapshot()
+    run_id = "eval-budget-identity-0001"
+    ledger.start_run(
+        run_id=run_id,
+        purpose="semantic-judge-calibration",
+        price_snapshot=snapshot,
+    )
+
+    active = ledger.snapshot(run_id=run_id)
+    assert active["run_identity"] == {
+        "run_id": run_id,
+        "purpose": "semantic-judge-calibration",
+        "model": snapshot.model,
+        "price_sha256": snapshot.sha256,
+        "status": "active",
+        "started_at": active["run_identity"]["started_at"],
+        "completed_at": None,
+    }
+    datetime.fromisoformat(active["run_identity"]["started_at"])
+
+    ledger.complete_run(run_id)
+    reopened = SQLiteBudgetLedger(
+        path=ledger_path,
+        hard_limit_cny=Decimal("20"),
+        execution_limit_cny=Decimal("20"),
+    )
+    completed = reopened.snapshot(run_id=run_id)
+
+    assert completed["run_identity"]["status"] == "completed"
+    assert (
+        completed["run_identity"]["started_at"]
+        == active["run_identity"]["started_at"]
+    )
+    assert completed["run_identity"]["completed_at"] is not None
+    datetime.fromisoformat(completed["run_identity"]["completed_at"])
+
+
+def test_guard_snapshot_uses_persisted_status_not_tampered_memory(tmp_path):
+    guard = DeepSeekBudgetGuard(
+        ledger=_ledger(tmp_path),
+        run_id="eval-budget-persisted-status",
+        purpose="diagnostic",
+        price_snapshot=_price_snapshot(),
+        model="deepseek-v4-flash",
+        max_output_tokens=1024,
+        now=datetime(2026, 7, 29, 12, tzinfo=UTC),
+    )
+
+    guard._closed = True
+    report = guard.snapshot()
+
+    assert report["run_status"] == "active"
+    assert report["run_identity"]["status"] == "active"
+    assert report["run_identity"]["run_id"] == "eval-budget-persisted-status"
+
+
+def test_guard_close_status_and_identity_survive_ledger_reopen(tmp_path):
+    ledger_path = tmp_path / "private" / "budget.sqlite3"
+    guard = DeepSeekBudgetGuard(
+        ledger=_ledger(tmp_path),
+        run_id="eval-budget-guard-close",
+        purpose="holdout-v2-formal",
+        price_snapshot=_price_snapshot(),
+        model="deepseek-v4-flash",
+        max_output_tokens=1024,
+        now=datetime(2026, 7, 29, 12, tzinfo=UTC),
+    )
+
+    guard.close()
+    closed_report = guard.snapshot()
+    reopened = SQLiteBudgetLedger(
+        path=ledger_path,
+        hard_limit_cny=Decimal("20"),
+        execution_limit_cny=Decimal("20"),
+    )
+    persisted = reopened.snapshot(run_id="eval-budget-guard-close")
+
+    assert closed_report["run_status"] == "completed"
+    assert closed_report["run_identity"] == persisted["run_identity"]
+    assert persisted["run_identity"]["purpose"] == "holdout-v2-formal"
+    assert persisted["run_identity"]["completed_at"] is not None
+
+
+def test_guard_evidence_snapshot_uses_one_atomic_ledger_connection(
+    tmp_path,
+    monkeypatch,
+):
+    ledger = _ledger(tmp_path)
+    guard = DeepSeekBudgetGuard(
+        ledger=ledger,
+        run_id="eval-budget-atomic-snapshot",
+        purpose="diagnostic",
+        price_snapshot=_price_snapshot(),
+        model="deepseek-v4-flash",
+        max_output_tokens=1024,
+        now=datetime(2026, 7, 29, 12, tzinfo=UTC),
+    )
+    original_connect = ledger._connect
+    connection_count = 0
+
+    def counted_connect():
+        nonlocal connection_count
+        connection_count += 1
+        return original_connect()
+
+    monkeypatch.setattr(ledger, "_connect", counted_connect)
+
+    report = guard.snapshot()
+
+    assert connection_count == 1
+    assert report["run_identity"]["run_id"] == "eval-budget-atomic-snapshot"
+    assert report["run"]["remaining_execution_cny"] == (
+        report["cumulative"]["remaining_execution_cny"]
     )
 
 

@@ -31,6 +31,10 @@ from evals.calibration_attestation import (
 from evals.evidence import write_eval_bundle
 from evals.evidence_schema import validate_readonly_bundle
 from evals.file_snapshot import FileSnapshotError, read_file_snapshot
+from evals.formal_failure_evidence import (
+    FormalFailureContext,
+    write_formal_failure_bundle,
+)
 from evals.holdout_lock import (
     HoldoutDeclaration,
     HoldoutLockError,
@@ -38,7 +42,14 @@ from evals.holdout_lock import (
     finalize_holdout_run_lock,
     holdout_lock_receipt_sha256,
     validate_holdout_declaration,
+    verify_failed_holdout_receipt_chain,
     verify_holdout_receipt_chain,
+)
+from evals.private_paths import (
+    PrivatePathError,
+    prepare_fixed_private_output_root,
+    require_private_case_directory,
+    require_private_input_file,
 )
 from evals.readonly_eval import (
     DEFAULT_CASE_DIR,
@@ -52,6 +63,7 @@ from evals.readonly_reporting import (
     FrozenReadonlyHarness,
     build_readonly_manifest,
     create_server_run_id,
+    current_source_tree_sha256,
     freeze_readonly_harness,
     require_clean_git_worktree,
     result_to_record,
@@ -59,7 +71,8 @@ from evals.readonly_reporting import (
 )
 from evals.semantic_judge import SemanticJsonModel
 
-DEFAULT_OUTPUT_ROOT = ROOT / "artifacts" / "eval-runs"
+PRIVATE_ARTIFACT_ROOT = ROOT / "artifacts" / "private"
+DEFAULT_OUTPUT_ROOT = PRIVATE_ARTIFACT_ROOT / "eval-runs"
 DEFAULT_BUDGET_LEDGER = (
     ROOT / "artifacts" / "private" / "deepseek-budget.sqlite3"
 )
@@ -75,6 +88,42 @@ EXECUTION_BUDGET_LIMIT_CNY = Decimal("18")
 
 class ClosableChatModel(ChatModel, Protocol):
     def close(self) -> None: ...
+
+
+def _stable_failure_code(error: BaseException) -> str:
+    code = getattr(error, "code", None)
+    if isinstance(code, str) and re.fullmatch(
+        r"[A-Z][A-Z0-9_]{2,95}",
+        code,
+    ):
+        return code
+    class_name = type(error).__name__
+    normalized = re.sub(
+        r"(?<!^)(?=[A-Z])",
+        "_",
+        class_name,
+    ).upper()
+    normalized = re.sub(r"[^A-Z0-9_]", "_", normalized)
+    return normalized[:96] if len(normalized) >= 3 else "EVAL_ERROR"
+
+
+def _quarantine_unverified_formal_bundle(
+    bundle_target: Path,
+) -> None:
+    if not bundle_target.exists():
+        return
+    quarantine_root = bundle_target.parent / "failed-quarantine"
+    quarantine_root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    quarantine_root.chmod(0o700)
+    quarantine_target = quarantine_root / (
+        f"quarantined-{bundle_target.name}"
+    )
+    if quarantine_target.exists():
+        raise FileExistsError(
+            "A quarantine target already exists for this formal run."
+        )
+    bundle_target.rename(quarantine_target)
+    quarantine_target.chmod(0o700)
 
 
 def validate_paid_eval_settings(settings: Settings) -> None:
@@ -248,29 +297,34 @@ def run_eval_suite(
     formal_holdout_evidence: FormalHoldoutEvidence | None = None,
     frozen_harness: FrozenReadonlyHarness | None = None,
     source_git_commit: str | None = None,
+    partial_results: list[ReadonlyEvalResult] | None = None,
+    pre_write_check: Callable[[], None] | None = None,
 ) -> tuple[list[ReadonlyEvalResult], dict, Path]:
     started_at = datetime.now(UTC)
     runtime_harness = frozen_harness or freeze_readonly_harness(
         settings
     )
-    results = [
-        run_case(
-            case,
-            model=model,
-            server_run_id=run_id,
-            trial=trial,
-            semantic_judge_model=semantic_judge_model,
-            settings=settings,
-            agent_system_prompt=runtime_harness.agent_system_prompt,
-            semantic_judge_system_prompt=(
-                runtime_harness.semantic_judge_system_prompt
-            ),
-            policy_documents=runtime_harness.policy_documents,
-            tool_contracts=runtime_harness.tool_contracts,
-        )
-        for trial in range(1, trials + 1)
-        for case in cases
-    ]
+    results = partial_results if partial_results is not None else []
+    if results:
+        raise ValueError("partial_results must be empty before a new Eval")
+    for trial in range(1, trials + 1):
+        for case in cases:
+            results.append(
+                run_case(
+                    case,
+                    model=model,
+                    server_run_id=run_id,
+                    trial=trial,
+                    semantic_judge_model=semantic_judge_model,
+                    settings=settings,
+                    agent_system_prompt=runtime_harness.agent_system_prompt,
+                    semantic_judge_system_prompt=(
+                        runtime_harness.semantic_judge_system_prompt
+                    ),
+                    policy_documents=runtime_harness.policy_documents,
+                    tool_contracts=runtime_harness.tool_contracts,
+                )
+            )
     model.close()
     completed_at = datetime.now(UTC)
     budget_report = (
@@ -306,6 +360,8 @@ def run_eval_suite(
         result_to_record(result, split=split)
         for result in results
     ]
+    if pre_write_check is not None:
+        pre_write_check()
     bundle_path = write_eval_bundle(
         output_root=output_root,
         run_id=run_id,
@@ -378,6 +434,42 @@ def main(argv: Sequence[str] | None = None) -> int:
     run_id = args.run_id or create_server_run_id()
     settings = Settings()
 
+    if args.purpose == "holdout_formal":
+        try:
+            args.output_root = prepare_fixed_private_output_root(
+                args.output_root,
+                allowed_root=DEFAULT_OUTPUT_ROOT,
+                private_root=PRIVATE_ARTIFACT_ROOT,
+            )
+            args.case_dir = require_private_case_directory(
+                args.case_dir,
+                private_root=PRIVATE_ARTIFACT_ROOT,
+            )
+            assert args.holdout_manifest is not None
+            assert args.calibration_report is not None
+            assert args.calibration_review is not None
+            args.holdout_manifest = require_private_input_file(
+                args.holdout_manifest,
+                private_root=PRIVATE_ARTIFACT_ROOT,
+                label="holdout declaration",
+            )
+            args.calibration_report = require_private_input_file(
+                args.calibration_report,
+                private_root=PRIVATE_ARTIFACT_ROOT,
+                label="calibration report",
+            )
+            args.calibration_review = require_private_input_file(
+                args.calibration_review,
+                private_root=PRIVATE_ARTIFACT_ROOT,
+                label="calibration review",
+            )
+        except PrivatePathError:
+            print(
+                "FORMAL PRECHECK ERROR: private artifact paths or "
+                "permissions are invalid."
+            )
+            return 2
+
     try:
         cases = load_cases(args.case_dir)
     except (OSError, ValueError) as exc:
@@ -398,10 +490,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     calibration_review: ValidatedCalibrationReview | None = None
     frozen_harness: FrozenReadonlyHarness | None = None
     source_git_commit: str | None = None
+    formal_source_tree_sha256: str | None = None
     if args.purpose == "holdout_formal":
         try:
-            frozen_harness = freeze_readonly_harness(settings)
             source_git_commit = require_clean_git_worktree()
+            frozen_harness = freeze_readonly_harness(settings)
+            formal_source_tree_sha256 = current_source_tree_sha256()
+            require_clean_git_worktree(
+                expected_commit=source_git_commit
+            )
             calibration_attestation = validate_calibration_attestation(
                 report_path=args.calibration_report,
                 settings=settings,
@@ -467,13 +564,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     holdout_lock_path: Path | None = None
     holdout_start_receipt_sha256: str | None = None
     formal_holdout_evidence: FormalHoldoutEvidence | None = None
+    formal_attempt_started_at: datetime | None = None
     if declaration is not None:
         try:
             assert source_git_commit is not None
             assert frozen_harness is not None
+            assert formal_source_tree_sha256 is not None
             require_clean_git_worktree(
                 expected_commit=source_git_commit
             )
+            formal_attempt_started_at = datetime.now(UTC)
             holdout_lock_path = acquire_holdout_run_lock(
                 lock_root=DEFAULT_HOLDOUT_LOCK_ROOT,
                 declaration=declaration,
@@ -497,9 +597,19 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"HOLDOUT LOCK ERROR: {exc}")
             return 2
 
-    run_error: Exception | None = None
+    run_error: BaseException | None = None
+    failure_stage = "suite_execution"
     lock_status: Literal["completed", "failed"] = "failed"
     bundle_path: Path | None = None
+    partial_results: list[ReadonlyEvalResult] = []
+    pre_write_check: Callable[[], None] | None = None
+    if source_git_commit is not None:
+        def check_source_before_write() -> None:
+            require_clean_git_worktree(
+                expected_commit=source_git_commit
+            )
+
+        pre_write_check = check_source_before_write
     try:
         results, summary, bundle_path = run_eval_suite(
             model=model,
@@ -518,21 +628,128 @@ def main(argv: Sequence[str] | None = None) -> int:
             formal_holdout_evidence=formal_holdout_evidence,
             frozen_harness=frozen_harness,
             source_git_commit=source_git_commit,
+            partial_results=partial_results,
+            pre_write_check=pre_write_check,
         )
-        if source_git_commit is not None:
-            require_clean_git_worktree(
-                expected_commit=source_git_commit
-            )
         lock_status = "completed"
-    except (OSError, ValueError) as exc:
+    except BaseException as exc:
         run_error = exc
     finally:
-        model.close()
-        budget_guard.close()
+        for close_resource in (model.close, budget_guard.close):
+            try:
+                close_resource()
+            except BaseException as exc:
+                if run_error is None:
+                    run_error = exc
+                    lock_status = "failed"
+                    failure_stage = "cleanup"
+
+    failed_attempt_bundle: Path | None = None
+    if holdout_lock_path is not None and lock_status == "failed":
+        assert declaration is not None
+        assert formal_holdout_evidence is not None
+        assert frozen_harness is not None
+        assert source_git_commit is not None
+        assert formal_source_tree_sha256 is not None
+        assert formal_attempt_started_at is not None
+        assert holdout_start_receipt_sha256 is not None
+        failure_root = args.output_root / "failed-attempts"
+        try:
+            _quarantine_unverified_formal_bundle(bundle_target)
+            failure_root.mkdir(
+                parents=True,
+                exist_ok=True,
+                mode=0o700,
+            )
+            failure_root.chmod(0o700)
+            try:
+                failed_budget_report = budget_guard.snapshot()
+            except BaseException:
+                failed_budget_report = None
+            failure_records = [
+                result_to_record(result, split="holdout")
+                for result in partial_results
+            ]
+            failed_attempt_bundle = write_formal_failure_bundle(
+                output_root=failure_root,
+                context=FormalFailureContext.model_validate(
+                    {
+                        "run_id": run_id,
+                        "created_at": formal_attempt_started_at,
+                        "failed_at": datetime.now(UTC),
+                        "failure_stage": failure_stage,
+                        "failure_code": _stable_failure_code(
+                            run_error
+                            or RuntimeError("formal attempt failed")
+                        ),
+                        "source": {
+                            "git_commit": source_git_commit,
+                            "git_dirty": False,
+                            "source_tree_sha256": (
+                                formal_source_tree_sha256
+                            ),
+                        },
+                        "case_set": {
+                            "name": declaration.case_set_name,
+                            "sha256": declaration.case_set_sha256,
+                            "planned_case_count": 20,
+                            "planned_trials": 4,
+                        },
+                        "formal_holdout": {
+                            "declaration_manifest_sha256": (
+                                formal_holdout_evidence
+                                .declaration_manifest_sha256
+                            ),
+                            "lock_start_receipt_sha256": (
+                                holdout_start_receipt_sha256
+                            ),
+                            "declared_harness_sha256": (
+                                formal_holdout_evidence
+                                .declared_harness_sha256
+                            ),
+                            "runtime_harness_sha256": (
+                                formal_holdout_evidence
+                                .declared_harness_sha256
+                            ),
+                        },
+                    }
+                ),
+                case_records=failure_records,
+                records_captured=True,
+                budget_summary=failed_budget_report,
+                secret_values=tuple(
+                    value
+                    for value in (
+                        settings.deepseek_api_key,
+                        settings.host_confirmation_token,
+                        settings.debug_admin_token,
+                        settings.demo_verification_code,
+                    )
+                    if value
+                ),
+            )
+        except BaseException:
+            failed_attempt_bundle = None
 
     if holdout_lock_path is not None:
         assert holdout_start_receipt_sha256 is not None
         try:
+            completed_integrity_sha256 = (
+                read_file_snapshot(
+                    bundle_path / "integrity.json"
+                ).sha256
+                if lock_status == "completed"
+                and bundle_path is not None
+                else None
+            )
+            failed_integrity_sha256 = (
+                read_file_snapshot(
+                    failed_attempt_bundle / "integrity.json"
+                ).sha256
+                if lock_status == "failed"
+                and failed_attempt_bundle is not None
+                else None
+            )
             terminal_path = finalize_holdout_run_lock(
                 lock_path=holdout_lock_path,
                 status=lock_status,
@@ -540,13 +757,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 expected_start_receipt_sha256=(
                     holdout_start_receipt_sha256
                 ),
-                bundle_integrity_sha256=(
-                    read_file_snapshot(
-                        bundle_path / "integrity.json"
-                    ).sha256
-                    if lock_status == "completed"
-                    and bundle_path is not None
-                    else None
+                bundle_integrity_sha256=completed_integrity_sha256,
+                attempt_bundle_integrity_sha256=(
+                    failed_integrity_sha256
                 ),
             )
             if lock_status == "completed" and bundle_path is not None:
@@ -557,13 +770,36 @@ def main(argv: Sequence[str] | None = None) -> int:
                     terminal_path=terminal_path,
                     bundle_path=bundle_path,
                 )
-        except (FileSnapshotError, HoldoutLockError) as exc:
-            print(f"HOLDOUT LOCK ERROR: {exc}")
+            elif (
+                lock_status == "failed"
+                and failed_attempt_bundle is not None
+            ):
+                assert args.holdout_manifest is not None
+                verify_failed_holdout_receipt_chain(
+                    manifest_path=args.holdout_manifest,
+                    start_path=holdout_lock_path,
+                    terminal_path=terminal_path,
+                    bundle_path=failed_attempt_bundle,
+                )
+        except Exception as exc:
+            if args.purpose == "holdout_formal":
+                print("HOLDOUT LOCK ERROR: terminal evidence is invalid.")
+            else:
+                print(f"HOLDOUT LOCK ERROR: {exc}")
             return 3
     if run_error is not None:
-        print(
-            f"EVIDENCE ERROR: {type(run_error).__name__}: {run_error}"
-        )
+        if isinstance(run_error, (KeyboardInterrupt, SystemExit)):
+            raise run_error
+        if args.purpose == "holdout_formal":
+            print(
+                "EVIDENCE ERROR: formal attempt failed; private failure "
+                "evidence and terminal status were recorded when possible."
+            )
+        else:
+            print(
+                f"EVIDENCE ERROR: {type(run_error).__name__}: "
+                f"{run_error}"
+            )
         return 3
     if bundle_path is None:
         print("EVIDENCE ERROR: completed run has no verified bundle.")

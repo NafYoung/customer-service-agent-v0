@@ -21,6 +21,10 @@ from evals.calibration_attestation import (
     canonical_contract_set_sha256,
     validate_calibration_attestation,
 )
+from evals.private_paths import (
+    PrivatePathError,
+    prepare_fixed_private_output_root,
+)
 from evals.readonly_eval import load_cases
 from evals.readonly_reporting import (
     create_server_run_id,
@@ -40,8 +44,9 @@ DEFAULT_FIXTURE_PATH = (
     ROOT / "evals" / "semantic_judge_calibration_cases.jsonl"
 )
 DEFAULT_CASE_DIR = ROOT / "evals" / "readonly_regression_cases"
+PRIVATE_ARTIFACT_ROOT = ROOT / "artifacts" / "private"
 DEFAULT_OUTPUT_ROOT = (
-    ROOT / "artifacts" / "private" / "semantic-judge-calibration"
+    PRIVATE_ARTIFACT_ROOT / "semantic-judge-calibration"
 )
 _RUN_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{7,79}$")
 
@@ -92,6 +97,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not _RUN_ID_PATTERN.fullmatch(run_id):
         print("CALIBRATION ERROR: invalid run id.")
         return 2
+    if args.mode == "holdout_eligible":
+        try:
+            args.output_root = prepare_fixed_private_output_root(
+                args.output_root,
+                allowed_root=DEFAULT_OUTPUT_ROOT,
+                private_root=PRIVATE_ARTIFACT_ROOT,
+            )
+        except PrivatePathError:
+            print(
+                "CALIBRATION INPUT ERROR: holdout-eligible reports "
+                "must use the fixed private output root."
+            )
+            return 2
     report_path = args.output_root / f"{run_id}.json"
     if report_path.exists():
         print("CALIBRATION ERROR: report already exists.")
@@ -110,8 +128,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     if settings.deepseek_temperature != 0:
         print("CONFIGURATION ERROR: semantic judge requires temperature 0.")
         return 2
+    source_git_commit: str | None = None
+    if args.mode == "holdout_eligible":
+        try:
+            source_git_commit = require_clean_git_worktree()
+        except ValueError as exc:
+            print(f"CALIBRATION PRECHECK ERROR: {exc}")
+            return 2
     try:
         frozen_harness = freeze_readonly_harness(settings)
+        if source_git_commit is not None:
+            require_clean_git_worktree(
+                expected_commit=source_git_commit
+            )
         if args.mode == "holdout_eligible":
             fixture_snapshot = (
                 frozen_harness.calibration_fixture_snapshot
@@ -136,13 +165,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     fixture_sha256 = fixture_snapshot.sha256
     contract_set_sha256 = canonical_contract_set_sha256(cases)
     harness = dict(frozen_harness.fingerprints)
-    source_git_commit: str | None = None
-    if args.mode == "holdout_eligible":
-        try:
-            source_git_commit = require_clean_git_worktree()
-        except ValueError as exc:
-            print(f"CALIBRATION PRECHECK ERROR: {exc}")
-            return 2
 
     try:
         budget_guard = build_deepseek_budget_guard(

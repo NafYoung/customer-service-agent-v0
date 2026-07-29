@@ -12,7 +12,12 @@ from evals.calibration_attestation import (
     ValidatedCalibrationAttestation,
     ValidatedCalibrationReview,
 )
-from evals.evidence import stable_sha256
+from evals.evidence import (
+    ArtifactIntegrityError,
+    stable_sha256,
+    verify_eval_bundle,
+)
+from evals.evidence_schema import validate_readonly_payload
 from evals.file_snapshot import (
     FileSnapshotError,
     read_file_snapshot,
@@ -372,6 +377,7 @@ def finalize_holdout_run_lock(
     run_id: str,
     expected_start_receipt_sha256: str,
     bundle_integrity_sha256: str | None = None,
+    attempt_bundle_integrity_sha256: str | None = None,
     now: datetime | None = None,
 ) -> Path:
     """Append an immutable terminal receipt while preserving the start hash."""
@@ -394,14 +400,21 @@ def finalize_holdout_run_lock(
         status == "completed"
         and (
             not _is_sha256(bundle_integrity_sha256)
+            or attempt_bundle_integrity_sha256 is not None
         )
     ):
         raise HoldoutLockError(
             "A completed holdout requires the bundle integrity hash."
         )
-    if status == "failed" and bundle_integrity_sha256 is not None:
+    if status == "failed" and (
+        bundle_integrity_sha256 is not None
+        or (
+            attempt_bundle_integrity_sha256 is not None
+            and not _is_sha256(attempt_bundle_integrity_sha256)
+        )
+    ):
         raise HoldoutLockError(
-            "A failed holdout cannot claim a completed bundle."
+            "A failed holdout has invalid or conflicting bundle evidence."
         )
     terminal_path = lock_path.with_name(
         "readonly-holdout-v2.terminal.json"
@@ -409,11 +422,23 @@ def finalize_holdout_run_lock(
     _write_exclusive_json(
         terminal_path,
         {
-            "schema_version": "1.0",
+            "schema_version": "2.0",
             "run_id": run_id,
             "status": status,
             "lock_start_receipt_sha256": start_receipt_sha256,
             "bundle_integrity_sha256": bundle_integrity_sha256,
+            "attempt_bundle_integrity_sha256": (
+                attempt_bundle_integrity_sha256
+            ),
+            "failure_evidence_status": (
+                (
+                    "captured"
+                    if attempt_bundle_integrity_sha256 is not None
+                    else "unavailable"
+                )
+                if status == "failed"
+                else None
+            ),
             "completed_at": (
                 now or datetime.now(UTC)
             ).astimezone(UTC).isoformat(),
@@ -436,17 +461,22 @@ def verify_holdout_receipt_chain(
     )
     start, start_sha256 = _read_manifest_with_sha256(start_path)
     terminal, _ = _read_manifest_with_sha256(terminal_path)
-    bundle_manifest, _ = _read_manifest_with_sha256(
-        bundle_path / "manifest.json"
-    )
     try:
+        verified_bundle = verify_eval_bundle(bundle_path)
+        validate_readonly_payload(verified_bundle)
         integrity_sha256 = read_file_snapshot(
             bundle_path / "integrity.json"
         ).sha256
-    except FileSnapshotError as exc:
+    except (
+        ArtifactIntegrityError,
+        FileSnapshotError,
+        OSError,
+        ValueError,
+    ) as exc:
         raise HoldoutLockError(
-            "The formal holdout bundle integrity file is unreadable."
+            "The formal holdout bundle failed integrity or schema validation."
         ) from exc
+    bundle_manifest = verified_bundle["manifest"]
 
     bundle_eval = bundle_manifest.get("eval")
     bundle_source = bundle_manifest.get("source")
@@ -485,10 +515,20 @@ def verify_holdout_receipt_chain(
         "semantic_calibration_source_git_commit": (
             "source_git_commit"
         ),
+        "semantic_calibration_fixture_sha256": "fixture_sha256",
+        "semantic_calibration_contract_set_sha256": (
+            "contract_set_sha256"
+        ),
+        "semantic_calibration_harness_sha256": "harness_sha256",
+        "semantic_calibration_reviewer_id": "reviewer_id",
+        "semantic_calibration_reviewed_count": "reviewed_count",
     }
     if (
         start.get("status") != "started"
         or terminal.get("status") != "completed"
+        or terminal.get("attempt_bundle_integrity_sha256")
+        is not None
+        or terminal.get("failure_evidence_status") is not None
         or not _is_sha256(harness_sha256)
         or start.get("manifest_sha256") != manifest_sha256
         or terminal.get("run_id") != run_id
@@ -505,6 +545,18 @@ def verify_holdout_receipt_chain(
         != harness_sha256
         or bundle_harness.get("runtime_harness_sha256")
         != harness_sha256
+        or manifest.get("case_set_name")
+        != start.get("case_set_name")
+        or manifest.get("case_set_sha256")
+        != start.get("case_set_sha256")
+        or bundle_eval.get("case_set_name")
+        != start.get("case_set_name")
+        or bundle_eval.get("case_set_sha256")
+        != start.get("case_set_sha256")
+        or manifest.get("scorer_version")
+        != start.get("scorer_version")
+        or bundle_eval.get("scorer_version")
+        != start.get("scorer_version")
         or manifest.get("source_git_commit")
         != source_git_commit
         or bundle_source.get("git_commit") != source_git_commit
@@ -516,4 +568,94 @@ def verify_holdout_receipt_chain(
     ):
         raise HoldoutLockError(
             "The completed formal holdout chain or harness does not match."
+        )
+
+
+def verify_failed_holdout_receipt_chain(
+    *,
+    manifest_path: Path,
+    start_path: Path,
+    terminal_path: Path,
+    bundle_path: Path,
+) -> None:
+    """Verify sealed manifest -> start -> failed-attempt bundle -> terminal."""
+
+    from evals.formal_failure_evidence import (  # noqa: PLC0415
+        FormalFailureEvidenceError,
+        validate_formal_failure_bundle,
+    )
+
+    manifest, manifest_sha256 = _read_manifest_with_sha256(
+        manifest_path
+    )
+    start, start_sha256 = _read_manifest_with_sha256(start_path)
+    terminal, _ = _read_manifest_with_sha256(terminal_path)
+    try:
+        failed_bundle = validate_formal_failure_bundle(bundle_path)
+        integrity_sha256 = read_file_snapshot(
+            bundle_path / "integrity.json"
+        ).sha256
+    except (
+        ArtifactIntegrityError,
+        FileSnapshotError,
+        FormalFailureEvidenceError,
+        OSError,
+        ValueError,
+    ) as exc:
+        raise HoldoutLockError(
+            "The failed formal attempt bundle is invalid."
+        ) from exc
+
+    failure_manifest = failed_bundle.manifest
+    failure_bindings = failure_manifest.formal_holdout
+    calibration_fields = (
+        "semantic_calibration_report_sha256",
+        "semantic_calibration_review_sha256",
+        "semantic_calibration_run_id",
+        "semantic_calibration_source_git_commit",
+        "semantic_calibration_fixture_sha256",
+        "semantic_calibration_contract_set_sha256",
+        "semantic_calibration_harness_sha256",
+        "semantic_calibration_reviewer_id",
+        "semantic_calibration_reviewed_count",
+    )
+    if (
+        start.get("status") != "started"
+        or terminal.get("status") != "failed"
+        or terminal.get("bundle_integrity_sha256") is not None
+        or terminal.get("failure_evidence_status") != "captured"
+        or terminal.get("attempt_bundle_integrity_sha256")
+        != integrity_sha256
+        or terminal.get("lock_start_receipt_sha256")
+        != start_sha256
+        or terminal.get("run_id") != start.get("run_id")
+        or failure_manifest.run_id != start.get("run_id")
+        or start.get("manifest_sha256") != manifest_sha256
+        or failure_bindings.declaration_manifest_sha256
+        != manifest_sha256
+        or failure_bindings.lock_start_receipt_sha256
+        != start_sha256
+        or failure_bindings.declared_harness_sha256
+        != start.get("harness_sha256")
+        or failure_bindings.runtime_harness_sha256
+        != start.get("harness_sha256")
+        or failure_manifest.source.git_commit
+        != start.get("source_git_commit")
+        or manifest.get("source_git_commit")
+        != start.get("source_git_commit")
+        or failure_manifest.case_set.name
+        != start.get("case_set_name")
+        or failure_manifest.case_set.sha256
+        != start.get("case_set_sha256")
+        or manifest.get("case_set_name")
+        != start.get("case_set_name")
+        or manifest.get("case_set_sha256")
+        != start.get("case_set_sha256")
+        or any(
+            manifest.get(field_name) != start.get(field_name)
+            for field_name in calibration_fields
+        )
+    ):
+        raise HoldoutLockError(
+            "The failed formal holdout receipt chain does not match."
         )

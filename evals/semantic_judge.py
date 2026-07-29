@@ -298,7 +298,7 @@ def validate_semantic_verdict_grounding(
             for character in span
         ]
         is_meaningful = any(
-            category[0] in {"L", "N", "P", "S"}
+            category[0] in {"L", "N"}
             for category in categories
         )
         if (

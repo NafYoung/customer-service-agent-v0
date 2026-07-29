@@ -26,6 +26,7 @@ from evals.file_snapshot import (
     FileSnapshot,
     FileSnapshotError,
     read_json_object_snapshot,
+    require_private_regular_file,
 )
 from evals.readonly_eval import ReadonlyEvalCase, load_cases
 from evals.readonly_reporting import current_readonly_harness_fingerprints
@@ -39,6 +40,7 @@ from evals.semantic_calibration import (
     parse_calibration_fixtures_snapshot,
     summarize_calibration,
     validate_calibration_coverage,
+    validate_calibration_verdict_grounding,
 )
 from evals.semantic_judge import (
     SemanticJudgeError,
@@ -276,6 +278,10 @@ def _validate_result(
             contract=contract,
             assistant_answer=fixture.assistant_answer,
         )
+        validate_calibration_verdict_grounding(
+            fixture=fixture,
+            verdict=record.verdict,
+        )
     except SemanticJudgeError as exc:
         raise CalibrationAttestationError(
             "A calibration verdict failed grounding validation."
@@ -352,6 +358,10 @@ def validate_calibration_attestation(
     """Validate and independently recompute a holdout-eligibility report."""
 
     try:
+        require_private_regular_file(
+            report_path,
+            label="calibration report",
+        )
         report_payload, report_sha256 = read_json_object_snapshot(
             report_path,
             label="calibration report",
@@ -436,6 +446,10 @@ def validate_calibration_attestation(
     if (
         budget.enforcement_mode != "persistent_sqlite"
         or budget.run_status != "completed"
+        or budget.run_identity is None
+        or budget.run_identity.run_id != report.run_id
+        or budget.run_identity.purpose
+        != "semantic_judge_calibration"
         or budget.price.model != settings.deepseek_model
         or report.started_at < budget.price.captured_at
         or report.completed_at > budget.price.valid_until
@@ -520,6 +534,10 @@ def validate_calibration_review(
     """Bind an independent sample review to one immutable calibration report."""
 
     try:
+        require_private_regular_file(
+            review_path,
+            label="calibration review",
+        )
         review_payload, review_sha256 = read_json_object_snapshot(
             review_path,
             label="calibration review",

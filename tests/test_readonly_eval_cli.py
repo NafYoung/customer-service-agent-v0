@@ -18,13 +18,22 @@ from evals.calibration_attestation import (
     ValidatedCalibrationAttestation,
     ValidatedCalibrationReview,
 )
-from evals.evidence import verify_eval_bundle
+from evals.evidence import (
+    ArtifactIntegrityError,
+    BusinessStateDelta,
+    stable_sha256,
+    verify_eval_bundle,
+)
 from evals.evidence_schema import (
     validate_readonly_bundle,
     validate_readonly_payload,
 )
-from evals.holdout_lock import HoldoutLockError
-from evals.readonly_eval import ReadonlyEvalCase, ReadonlyEvalResult
+from evals.holdout_lock import HoldoutDeclaration, HoldoutLockError
+from evals.readonly_eval import (
+    ReadonlyEvalCase,
+    ReadonlyEvalResult,
+    ScoreCheck,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -522,9 +531,24 @@ def test_formal_cli_validates_calibration_chain_before_budget_or_model(
         "load_cases",
         lambda path: cases,
     )
+    monkeypatch.setattr(
+        run_readonly_agent_evals,
+        "prepare_fixed_private_output_root",
+        lambda requested, **kwargs: requested,
+    )
+    monkeypatch.setattr(
+        run_readonly_agent_evals,
+        "require_private_case_directory",
+        lambda path, **kwargs: path,
+    )
+    monkeypatch.setattr(
+        run_readonly_agent_evals,
+        "require_private_input_file",
+        lambda path, **kwargs: path,
+    )
 
     def require_clean_source(*, expected_commit=None):
-        assert expected_commit is None
+        assert expected_commit in {None, expected_source_commit}
         calls.append("clean")
         return expected_source_commit
 
@@ -606,7 +630,13 @@ def test_formal_cli_validates_calibration_chain_before_budget_or_model(
     )
 
     assert exit_code == 2
-    assert calls == ["clean", "attestation", "review", "declaration"]
+    assert calls == [
+        "clean",
+        "clean",
+        "attestation",
+        "review",
+        "declaration",
+    ]
 
 
 def test_formal_cli_rejects_dirty_source_before_attestation_or_budget(
@@ -639,6 +669,21 @@ def test_formal_cli_rejects_dirty_source_before_attestation_or_budget(
         run_readonly_agent_evals,
         "load_cases",
         lambda path: cases,
+    )
+    monkeypatch.setattr(
+        run_readonly_agent_evals,
+        "prepare_fixed_private_output_root",
+        lambda requested, **kwargs: requested,
+    )
+    monkeypatch.setattr(
+        run_readonly_agent_evals,
+        "require_private_case_directory",
+        lambda path, **kwargs: path,
+    )
+    monkeypatch.setattr(
+        run_readonly_agent_evals,
+        "require_private_input_file",
+        lambda path, **kwargs: path,
     )
 
     def reject_dirty_source(**kwargs):
@@ -700,3 +745,239 @@ def test_formal_cli_rejects_dirty_source_before_attestation_or_budget(
 
     assert exit_code == 2
     assert reached == ["clean"]
+
+
+def test_formal_runtime_failure_keeps_partial_evidence_and_terminal(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    cases = [
+        ReadonlyEvalCase.model_validate(
+            {
+                "case_id": f"private-runtime-case-{index:02d}",
+                "user_message": "private input",
+                "expected": {
+                    "semantic_contract": {
+                        "required_claims": [
+                            {
+                                "id": f"safe_{index:02d}",
+                                "category": "security",
+                                "proposition": "response remains safe",
+                            }
+                        ],
+                        "forbidden_claims": [],
+                    }
+                },
+            }
+        )
+        for index in range(20)
+    ]
+    frozen = run_readonly_agent_evals.freeze_readonly_harness(
+        Settings()
+    )
+    harness_sha256 = stable_sha256(dict(frozen.fingerprints))
+    declaration = HoldoutDeclaration(
+        case_set_name="readonly-holdout-v2",
+        case_set_sha256="3" * 64,
+        manifest_sha256="4" * 64,
+        source_git_commit="1" * 40,
+        scorer_version="readonly-scorer-v6",
+        calibration_report_sha256="a" * 64,
+        calibration_review_sha256="b" * 64,
+        calibration_run_id="eval-20260729-calibration-v2",
+        calibration_source_git_commit="1" * 40,
+        calibration_fixture_sha256="c" * 64,
+        calibration_contract_set_sha256="d" * 64,
+        calibration_harness_sha256="e" * 64,
+        calibration_reviewer_id="independent-reviewer-v1",
+        calibration_reviewed_count=5,
+        harness_sha256=harness_sha256,
+    )
+    attestation = ValidatedCalibrationAttestation(
+        report_sha256="a" * 64,
+        run_id="eval-20260729-calibration-v2",
+        source_git_commit="1" * 40,
+        fixture_sha256="c" * 64,
+        contract_set_sha256="d" * 64,
+        harness_sha256="e" * 64,
+        result_count=49,
+        fixture_ids=tuple(
+            f"fixture-{index:02d}" for index in range(49)
+        ),
+        fixture_kinds=tuple(
+            (f"fixture-{index:02d}", "safe_canonical")
+            for index in range(49)
+        ),
+        completed_at=datetime(2026, 7, 29, 12, tzinfo=UTC),
+    )
+    review = ValidatedCalibrationReview(
+        review_sha256="b" * 64,
+        reviewer_id="independent-reviewer-v1",
+        reviewed_count=5,
+    )
+    model = OfflineEvalModel()
+    budget_guard = OfflineBudgetGuard()
+    partial_result = ReadonlyEvalResult(
+        case_id="private-runtime-case-00",
+        trial=1,
+        case_run_id="failed-run-private-runtime-case-00-t1",
+        input_sha256="7" * 64,
+        passed=False,
+        started_at="2026-07-29T16:00:00+00:00",
+        completed_at="2026-07-29T16:00:01+00:00",
+        duration_ms=1000,
+        failures=["provider failed"],
+        score_checks=[
+            ScoreCheck(category, f"{category} check", False)
+            for category in (
+                "task_success",
+                "tool_selection",
+                "security",
+                "communication",
+                "efficiency",
+            )
+        ],
+        final_text="partial safe answer",
+        business_state_delta=BusinessStateDelta(
+            changed=False,
+            changed_tables=(),
+            before_sha256="8" * 64,
+            after_sha256="8" * 64,
+        ),
+        error_code="MODEL_HTTP_ERROR",
+    )
+    output_root = tmp_path / "private-output"
+    lock_root = tmp_path / "private-locks"
+
+    monkeypatch.setattr(
+        run_readonly_agent_evals,
+        "prepare_fixed_private_output_root",
+        lambda requested, **kwargs: output_root,
+    )
+    monkeypatch.setattr(
+        run_readonly_agent_evals,
+        "require_private_case_directory",
+        lambda path, **kwargs: path,
+    )
+    monkeypatch.setattr(
+        run_readonly_agent_evals,
+        "require_private_input_file",
+        lambda path, **kwargs: path,
+    )
+    monkeypatch.setattr(
+        run_readonly_agent_evals,
+        "load_cases",
+        lambda path: cases,
+    )
+    monkeypatch.setattr(
+        run_readonly_agent_evals,
+        "require_clean_git_worktree",
+        lambda **kwargs: "1" * 40,
+    )
+    monkeypatch.setattr(
+        run_readonly_agent_evals,
+        "freeze_readonly_harness",
+        lambda settings: frozen,
+    )
+    monkeypatch.setattr(
+        run_readonly_agent_evals,
+        "current_source_tree_sha256",
+        lambda: "9" * 64,
+    )
+    monkeypatch.setattr(
+        run_readonly_agent_evals,
+        "validate_calibration_attestation",
+        lambda **kwargs: attestation,
+    )
+    monkeypatch.setattr(
+        run_readonly_agent_evals,
+        "validate_calibration_review",
+        lambda **kwargs: review,
+    )
+    monkeypatch.setattr(
+        run_readonly_agent_evals,
+        "validate_holdout_declaration",
+        lambda **kwargs: declaration,
+    )
+    monkeypatch.setattr(
+        run_readonly_agent_evals,
+        "build_deepseek_budget_guard",
+        lambda **kwargs: budget_guard,
+    )
+    monkeypatch.setattr(
+        run_readonly_agent_evals,
+        "build_deepseek_client",
+        lambda settings, *, budget_guard: model,
+    )
+    monkeypatch.setattr(
+        run_readonly_agent_evals,
+        "DEFAULT_HOLDOUT_LOCK_ROOT",
+        lock_root,
+    )
+    monkeypatch.setattr(
+        run_readonly_agent_evals,
+        "verify_failed_holdout_receipt_chain",
+        lambda **kwargs: None,
+    )
+
+    def fail_after_partial_results(*, partial_results, **kwargs):
+        partial_results.append(partial_result)
+        raise ArtifactIntegrityError(
+            "PRIVATE-RUNTIME-ERROR-CANARY"
+        )
+
+    monkeypatch.setattr(
+        run_readonly_agent_evals,
+        "run_eval_suite",
+        fail_after_partial_results,
+    )
+
+    exit_code = run_readonly_agent_evals.main(
+        [
+            "--case-dir",
+            str(tmp_path / "private-cases"),
+            "--output-root",
+            str(output_root),
+            "--run-id",
+            "eval-20260729-runtime-failure",
+            "--purpose",
+            "holdout_formal",
+            "--split",
+            "holdout",
+            "--case-set-name",
+            "readonly-holdout-v2",
+            "--trials",
+            "4",
+            "--holdout-manifest",
+            str(tmp_path / "manifest.json"),
+            "--calibration-report",
+            str(tmp_path / "calibration.json"),
+            "--calibration-review",
+            str(tmp_path / "review.json"),
+        ]
+    )
+
+    assert exit_code == 3
+    failed_bundle = (
+        output_root
+        / "failed-attempts"
+        / "eval-20260729-runtime-failure"
+    )
+    assert failed_bundle.exists()
+    cases_payload = (
+        failed_bundle / "cases.jsonl"
+    ).read_text(encoding="utf-8")
+    assert "private-runtime-case-00" in cases_payload
+    terminal = json.loads(
+        (
+            lock_root / "readonly-holdout-v2.terminal.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert terminal["status"] == "failed"
+    assert terminal["failure_evidence_status"] == "captured"
+    assert terminal["attempt_bundle_integrity_sha256"]
+    output = capsys.readouterr().out
+    assert "PRIVATE-RUNTIME-ERROR-CANARY" not in output
+    assert "private-runtime-case-00" not in output
+    assert str(tmp_path) not in output
