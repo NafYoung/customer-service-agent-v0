@@ -133,6 +133,11 @@ _FORMAL_BUDGET_GUARD_METHODS = {
     "mark_uncertain": DeepSeekBudgetGuard.mark_uncertain,
     "snapshot": DeepSeekBudgetGuard.snapshot,
 }
+_FORMAL_HTTPX_CLIENT_METHODS = {
+    "send": httpx.Client.send,
+    "post": httpx.Client.post,
+    "request": httpx.Client.request,
+}
 
 
 @dataclass(frozen=True)
@@ -169,6 +174,15 @@ class ValidatedFormalRunContext:
 
 
 @dataclass(frozen=True)
+class SealedFormalHttpChannel:
+    """Live httpx send-path identity sealed at formal capability issue."""
+
+    client_id: int
+    transport_id: int
+    mounts: tuple[tuple[str, int], ...]
+
+
+@dataclass(frozen=True)
 class ValidatedFormalExecutionCapability:
     """One-use binding of the complete formal execution object graph."""
 
@@ -181,6 +195,8 @@ class ValidatedFormalExecutionCapability:
     frozen_harness: FrozenReadonlyHarness
     frozen_harness_entity_sha256: str
     sealed_httpx_client_id: int
+    sealed_httpx_transport_id: int
+    sealed_httpx_mounts: tuple[tuple[str, int], ...]
     sealed_budget_ledger_id: int
     sealed_budget_price_snapshot_id: int
     _sentinel: object
@@ -230,6 +246,34 @@ def _frozen_harness_entity_sha256(
     )
 
 
+def _seal_httpx_mounts(client: httpx.Client) -> tuple[tuple[str, int], ...]:
+    """Capture mount pattern → transport object ids for formal send-path seals.
+
+    ``None`` mount transports are httpx's proxy-bypass slots (e.g. localhost)
+    and are sealed as id ``0``. Any other non-``HTTPTransport`` mount fails closed.
+    """
+
+    mounts = getattr(client, "_mounts", None)
+    if mounts is None:
+        return ()
+    sealed: list[tuple[str, int]] = []
+    for pattern, transport in mounts.items():
+        pattern_key = getattr(pattern, "pattern", None)
+        if not isinstance(pattern_key, str):
+            raise ValueError(
+                "holdout_formal requires a validated formal execution capability"
+            )
+        if transport is None:
+            sealed.append((pattern_key, 0))
+            continue
+        if type(transport) is not httpx.HTTPTransport:
+            raise ValueError(
+                "holdout_formal requires a validated formal execution capability"
+            )
+        sealed.append((pattern_key, id(transport)))
+    return tuple(sorted(sealed))
+
+
 def _require_bound_formal_runtime_objects(
     *,
     settings: Settings,
@@ -238,9 +282,11 @@ def _require_bound_formal_runtime_objects(
     budget_guard: object,
     budget_report_provider: object,
     sealed_httpx_client_id: int | None = None,
+    sealed_httpx_transport_id: int | None = None,
+    sealed_httpx_mounts: tuple[tuple[str, int], ...] | None = None,
     sealed_budget_ledger_id: int | None = None,
     sealed_budget_price_snapshot_id: int | None = None,
-) -> tuple[int, int, int]:
+) -> tuple[SealedFormalHttpChannel, int, int]:
     if (
         type(model) is not OpenAICompatibleChatClient
         or type(budget_guard) is not DeepSeekBudgetGuard
@@ -263,13 +309,30 @@ def _require_bound_formal_runtime_objects(
         raise ValueError(
             "holdout_formal requires a validated formal execution capability"
         )
-    client_id = id(live_client)
+    live_transport = getattr(live_client, "_transport", None)
+    if type(live_transport) is not httpx.HTTPTransport:
+        raise ValueError(
+            "holdout_formal requires a validated formal execution capability"
+        )
+    channel = SealedFormalHttpChannel(
+        client_id=id(live_client),
+        transport_id=id(live_transport),
+        mounts=_seal_httpx_mounts(live_client),
+    )
     ledger_id = id(live_ledger)
     price_snapshot_id = id(live_price_snapshot)
     if (
         (
             sealed_httpx_client_id is not None
-            and client_id != sealed_httpx_client_id
+            and channel.client_id != sealed_httpx_client_id
+        )
+        or (
+            sealed_httpx_transport_id is not None
+            and channel.transport_id != sealed_httpx_transport_id
+        )
+        or (
+            sealed_httpx_mounts is not None
+            and channel.mounts != sealed_httpx_mounts
         )
         or (
             sealed_budget_ledger_id is not None
@@ -291,6 +354,9 @@ def _require_bound_formal_runtime_objects(
     shadowed_guard_methods = set(
         _FORMAL_BUDGET_GUARD_METHODS
     ).intersection(vars(budget_guard))
+    shadowed_httpx_methods = set(_FORMAL_HTTPX_CLIENT_METHODS).intersection(
+        vars(live_client)
+    )
     model_class_methods_changed = any(
         getattr(OpenAICompatibleChatClient, name) is not method
         for name, method in _FORMAL_MODEL_METHODS.items()
@@ -299,11 +365,22 @@ def _require_bound_formal_runtime_objects(
         getattr(DeepSeekBudgetGuard, name) is not method
         for name, method in _FORMAL_BUDGET_GUARD_METHODS.items()
     )
+    httpx_class_methods_changed = any(
+        getattr(httpx.Client, name) is not method
+        for name, method in _FORMAL_HTTPX_CLIENT_METHODS.items()
+    )
+    httpx_bound_methods_changed = any(
+        getattr(getattr(live_client, name), "__func__", None) is not method
+        for name, method in _FORMAL_HTTPX_CLIENT_METHODS.items()
+    )
     if (
         shadowed_execution_methods
         or shadowed_guard_methods
+        or shadowed_httpx_methods
         or model_class_methods_changed
         or guard_class_methods_changed
+        or httpx_class_methods_changed
+        or httpx_bound_methods_changed
         or semantic_judge_model is not model
         or not callable(budget_report_provider)
         or getattr(budget_report_provider, "__self__", None) is not budget_guard
@@ -323,7 +400,7 @@ def _require_bound_formal_runtime_objects(
         raise ValueError(
             "holdout_formal requires a validated formal execution capability"
         )
-    return client_id, ledger_id, price_snapshot_id
+    return channel, ledger_id, price_snapshot_id
 
 
 def _formal_case_set_sha256(
@@ -460,7 +537,7 @@ def _create_validated_formal_execution_capability(
         validate_paid_eval_settings(settings)
         require_canonical_calibration_runtime(settings)
         (
-            sealed_httpx_client_id,
+            sealed_http_channel,
             sealed_budget_ledger_id,
             sealed_budget_price_snapshot_id,
         ) = _require_bound_formal_runtime_objects(
@@ -510,7 +587,9 @@ def _create_validated_formal_execution_capability(
         budget_report_provider=budget_report_provider,
         frozen_harness=frozen_harness,
         frozen_harness_entity_sha256=harness_entity_sha256,
-        sealed_httpx_client_id=sealed_httpx_client_id,
+        sealed_httpx_client_id=sealed_http_channel.client_id,
+        sealed_httpx_transport_id=sealed_http_channel.transport_id,
+        sealed_httpx_mounts=sealed_http_channel.mounts,
         sealed_budget_ledger_id=sealed_budget_ledger_id,
         sealed_budget_price_snapshot_id=sealed_budget_price_snapshot_id,
         _sentinel=_FORMAL_EXECUTION_CAPABILITY_SENTINEL,
@@ -563,6 +642,8 @@ def _consume_validated_formal_execution_capability(
             budget_guard=capability.budget_guard,
             budget_report_provider=budget_report_provider,
             sealed_httpx_client_id=capability.sealed_httpx_client_id,
+            sealed_httpx_transport_id=capability.sealed_httpx_transport_id,
+            sealed_httpx_mounts=capability.sealed_httpx_mounts,
             sealed_budget_ledger_id=capability.sealed_budget_ledger_id,
             sealed_budget_price_snapshot_id=(
                 capability.sealed_budget_price_snapshot_id

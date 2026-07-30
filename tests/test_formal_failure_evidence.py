@@ -11,6 +11,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.config import Settings
+from evals import paid_ledger_binding as paid_ledger_binding_module
 from evals.canonical_pricing import canonical_budget_price_payload
 from evals.evidence import ArtifactIntegrityError, stable_sha256
 from evals.evidence_schema import validate_readonly_bundle
@@ -27,6 +28,24 @@ from evals.readonly_reporting import (
     readonly_harness_snapshot,
     readonly_model_snapshot,
 )
+from tests.paid_ledger_testutil import install_matching_ledger_for_paid_payload
+
+_REAL_PAID_LEDGER_REQUIRE = (
+    paid_ledger_binding_module.require_persistent_budget_matches_trusted_ledger
+)
+
+
+@pytest.fixture(autouse=True)
+def _stub_paid_ledger_binding(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _noop(**_kwargs: object) -> None:
+        return None
+
+    monkeypatch.setattr(
+        "evals.paid_ledger_binding.require_persistent_budget_matches_trusted_ledger",
+        _noop,
+    )
 
 
 def _context(*, run_id: str = "formal-failed-20260729-a1") -> FormalFailureContext:
@@ -1204,3 +1223,122 @@ def test_permission_downgrade_is_rejected(tmp_path: Path) -> None:
 
     with pytest.raises(FormalFailureEvidenceError, match="owner-only"):
         validate_formal_failure_bundle(bundle_path)
+
+
+def test_formal_failure_rejects_synthetic_budget_without_live_ledger(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        paid_ledger_binding_module,
+        "require_persistent_budget_matches_trusted_ledger",
+        _REAL_PAID_LEDGER_REQUIRE,
+    )
+    missing = tmp_path / "missing-private" / "budget.sqlite3"
+    monkeypatch.setattr(
+        paid_ledger_binding_module,
+        "DEFAULT_BUDGET_LEDGER",
+        missing,
+        raising=False,
+    )
+    budget = _persistent_budget_report(
+        run_id="formal-failed-20260729-ledger-missing",
+        attempt_count=0,
+    )
+
+    with pytest.raises(ValueError, match="ledger|trusted|persistent"):
+        write_formal_failure_bundle(
+            output_root=tmp_path / "failed-attempts",
+            context=_context(run_id="formal-failed-20260729-ledger-missing"),
+            case_records=[],
+            records_captured=True,
+            budget_summary=budget,
+        )
+
+
+def test_formal_failure_accepts_budget_matching_temporary_ledger(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        paid_ledger_binding_module,
+        "require_persistent_budget_matches_trusted_ledger",
+        _REAL_PAID_LEDGER_REQUIRE,
+    )
+    run_id = "formal-failed-20260729-ledger-ok"
+    payload = {
+        "summary": {
+            "budget": _persistent_budget_report(
+                run_id=run_id,
+                attempt_count=0,
+            )
+        },
+        "cases": [],
+    }
+    install_matching_ledger_for_paid_payload(
+        tmp_path=tmp_path,
+        monkeypatch=monkeypatch,
+        payload=payload,
+    )
+    budget = payload["summary"]["budget"]
+    identity = budget["run_identity"]
+    completed_at = datetime.fromisoformat(str(identity["completed_at"]))
+    context = _context(run_id=run_id).model_dump(mode="json")
+    context["created_at"] = identity["started_at"]
+    context["failed_at"] = (completed_at + timedelta(seconds=1)).isoformat()
+
+    bundle = write_formal_failure_bundle(
+        output_root=tmp_path / "failed-attempts",
+        context=context,
+        case_records=[],
+        records_captured=True,
+        budget_summary=budget,
+    )
+    validated = validate_formal_failure_bundle(bundle)
+    assert validated.summary.budget is not None
+    assert validated.summary.budget.run_identity is not None
+    assert validated.summary.budget.run_identity.run_id == run_id
+
+
+def test_formal_failure_rejects_tampered_settled_cost_vs_live_ledger(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        paid_ledger_binding_module,
+        "require_persistent_budget_matches_trusted_ledger",
+        _REAL_PAID_LEDGER_REQUIRE,
+    )
+    run_id = "formal-failed-20260729-ledger-tamper"
+    payload = {
+        "summary": {
+            "budget": _persistent_budget_report(
+                run_id=run_id,
+                attempt_count=0,
+            )
+        },
+        "cases": [],
+    }
+    install_matching_ledger_for_paid_payload(
+        tmp_path=tmp_path,
+        monkeypatch=monkeypatch,
+        payload=payload,
+    )
+    budget = payload["summary"]["budget"]
+    identity = budget["run_identity"]
+    completed_at = datetime.fromisoformat(str(identity["completed_at"]))
+    context = _context(run_id=run_id).model_dump(mode="json")
+    context["created_at"] = identity["started_at"]
+    context["failed_at"] = (completed_at + timedelta(seconds=1)).isoformat()
+    for scope in ("run", "cumulative"):
+        budget[scope]["settled_cny"] = "0.000001"
+        budget[scope]["committed_cny"] = "0.000001"
+
+    with pytest.raises(ValueError, match="ledger|trusted|persistent|budget"):
+        write_formal_failure_bundle(
+            output_root=tmp_path / "failed-attempts",
+            context=context,
+            case_records=[],
+            records_captured=True,
+            budget_summary=budget,
+        )

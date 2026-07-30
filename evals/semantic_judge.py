@@ -259,15 +259,8 @@ def _call_evidence(
         ),
         error_code=error.code if error is not None else None,
         http_status=error.status_code if error is not None else None,
-        provider_request_id=(
-            error.request_id
-            if error is not None
-            else (
-                turn.provider_request_id
-                if turn is not None
-                else None
-            )
-        ),
+        # Never persist provider correlators into calibration / evidence paths.
+        provider_request_id=None,
         provider_attempts=(
             error.attempts
             if error is not None

@@ -82,17 +82,21 @@ After sealing:
 - `OpenAICompatibleChatClient.public_runtime_config` / formal binding derive
   `transport_mode` from the live `httpx.Client._transport` type (not the
   writable `_transport_mode` attribute alone).
-- Issue records `sealed_httpx_client_id`, `sealed_budget_ledger_id`, and
+- Issue records `sealed_httpx_client_id`, `sealed_httpx_transport_id`,
+  `sealed_httpx_mounts`, `sealed_budget_ledger_id`, and
   `sealed_budget_price_snapshot_id`; consume re-checks object identity.
+- Instance shadows of `httpx.Client.send` / `.post` / `.request` are rejected
+  against import-time unbound class methods.
 
 ```text
 .venv/bin/python -m pytest tests/test_dev_repeat_paid_gate.py \
-  -k 'httpx_client_swap or transport_mode_lie or budget_graph_rebinding or \
+  -k 'httpx_client_swap or sibling_http_transport or client_method_shadow or \
+  mounts_mock_injection or transport_mode_lie or budget_graph_rebinding or \
   formal_execution_capability or formal_model_public_runtime_config' -q
 ```
 
-Result: `18 passed` (includes the four new adversarial cases: client swap,
-transport-mode lie, and two budget-graph rebinding variants).
+Result: adversarial send-path cases (sibling `HTTPTransport`, method shadow,
+`_mounts` MockTransport injection) fail closed with zero model calls.
 
 ```text
 .venv/bin/python -m ruff check app/agent/openai_compatible.py \
@@ -113,6 +117,9 @@ Result: ruff and mypy clean on the sealed-transport change surface.
 | Consumption independently re-freezes the repository-owned harness | `test_formal_execution_capability_refreezes_harness_before_model_call` | integration | PASS |
 | Budget guard, exact bound report provider, capability, and public model configuration cannot be substituted | `test_formal_execution_capability_rejects_runtime_object_replacement_zero_calls` | integration | PASS |
 | Post-issue live `httpx` client / MockTransport channel swap is rejected before any model call or budget attempt | `test_formal_execution_capability_rejects_post_issue_httpx_client_swap_zero_calls` | integration | PASS |
+| Post-issue sibling `HTTPTransport` object swap on the same client is rejected | `test_formal_execution_capability_rejects_sibling_http_transport_swap_zero_calls` | integration | PASS |
+| Post-issue instance shadow of `Client.send` / `.post` / `.request` is rejected | `test_formal_execution_capability_rejects_client_method_shadow_zero_calls` | integration | PASS |
+| Post-issue `_mounts` MockTransport injection is rejected while default `_transport` remains | `test_formal_execution_capability_rejects_mounts_mock_injection_zero_calls` | integration | PASS |
 | Custom transport plus `_transport_mode = "default"` lie fails closed at issue (live transport derivation) | `test_formal_execution_capability_rejects_transport_mode_lie_zero_calls` | integration | PASS |
 | Post-issue budget `_ledger` / `_price_snapshot` rebinding is rejected before any model call or budget attempt | `test_formal_execution_capability_rejects_budget_graph_rebinding_zero_calls` | integration | PASS |
 | Instance- or class-level execution-method overrides are rejected before any model call or budget attempt; budget-guard execution methods are bound the same way | instance/class method override tests | integration | PASS |
@@ -124,14 +131,14 @@ Result: ruff and mypy clean on the sealed-transport change surface.
 
 - All checks were offline. No provider request, `.env`, real budget ledger, or
   holdout case set was accessed.
-- The full repository suite was not used as this task's GREEN gate because a
-  parallel budget/schema change was still updating shared fixtures. Its
-  repository-wide verification belongs to the integration owner.
-- No checkpoint commit was created because this phase explicitly required
-  leaving the shared worktree uncommitted; this document preserves the RED and
-  GREEN evidence instead.
+- Class-level `httpx.HTTPTransport.handle_request` monkeypatch remains a
+  residual in-process risk outside the sealed object-identity contract; it is
+  not closed by this change.
 - Live transport sealing treats `httpx.HTTPTransport` as the default channel.
   An explicit `transport=httpx.HTTPTransport(...)` injection is therefore
-  treated as default-equivalent; MockTransport / DummyTransport and post-issue
-  `_client` identity swaps are fail-closed.
+  treated as default-equivalent at issue time, but the concrete transport
+  object id and mounts map are sealed so post-issue sibling swaps fail closed.
+- Default httpx proxy-bypass mount slots (`transport is None`, e.g. localhost)
+  are sealed as id ``0``; any non-``None`` non-``HTTPTransport`` mount fails
+  closed.
 - Same-OS-user rewrite of private lock files remains outside the claimed TCB.

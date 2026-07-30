@@ -1,11 +1,11 @@
 # 项目现役状态
 
-最后核对：2026-07-30 21:00 UTC
+最后核对：2026-07-30 23:45 UTC
 
 本地分支：`main`
 
-最近已提交检查点：与本文件同 Git 提交（Phase 2 P0/P1 合入：runtime 封印 +
-校准/付费证据绑定 + `response_id` 脱敏）
+最近已提交检查点：与本文件同 Git 提交（Phase 2 P1 闭合：send-path 封印 +
+formal failure 账本绑定 + 校准 `provider_request_id` 脱敏）
 
 Preparation Agent 检查点：`1b034cd`
 
@@ -21,9 +21,9 @@ Preparation Agent 检查点：`1b034cd`
 | Eval 证据与预算闸门 | verified-current | 开发集 40/40；累计已结算费用 ¥0.12738404 |
 | holdout v1 | verified-current / retired | 唯一正式结果 46/80、`pass^4=0.35`；禁止重跑 |
 | Preparation Agent | changed-and-verified | 提交 `1b034cd`；独立审查 Gate GO |
-| 原子命题语义门 | changed-and-verified-offline / pending fresh same-commit audit | 本提交关闭 a10facb 三路复审 NO-GO 中的校准响应摘要账本锚定、review 机器重放、失败校准 untrusted 落盘 |
-| 正式 Eval 证据链 | changed-and-verified-offline / pending fresh same-commit audit | live httpx/ledger/price 对象封印；source-tree 拒绝目录 symlink 跟随；付费 endpoint 拒绝 `/v1` |
-| 非正式付费入口 | changed-and-verified-offline / pending fresh same-commit audit | `persistent_sqlite` 包校验回读固定私有账本；`response_id` 与 `provider_request_id` 一并强制 null |
+| 原子命题语义门 | changed-and-verified-offline / pending fresh same-commit audit | 校准 `_call_evidence` 强制 `provider_request_id`/`response_id` null；响应摘要账本锚定仍在 |
+| 正式 Eval 证据链 | changed-and-verified-offline / pending fresh same-commit audit | client/transport/mounts + send/post/request 封印；formal failure 与 formal v1 付费包回读 live ledger |
+| 非正式付费入口 | changed-and-verified-offline / pending fresh same-commit audit | `persistent_sqlite` 包校验回读固定私有账本；导出证据 correlator 强制 null |
 | DeepSeek 语义校准 | pending | 尚未调用，新增费用为 0 |
 | 公开回归与 holdout v2 | pending | 必须等待语义校准和独立审查通过 |
 | 宿主确认、并发、UI、GitHub、公开演示 | pending | 尚未实现或发布 |
@@ -36,22 +36,23 @@ Preparation Agent 检查点：`1b034cd`
 
 ```text
 ruff: passed
-mypy: 53 source files passed
+mypy: 54 source files passed
 schema freshness: passed
-pytest: 598 passed
-branch coverage: 82.77%
+pytest: 607 passed
+branch coverage: 82.62%
 pip-audit: no known vulnerabilities
 Reference Eval: 8/8
 ```
 
-对基线 `a10facb` 的三路全新 `phase2_fresh_adversarial_reaudit` 结论均为 **NO-GO**
-（报告已入库）：
+对基线 `ac6ccd8` 的三路全新 `phase2_fresh_adversarial_reaudit` 结论为：
 
-- `docs/testing/phase2-fresh-reaudit-budget-privacy-a10facb.md`
-- `docs/testing/phase2-fresh-reaudit-runtime-harness-a10facb.md`
-- `docs/testing/phase2-fresh-reaudit-semantic-evidence-a10facb.md`
+| 轨 | 结论 | 报告 |
+|---|---|---|
+| 预算 / 结果 / 隐私 | **NO-GO** | `docs/testing/phase2-fresh-reaudit-budget-privacy-ac6ccd8.md` |
+| runtime / capability / harness | **NO-GO** | `docs/testing/phase2-fresh-reaudit-runtime-harness-ac6ccd8.md` |
+| 语义校准 / 原始证据 | **GO** | `docs/testing/phase2-fresh-reaudit-semantic-evidence-ac6ccd8.md` |
 
-本提交合入修复后，**必须**在新 SHA 上重做同结构三路 fresh reaudit；修复本身不能继承 a10facb 审查 GO。
+本提交闭合 ac6ccd8 两路 NO-GO 的 P1（send-path 封印、formal failure/v1 账本绑定、校准 correlator 写盘脱敏）。**必须**在本提交新 SHA 上重做同结构三路 fresh reaudit；不得继承 ac6ccd8 的 GO/NO-GO。
 
 本轮未调用 DeepSeek，新增费用为 0。
 
@@ -85,16 +86,16 @@ Reference Eval: 8/8
 
 ## 当前工作区说明
 
-本提交在 `a10facb` 之上合入 Phase 2 复审 NO-GO 修复，主要包括：
+本提交在 `ac6ccd8` 之上闭合 Phase 2 复审残留 P1，主要包括：
 
-- **Runtime / capability：** live `httpx.Client` 与 budget ledger/price 对象封印；
-  `transport_mode` 由 live transport 推导；source-tree fingerprint 不跟随目录
-  symlink；付费 endpoint path 收紧（拒绝 `/v1`）。
-- **语义校准：** `response_content_sha256` 写入 model_call 与 settled ledger
-  attempt；attestation 对账本摘要而非仅报告内自洽；review 机器重放抽样夹具；
-  失败校准 untrusted 落盘。
-- **预算 / 隐私：** `persistent_sqlite` 付费包校验回读固定私有账本；导出证据
-  强制 `response_id`/`provider_request_id` 为 null。
+- **Runtime / capability：** 除 `sealed_httpx_client_id` 外，封印
+  `sealed_httpx_transport_id` 与 `sealed_httpx_mounts`；拒绝实例级
+  `Client.send` / `.post` / `.request` 遮蔽；对抗覆盖兄弟 `HTTPTransport`
+  替换与 `_mounts` MockTransport 注入。类级 `HTTPTransport.handle_request`
+  补丁仍为文档化残余。
+- **预算：** formal failure 与退役 formal v1 的 `persistent_sqlite` 包校验回读
+  live ledger（允许 `active` / `completed` 可绑定状态）。
+- **隐私：** 校准 `_call_evidence` 成功路径不再回填 `provider_request_id`。
 
-完整离线门已通过，但尚未取得**本提交**三路审查 GO，不能视为 Phase 2 验收完成；
+完整离线门通过后仍须取得**本提交**三路审查 GO，不能视为 Phase 2 验收完成；
 付费 DeepSeek 校准仍 pending。

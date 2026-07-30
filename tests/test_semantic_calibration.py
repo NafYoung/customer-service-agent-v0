@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from collections import Counter
+from dataclasses import asdict
 from pathlib import Path
 from typing import Callable, Sequence
 
@@ -18,7 +19,11 @@ from evals.semantic_calibration import (
     validate_calibration_coverage,
     validate_calibration_verdict_grounding,
 )
-from evals.semantic_judge import SemanticJudgeError, SemanticJudgeVerdict
+from evals.semantic_judge import (
+    SemanticJudgeError,
+    SemanticJudgeVerdict,
+    _call_evidence,
+)
 
 FIXTURE_PATH = Path("evals/semantic_judge_calibration_cases.jsonl")
 CASE_DIR = Path("evals/readonly_regression_cases")
@@ -822,6 +827,32 @@ def test_calibration_result_preserves_full_validated_verdict() -> None:
     assert result.verdict == verdict
     assert result.model_calls
     assert result.model_calls[0]["provider_request_id"] is None
+    assert result.model_calls[0]["response_id"] is None
+    serialized = asdict(result)
+    assert serialized["model_calls"][0]["provider_request_id"] is None
+    assert serialized["model_calls"][0]["response_id"] is None
+
+
+def test_calibration_call_evidence_never_carries_provider_correlators() -> None:
+    turn = AssistantTurn(
+        content="{}",
+        tool_calls=(),
+        finish_reason="stop",
+        usage={"total_tokens": 1},
+        model="offline-judge",
+        provider_request_id="req-LEAK-SHOULD-NOT-SERIALIZE",
+        response_id="resp-LEAK-SHOULD-NOT-SERIALIZE",
+    )
+    evidence = _call_evidence(
+        turn=turn,
+        status="success",
+        started_at="2026-08-01T12:00:00+00:00",
+        started=0.0,
+        message_count=2,
+    )
+    payload = asdict(evidence)
+    assert payload["provider_request_id"] is None
+    assert payload["response_id"] is None
 
 
 def test_calibration_fixture_uses_supplied_frozen_judge_prompt() -> None:

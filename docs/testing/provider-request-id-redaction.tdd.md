@@ -31,6 +31,10 @@ the same null-only rule to caller-built bundle dictionaries. The strict public
 `ModelCallRecord` schema accepts only null for this field, so a handcrafted
 public payload cannot reintroduce it.
 
+Semantic calibration `_call_evidence` also forces `provider_request_id` and
+`response_id` to null before any `asdict` / private report write, so attestation
+rejection is not the only barrier.
+
 Focused offline verification:
 
 ```text

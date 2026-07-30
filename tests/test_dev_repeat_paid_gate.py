@@ -7,6 +7,7 @@ from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
+from types import MethodType
 
 import httpx
 import pytest
@@ -1283,6 +1284,158 @@ def test_formal_execution_capability_rejects_post_issue_httpx_client_swap_zero_c
     finally:
         bound_model._client = sealed_client
         swapped_client.close()
+        bound_model.close()
+
+
+def test_formal_execution_capability_rejects_sibling_http_transport_swap_zero_calls(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = _formal_runtime_inputs(tmp_path, monkeypatch)
+    guard = _formal_budget_guard(
+        tmp_path,
+        run_id="eval-20260729-formal-sibling-transport",
+        settings=runtime.settings,
+    )
+    bound_model = runner.build_deepseek_client(
+        runtime.settings,
+        budget_guard=guard,
+    )
+    report_provider = guard.snapshot
+    sealed_transport = bound_model._client._transport
+    sibling_transport = httpx.HTTPTransport()
+    try:
+        capability = _issue_formal_execution_capability(
+            runtime=runtime,
+            model=bound_model,
+            semantic_judge_model=bound_model,
+            budget_guard=guard,
+            budget_report_provider=report_provider,
+        )
+        bound_model._client._transport = sibling_transport
+        assert bound_model.live_transport_mode() == "default"
+        with pytest.raises(ValueError, match="formal execution capability"):
+            _run_formal_runtime_attack(
+                runtime=runtime,
+                model=bound_model,
+                semantic_judge_model=bound_model,
+                budget_report_provider=report_provider,
+                frozen_harness=runtime.frozen_harness,
+                capability=capability,
+            )
+        _assert_zero_budget_attempts(guard)
+    finally:
+        bound_model._client._transport = sealed_transport
+        sibling_transport.close()
+        bound_model.close()
+
+
+@pytest.mark.parametrize("method_name", ["send", "post", "request"])
+def test_formal_execution_capability_rejects_client_method_shadow_zero_calls(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    method_name: str,
+) -> None:
+    runtime = _formal_runtime_inputs(tmp_path, monkeypatch)
+    guard = _formal_budget_guard(
+        tmp_path,
+        run_id=f"eval-20260729-formal-client-{method_name}-shadow",
+        settings=runtime.settings,
+    )
+    bound_model = runner.build_deepseek_client(
+        runtime.settings,
+        budget_guard=guard,
+    )
+    report_provider = guard.snapshot
+    mock_hits = 0
+
+    def _shadowed(self: httpx.Client, *args: object, **kwargs: object) -> object:
+        del self, args, kwargs
+        nonlocal mock_hits
+        mock_hits += 1
+        return httpx.Response(200, json={"choices": []})
+
+    try:
+        capability = _issue_formal_execution_capability(
+            runtime=runtime,
+            model=bound_model,
+            semantic_judge_model=bound_model,
+            budget_guard=guard,
+            budget_report_provider=report_provider,
+        )
+        setattr(
+            bound_model._client,
+            method_name,
+            MethodType(_shadowed, bound_model._client),
+        )
+        with pytest.raises(ValueError, match="formal execution capability"):
+            _run_formal_runtime_attack(
+                runtime=runtime,
+                model=bound_model,
+                semantic_judge_model=bound_model,
+                budget_report_provider=report_provider,
+                frozen_harness=runtime.frozen_harness,
+                capability=capability,
+            )
+        assert mock_hits == 0
+        _assert_zero_budget_attempts(guard)
+    finally:
+        bound_model.close()
+
+
+def test_formal_execution_capability_rejects_mounts_mock_injection_zero_calls(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = _formal_runtime_inputs(tmp_path, monkeypatch)
+    guard = _formal_budget_guard(
+        tmp_path,
+        run_id="eval-20260729-formal-mounts-inject",
+        settings=runtime.settings,
+    )
+    bound_model = runner.build_deepseek_client(
+        runtime.settings,
+        budget_guard=guard,
+    )
+    report_provider = guard.snapshot
+    mock_hits = 0
+
+    def _mock_handler(request: httpx.Request) -> httpx.Response:
+        del request
+        nonlocal mock_hits
+        mock_hits += 1
+        return httpx.Response(200, json={"choices": []})
+
+    mounts = bound_model._client._mounts
+    assert mounts
+    mount_key = next(iter(mounts))
+    original_mount_transport = mounts[mount_key]
+    injected = httpx.MockTransport(_mock_handler)
+    try:
+        capability = _issue_formal_execution_capability(
+            runtime=runtime,
+            model=bound_model,
+            semantic_judge_model=bound_model,
+            budget_guard=guard,
+            budget_report_provider=report_provider,
+        )
+        # Keep default _transport; only remount a MockTransport.
+        mounts[mount_key] = injected
+        assert type(bound_model._client._transport) is httpx.HTTPTransport
+        assert bound_model.live_transport_mode() == "default"
+        with pytest.raises(ValueError, match="formal execution capability"):
+            _run_formal_runtime_attack(
+                runtime=runtime,
+                model=bound_model,
+                semantic_judge_model=bound_model,
+                budget_report_provider=report_provider,
+                frozen_harness=runtime.frozen_harness,
+                capability=capability,
+            )
+        assert mock_hits == 0
+        _assert_zero_budget_attempts(guard)
+    finally:
+        mounts[mount_key] = original_mount_transport
         bound_model.close()
 
 

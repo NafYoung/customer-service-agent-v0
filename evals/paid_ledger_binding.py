@@ -103,14 +103,23 @@ def require_persistent_budget_matches_trusted_ledger(
         return
     identity = report_budget.run_identity
     attempt_evidence = report_budget.attempt_evidence
-    if (
-        identity is None
-        or identity.completed_at is None
-        or attempt_evidence is None
-        or report_budget.run_status != "completed"
-    ):
+    if identity is None or attempt_evidence is None:
         raise PaidLedgerBindingError(
             f"{label} persistent budget is incomplete for ledger binding."
+        )
+    if report_budget.run_status == "completed":
+        if identity.completed_at is None or identity.status != "completed":
+            raise PaidLedgerBindingError(
+                f"{label} persistent budget is incomplete for ledger binding."
+            )
+    elif report_budget.run_status == "active":
+        if identity.completed_at is not None or identity.status != "active":
+            raise PaidLedgerBindingError(
+                f"{label} persistent budget is incomplete for ledger binding."
+            )
+    else:
+        raise PaidLedgerBindingError(
+            f"{label} persistent budget status is not bindable."
         )
     trusted_payload = read_trusted_budget_evidence(
         run_id=identity.run_id,

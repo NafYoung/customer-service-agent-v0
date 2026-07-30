@@ -637,6 +637,19 @@ class FormalFailureEvidenceBundle(StrictFailureModel):
         )
         if summary.partial != expected_partial:
             raise ValueError("Failed-attempt partial summary differs from records")
+        if summary.budget is not None:
+            from evals.paid_ledger_binding import (
+                PaidLedgerBindingError,
+                require_persistent_budget_matches_trusted_ledger,
+            )
+
+            try:
+                require_persistent_budget_matches_trusted_ledger(
+                    budget=summary.budget,
+                    label="Failed-attempt",
+                )
+            except PaidLedgerBindingError as exc:
+                raise ValueError(str(exc)) from exc
         return self
 
 

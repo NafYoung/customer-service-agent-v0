@@ -1483,6 +1483,24 @@ class ReadonlyEvidenceBundle(StrictEvidenceModel):
             )
         if (
             self.manifest.purpose == "holdout_formal"
+            and self.manifest.schema_version == "1.0"
+            and self.summary.budget.enforcement_mode == "persistent_sqlite"
+        ):
+            # Retired formal v1 still fails closed on live-ledger binding.
+            from evals.paid_ledger_binding import (
+                PaidLedgerBindingError,
+                require_persistent_budget_matches_trusted_ledger,
+            )
+
+            try:
+                require_persistent_budget_matches_trusted_ledger(
+                    budget=self.summary.budget,
+                    label="formal v1",
+                )
+            except PaidLedgerBindingError as exc:
+                raise ValueError(str(exc)) from exc
+        if (
+            self.manifest.purpose == "holdout_formal"
             and self.manifest.schema_version == "2.0"
         ):
             _require_completed_paid_bundle_records(
