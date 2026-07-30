@@ -449,20 +449,25 @@ def test_response_crossing_price_window_is_uncertain_and_not_retried(
 
     assert caught.value.code == "MODEL_PRICE_EXPIRED"
     assert caught.value.attempts == 1
+    assert caught.value.error_stage == "provider_attempt"
     assert call_count == 1
     report = guard.snapshot()
     assert report["run"]["attempt_count"] == 1
     assert report["run"]["uncertain_count"] == 1
     assert report["run"]["committed_cny"] == "1.002048"
-    assert report["attempt_evidence"]["run"] == [
-        {
-            "status": "uncertain",
-            "settlement_mode": "upper_bound",
-            "reserved_cny": "1.002048",
-            "known_cost_cny": "0.0012",
-            "count": 1,
-        }
-    ]
+    bucket = report["attempt_evidence"]["run"][0]
+    assert bucket == {
+        "logical_call_sha256": bucket["logical_call_sha256"],
+        "status": "uncertain",
+        "settlement_mode": "upper_bound",
+        "reserved_cny": "1.002048",
+        "known_cost_cny": "0.0012",
+        "error_code": "MODEL_PRICE_EXPIRED",
+        "completed_at": bucket["completed_at"],
+        "count": 1,
+    }
+    assert len(bucket["logical_call_sha256"]) == 64
+    assert datetime.fromisoformat(bucket["completed_at"]).tzinfo is not None
     validated = BudgetSummary.model_validate(report)
     assert validated.run.committed_cny == "1.002048"
     assert validated.run.settled_cny == "0"
@@ -473,10 +478,13 @@ def test_settled_bucket_still_cannot_exceed_its_reservation() -> None:
     with pytest.raises(ValueError, match="Settled budget"):
         BudgetAttemptBucket.model_validate(
             {
+                "logical_call_sha256": "a" * 64,
                 "status": "settled_upper_bound",
                 "settlement_mode": "upper_bound",
                 "reserved_cny": "1",
                 "known_cost_cny": "1.00000001",
+                "error_code": None,
+                "completed_at": "2026-07-29T12:00:01+00:00",
                 "count": 1,
             }
         )
@@ -523,15 +531,17 @@ def test_retryable_http_error_crossing_price_window_is_not_retried(
 
     assert caught.value.code == "MODEL_PRICE_EXPIRED"
     assert call_count == 1
-    assert guard.snapshot()["attempt_evidence"]["run"] == [
-        {
-            "status": "uncertain",
-            "settlement_mode": None,
-            "reserved_cny": "1.002048",
-            "known_cost_cny": None,
-            "count": 1,
-        }
-    ]
+    bucket = guard.snapshot()["attempt_evidence"]["run"][0]
+    assert bucket == {
+        "logical_call_sha256": bucket["logical_call_sha256"],
+        "status": "uncertain",
+        "settlement_mode": None,
+        "reserved_cny": "1.002048",
+        "known_cost_cny": None,
+        "error_code": "MODEL_PRICE_EXPIRED",
+        "completed_at": bucket["completed_at"],
+        "count": 1,
+    }
 
 
 def test_response_inside_price_window_still_settles_normally(tmp_path) -> None:
@@ -664,19 +674,18 @@ def test_expired_response_marking_is_idempotent_and_never_downgrades_settled(
         error_code="MUST_NOT_DOWNGRADE",
     )
 
-    assert guard.snapshot()["attempt_evidence"]["run"] == [
-        {
-            "status": "settled_upper_bound",
-            "settlement_mode": "upper_bound",
-            "reserved_cny": "1.002048",
-            "known_cost_cny": "0.0012",
-            "count": 1,
-        },
-        {
-            "status": "uncertain",
-            "settlement_mode": "upper_bound",
-            "reserved_cny": "1.002048",
-            "known_cost_cny": "0.0012",
-            "count": 1,
-        },
-    ]
+    buckets = {
+        bucket["status"]: bucket
+        for bucket in guard.snapshot()["attempt_evidence"]["run"]
+    }
+    assert set(buckets) == {"settled_upper_bound", "uncertain"}
+    assert buckets["settled_upper_bound"]["error_code"] is None
+    assert buckets["uncertain"]["error_code"] == "MODEL_PRICE_EXPIRED"
+    assert all(
+        bucket["settlement_mode"] == "upper_bound"
+        and bucket["reserved_cny"] == "1.002048"
+        and bucket["known_cost_cny"] == "0.0012"
+        and bucket["count"] == 1
+        and datetime.fromisoformat(bucket["completed_at"]).tzinfo is not None
+        for bucket in buckets.values()
+    )

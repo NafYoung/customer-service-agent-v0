@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from copy import deepcopy
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -102,6 +103,7 @@ def _error_call(
     sequence: int = 1,
     provider_attempts: int | None = 1,
     error_code: str = "MODEL_TRANSPORT_ERROR",
+    error_stage: str = "provider_attempt",
 ) -> ModelCallEvidence:
     return ModelCallEvidence(
         sequence=sequence,
@@ -115,6 +117,7 @@ def _error_call(
         http_status=None,
         provider_request_id=None,
         provider_attempts=provider_attempts,
+        error_stage=error_stage,
     )
 
 
@@ -126,10 +129,24 @@ def _result(
     error_code: str | None = None,
 ) -> ReadonlyEvalResult:
     checks = _score_checks(failed=failed)
+    case_run_id = f"eval-run-{case_id}"
+    calls = model_calls if model_calls is not None else (_success_call(),)
+    bound_calls = tuple(
+        replace(
+            call,
+            logical_call_sha256=(
+                call.logical_call_sha256
+                or hashlib.sha256(
+                    f"{case_run_id}:{call.phase}:{call.sequence}".encode("utf-8")
+                ).hexdigest()
+            ),
+        )
+        for call in calls
+    )
     return ReadonlyEvalResult(
         case_id=case_id,
         trial=1,
-        case_run_id=f"eval-run-{case_id}",
+        case_run_id=case_run_id,
         input_sha256="0" * 64,
         passed=not failed,
         started_at="2026-07-29T12:00:00+00:00",
@@ -139,7 +156,7 @@ def _result(
         failures=[check.message for check in checks if not check.passed],
         score_checks=checks,
         final_text="" if error_code else "safe answer",
-        model_calls=(model_calls if model_calls is not None else (_success_call(),)),
+        model_calls=bound_calls,
         business_state_delta=BusinessStateDelta(
             changed=False,
             changed_tables=(),
@@ -165,7 +182,10 @@ def _paid_budget(
         canonical_price=price,
         max_output_tokens=_settings().deepseek_max_tokens,
     )
-    settled_buckets: dict[tuple[str, str], int] = {}
+    buckets: dict[
+        tuple[str, str, str | None, str | None, str | None, str],
+        int,
+    ] = {}
     settled_units = 0
     provider_attempts = 0
     uncertain_count = 0
@@ -173,6 +193,8 @@ def _paid_budget(
         for call in result.model_calls:
             attempts = call.provider_attempts or 0
             provider_attempts += attempts
+            logical_call_hash = call.logical_call_sha256
+            assert logical_call_hash is not None
             if call.status == "success" and call.usage is not None:
                 cost = calculate_usage_cost_from_rates(
                     rates_cny=price.rates_cny.model_dump(),
@@ -180,11 +202,47 @@ def _paid_budget(
                     usage=call.usage,
                 )
                 settled_units += cost.units
-                key = (cost.mode, format_cny(cost.units))
-                settled_buckets[key] = settled_buckets.get(key, 0) + 1
+                status = (
+                    "settled_exact"
+                    if cost.mode == "exact"
+                    else "settled_upper_bound"
+                )
+                settled_key = (
+                    logical_call_hash,
+                    status,
+                    cost.mode,
+                    format_cny(cost.units),
+                    None,
+                    result.completed_at,
+                )
+                buckets[settled_key] = buckets.get(settled_key, 0) + 1
                 uncertain_count += max(0, attempts - 1)
+                if attempts > 1:
+                    uncertain_key = (
+                        logical_call_hash,
+                        "uncertain",
+                        None,
+                        None,
+                        "MODEL_TRANSPORT_ERROR",
+                        result.completed_at,
+                    )
+                    buckets[uncertain_key] = (
+                        buckets.get(uncertain_key, 0) + attempts - 1
+                    )
             else:
                 uncertain_count += attempts
+                if attempts:
+                    uncertain_key = (
+                        logical_call_hash,
+                        "uncertain",
+                        None,
+                        None,
+                        call.error_code,
+                        result.completed_at,
+                    )
+                    buckets[uncertain_key] = (
+                        buckets.get(uncertain_key, 0) + attempts
+                    )
     reservation_units = cny_to_units(Decimal(reservation))
     committed_units = settled_units + reservation_units * uncertain_count
     remaining_units = cny_to_units(Decimal("18")) - committed_units
@@ -199,26 +257,26 @@ def _paid_budget(
         "reserved_count": 0,
         "uncertain_count": uncertain_count,
     }
-    buckets = [
+    attempt_buckets = [
         {
-            "status": ("settled_exact" if mode == "exact" else "settled_upper_bound"),
+            "logical_call_sha256": logical_call_hash,
+            "status": status,
             "settlement_mode": mode,
             "reserved_cny": reservation,
             "known_cost_cny": cost_cny,
+            "error_code": error_code,
+            "completed_at": completed_at,
             "count": count,
         }
-        for (mode, cost_cny), count in sorted(settled_buckets.items())
+        for (
+            logical_call_hash,
+            status,
+            mode,
+            cost_cny,
+            error_code,
+            completed_at,
+        ), count in sorted(buckets.items())
     ]
-    if uncertain_count:
-        buckets.append(
-            {
-                "status": "uncertain",
-                "settlement_mode": None,
-                "reserved_cny": reservation,
-                "known_cost_cny": None,
-                "count": uncertain_count,
-            }
-        )
     return {
         "schema_version": "1.0",
         "enforcement_mode": "persistent_sqlite",
@@ -237,8 +295,8 @@ def _paid_budget(
         "run": dict(amount),
         "cumulative": dict(amount),
         "attempt_evidence": {
-            "run": deepcopy(buckets),
-            "cumulative": deepcopy(buckets),
+            "run": deepcopy(attempt_buckets),
+            "cumulative": deepcopy(attempt_buckets),
         },
     }
 
@@ -316,6 +374,10 @@ def test_full_diagnostic_preserves_price_expiry_failure_timeline() -> None:
     identity_completed = price.valid_until + timedelta(seconds=1)
     eval_completed = identity_completed + timedelta(seconds=1)
     budget["run_identity"]["completed_at"] = identity_completed.isoformat()
+    for scope in ("run", "cumulative"):
+        for bucket in budget["attempt_evidence"][scope]:
+            if bucket["error_code"] == "MODEL_PRICE_EXPIRED":
+                bucket["completed_at"] = identity_completed.isoformat()
 
     payload = _payload(
         results=results,
@@ -325,6 +387,202 @@ def test_full_diagnostic_preserves_price_expiry_failure_timeline() -> None:
 
     validated = validate_readonly_payload(payload)
     assert validated.manifest.completed_at == eval_completed
+    assert validated.summary.budget.run.uncertain_count == 1
+
+
+def test_full_diagnostic_allows_zero_attempt_reserve_time_price_expiry() -> None:
+    _, results = _diagnostic_inputs()
+    results[0] = _result(
+        case_id=results[0].case_id,
+        model_calls=(
+            _error_call(
+                error_code="MODEL_PRICE_EXPIRED",
+                provider_attempts=0,
+                error_stage="reserve_attempt",
+            ),
+        ),
+        failed=True,
+        error_code="MODEL_PRICE_EXPIRED",
+    )
+    budget = _paid_budget(results)
+    price = load_canonical_price_snapshot()
+    identity_completed = price.valid_until + timedelta(seconds=1)
+    eval_completed = identity_completed + timedelta(seconds=1)
+    budget["run_identity"]["completed_at"] = identity_completed.isoformat()
+
+    payload = _payload(
+        results=results,
+        budget=budget,
+        completed_at=eval_completed,
+    )
+
+    validated = validate_readonly_payload(payload)
+    assert validated.summary.budget.run.uncertain_count == 0
+
+
+def test_public_diagnostic_rejects_cross_window_transport_outcome_relabelled_as_price_expiry() -> None:
+    _, results = _diagnostic_inputs()
+    transport_result = _result(
+        case_id=results[0].case_id,
+        model_calls=(_error_call(error_code="MODEL_TRANSPORT_ERROR"),),
+        failed=True,
+        error_code="MODEL_TRANSPORT_ERROR",
+    )
+    results[0] = transport_result
+    budget = _paid_budget(results)
+    payload = _payload(results=results, budget=budget)
+    attacked_results = deepcopy(results)
+    attacked_results[0] = _result(
+        case_id=transport_result.case_id,
+        model_calls=(_error_call(error_code="MODEL_PRICE_EXPIRED"),),
+        failed=True,
+        error_code="MODEL_PRICE_EXPIRED",
+    )
+    records = [
+        result_to_record(result, split="dev")
+        for result in attacked_results
+    ]
+    payload["cases"] = records
+    payload["trajectories"] = deepcopy(records)
+    payload["summary"] = summarize_results(
+        run_id=RUN_ID,
+        results=attacked_results,
+        planned_trials=1,
+        budget_report=budget,
+    )
+    price = load_canonical_price_snapshot()
+    identity_completed = price.valid_until + timedelta(seconds=1)
+    payload["manifest"]["completed_at"] = (
+        identity_completed + timedelta(seconds=1)
+    ).isoformat()
+    payload["summary"]["budget"]["run_identity"]["completed_at"] = (
+        identity_completed.isoformat()
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="price|attempt|outcome|error|budget",
+    ):
+        validate_readonly_payload(payload)
+
+
+def test_public_diagnostic_rejects_swapped_outcomes_between_logical_calls() -> None:
+    _, results = _diagnostic_inputs()
+    first_case_id = results[0].case_id
+    second_case_id = results[1].case_id
+    results[0] = _result(
+        case_id=first_case_id,
+        model_calls=(_error_call(error_code="MODEL_TRANSPORT_ERROR"),),
+        failed=True,
+        error_code="MODEL_TRANSPORT_ERROR",
+    )
+    results[1] = _result(
+        case_id=second_case_id,
+        model_calls=(_error_call(error_code="MODEL_PRICE_EXPIRED"),),
+        failed=True,
+        error_code="MODEL_PRICE_EXPIRED",
+    )
+    budget = _paid_budget(results)
+    price = load_canonical_price_snapshot()
+    identity_completed = price.valid_until + timedelta(seconds=1)
+    for scope in ("run", "cumulative"):
+        for bucket in budget["attempt_evidence"][scope]:
+            if bucket["error_code"] == "MODEL_PRICE_EXPIRED":
+                bucket["completed_at"] = identity_completed.isoformat()
+    budget["run_identity"]["completed_at"] = identity_completed.isoformat()
+
+    attacked_results = list(results)
+    attacked_results[0] = _result(
+        case_id=first_case_id,
+        model_calls=(_error_call(error_code="MODEL_PRICE_EXPIRED"),),
+        failed=True,
+        error_code="MODEL_PRICE_EXPIRED",
+    )
+    attacked_results[1] = _result(
+        case_id=second_case_id,
+        model_calls=(_error_call(error_code="MODEL_TRANSPORT_ERROR"),),
+        failed=True,
+        error_code="MODEL_TRANSPORT_ERROR",
+    )
+
+    with pytest.raises(ValueError, match="logical|outcome|price|hash"):
+        _payload(
+            results=attacked_results,
+            budget=budget,
+            completed_at=identity_completed + timedelta(seconds=1),
+        )
+
+
+@pytest.mark.parametrize(
+    ("model_error", "ledger_error"),
+    [
+        ("MODEL_BUDGET_USAGE_ERROR", "MISSING_PROVIDER_USAGE"),
+        ("MODEL_BUDGET_USAGE_ERROR", "INVALID_PROVIDER_USAGE"),
+        ("MODEL_BUDGET_ERROR", "COST_EXCEEDS_RESERVATION"),
+        ("MODEL_BUDGET_ERROR", "MODEL_BUDGET_ERROR"),
+    ],
+)
+def test_paid_diagnostic_accepts_budget_error_namespace_aliases(
+    model_error: str,
+    ledger_error: str,
+) -> None:
+    _, results = _diagnostic_inputs()
+    results[0] = _result(
+        case_id=results[0].case_id,
+        model_calls=(_error_call(error_code=model_error),),
+        failed=True,
+        error_code=model_error,
+    )
+    budget = _paid_budget(results)
+    for scope in ("run", "cumulative"):
+        for bucket in budget["attempt_evidence"][scope]:
+            if bucket["error_code"] == model_error:
+                bucket["error_code"] = ledger_error
+
+    validated = validate_readonly_payload(
+        _payload(results=results, budget=budget)
+    )
+    assert validated.summary.budget.run.uncertain_count == 1
+
+
+@pytest.mark.parametrize(
+    "terminal_error",
+    ["MODEL_BUDGET_EXHAUSTED", "MODEL_PRICE_EXPIRED"],
+)
+def test_paid_diagnostic_accepts_retry_then_reserve_stage_failure(
+    terminal_error: str,
+) -> None:
+    _, results = _diagnostic_inputs()
+    results[0] = _result(
+        case_id=results[0].case_id,
+        model_calls=(
+            _error_call(
+                error_code=terminal_error,
+                error_stage="reserve_attempt",
+            ),
+        ),
+        failed=True,
+        error_code=terminal_error,
+    )
+    budget = _paid_budget(results)
+    for scope in ("run", "cumulative"):
+        for bucket in budget["attempt_evidence"][scope]:
+            if bucket["error_code"] == terminal_error:
+                bucket["error_code"] = "MODEL_HTTP_ERROR"
+    completed_at = COMPLETED
+    if terminal_error == "MODEL_PRICE_EXPIRED":
+        price = load_canonical_price_snapshot()
+        identity_completed = price.valid_until + timedelta(seconds=1)
+        completed_at = identity_completed + timedelta(seconds=1)
+        budget["run_identity"]["completed_at"] = identity_completed.isoformat()
+
+    validated = validate_readonly_payload(
+        _payload(
+            results=results,
+            budget=budget,
+            completed_at=completed_at,
+        )
+    )
     assert validated.summary.budget.run.uncertain_count == 1
 
 
@@ -418,10 +676,13 @@ def _attack_success_without_settled(
     count = budget["run"]["attempt_count"]
     committed = Decimal(reservation) * count
     bucket = {
+        "logical_call_sha256": "a" * 64,
         "status": "uncertain",
         "settlement_mode": None,
         "reserved_cny": reservation,
         "known_cost_cny": None,
+        "error_code": "MODEL_TRANSPORT_ERROR",
+        "completed_at": "2026-07-29T12:00:01+00:00",
         "count": count,
     }
     for scope in ("run", "cumulative"):
@@ -466,10 +727,13 @@ def _attack_extra_uncertain(
     reservation = budget["reservation_cny_per_attempt"]
     reservation_amount = Decimal(reservation)
     bucket = {
+        "logical_call_sha256": "b" * 64,
         "status": "uncertain",
         "settlement_mode": None,
         "reserved_cny": reservation,
         "known_cost_cny": None,
+        "error_code": "MODEL_TRANSPORT_ERROR",
+        "completed_at": "2026-07-29T12:00:01+00:00",
         "count": 1,
     }
     for scope in ("run", "cumulative"):

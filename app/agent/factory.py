@@ -9,6 +9,26 @@ from app.agent.openai_compatible import (
 from app.config import Settings
 
 
+def deepseek_public_runtime_config(
+    settings: Settings,
+) -> dict[str, object]:
+    """Canonical credential-free adapter configuration for runtime sealing."""
+
+    return {
+        "adapter": "openai_compatible_chat_completions",
+        "base_url": settings.deepseek_base_url.rstrip("/"),
+        "model": settings.deepseek_model,
+        "timeout_seconds": settings.deepseek_timeout_seconds,
+        "max_tokens": settings.deepseek_max_tokens,
+        "temperature": settings.deepseek_temperature,
+        "max_retries": settings.deepseek_max_retries,
+        "retry_backoff_seconds": 0.25,
+        "extra_body": {"thinking": {"type": "disabled"}},
+        "transport_mode": "default",
+        "budget_guard_attached": True,
+    }
+
+
 def build_deepseek_client(
     settings: Settings,
     *,

@@ -19,6 +19,7 @@ from evals.canonical_pricing import (
     require_canonical_paid_budget,
 )
 from evals.nonformal_paid_contract import nonformal_paid_contract
+from evals.paid_attempt_binding import require_paid_attempt_bindings
 
 _LOCAL_ZERO_CALL_ERRORS = {
     "EMPTY_USER_MESSAGE",
@@ -299,9 +300,6 @@ def _require_paid_diagnostic(
         label=f"{label} budget identity",
     )
     crossed_price_window = completed_at > canonical_price.valid_until
-    has_price_expiry_failure = any(
-        call["error_code"] == "MODEL_PRICE_EXPIRED" for call in error_calls
-    )
     if (
         canonical_price_snapshot_sha256 != canonical_price_file_sha256()
         or not (
@@ -311,7 +309,6 @@ def _require_paid_diagnostic(
             < canonical_price.valid_until
         )
         or not (started_at <= identity_completed <= completed_at)
-        or (crossed_price_window and not has_price_expiry_failure)
     ):
         raise ValueError(f"{label} run is outside its canonical paid window")
     expected_settled: Counter[tuple[str, str, str, str]] = Counter()
@@ -359,6 +356,11 @@ def _require_paid_diagnostic(
             ] += count
         elif bucket["status"] == "uncertain":
             actual_uncertain += count
+            error_code = bucket["error_code"]
+            if not isinstance(error_code, str):
+                raise ValueError(
+                    f"{label} uncertain attempt outcome is incomplete"
+                )
         else:
             raise ValueError(f"{label} completed diagnostic retains a reserved attempt")
     expected_uncertain = sum(
@@ -375,6 +377,25 @@ def _require_paid_diagnostic(
         )
         for call in error_calls
     )
+    require_paid_attempt_bindings(
+        label=label,
+        model_calls=(*success_calls, *error_calls),
+        attempt_buckets=run_buckets,
+        price_valid_until=canonical_price.valid_until,
+    )
+    price_expiry_calls = [
+        call
+        for call in error_calls
+        if call["error_code"] == "MODEL_PRICE_EXPIRED"
+    ]
+    if (
+        crossed_price_window
+        and (
+            not price_expiry_calls
+            or identity_completed < canonical_price.valid_until
+        )
+    ):
+        raise ValueError(f"{label} run is outside its canonical paid window")
     provider_attempts = sum(
         _counted_attempts(
             call["provider_attempts"],

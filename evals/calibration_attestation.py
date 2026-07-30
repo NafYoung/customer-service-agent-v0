@@ -13,19 +13,27 @@ from urllib.parse import urlparse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.agent.deepseek_budget import (
+    BudgetError,
     BudgetUsageError,
+    SQLiteBudgetLedger,
     calculate_usage_cost_from_rates,
     cny_to_units,
 )
 from app.config import Settings
 from evals.canonical_pricing import (
+    FORMAL_EXECUTION_LIMIT_CNY,
+    FORMAL_HARD_LIMIT_CNY,
     CanonicalPricingError,
     require_canonical_attempt_reservation,
     require_canonical_paid_budget,
 )
 from evals.evidence import stable_sha256
 from evals.evidence_schema import (
+    BudgetAmountSummary,
+    BudgetAttemptBucket,
+    BudgetAttemptEvidence,
     BudgetRatesCny,
+    BudgetRunIdentity,
     BudgetSummary,
     ModelCallRecord,
 )
@@ -64,6 +72,9 @@ CANONICAL_FIXTURE_PATH = (
     ROOT / "evals" / "semantic_judge_calibration_cases.jsonl"
 )
 CANONICAL_CASE_DIR = ROOT / "evals" / "readonly_regression_cases"
+DEFAULT_BUDGET_LEDGER = (
+    ROOT / "artifacts" / "private" / "deepseek-budget.sqlite3"
+)
 CANONICAL_DEEPSEEK_MODEL = "deepseek-v4-flash"
 CANONICAL_DEEPSEEK_TIMEOUT_SECONDS = 30.0
 CANONICAL_DEEPSEEK_MAX_TOKENS = 1024
@@ -228,6 +239,33 @@ class CalibrationReport(_StrictModel):
     results: list[CalibrationResultRecord]
 
 
+class _TrustedLedgerEvidence(_StrictModel):
+    run_identity: BudgetRunIdentity
+    run: BudgetAmountSummary
+    cumulative: BudgetAmountSummary
+    attempt_evidence: BudgetAttemptEvidence
+
+
+def _read_trusted_budget_evidence(
+    *,
+    run_id: str,
+) -> dict[str, object]:
+    """Read the fixed private ledger without accepting caller evidence."""
+
+    try:
+        return SQLiteBudgetLedger.read_existing_evidence_snapshot(
+            path=DEFAULT_BUDGET_LEDGER,
+            hard_limit_cny=FORMAL_HARD_LIMIT_CNY,
+            execution_limit_cny=FORMAL_EXECUTION_LIMIT_CNY,
+            run_id=run_id,
+        )
+    except BudgetError as exc:
+        raise CalibrationAttestationError(
+            "The trusted persistent calibration budget ledger is unavailable "
+            "or invalid."
+        ) from exc
+
+
 class CalibrationReviewItem(_StrictModel):
     fixture_id: str
     relations_match: Literal[True]
@@ -303,6 +341,15 @@ def _usage_cost_units(
             "A calibration call has an invalid settlement mode."
         )
     return usage_cost.units, usage_cost.mode
+
+
+@dataclass(frozen=True)
+class _ValidatedCalibrationCall:
+    logical_call_sha256: str
+    started_at: datetime
+    provider_attempts: int
+    usage_cost_units: int
+    settlement_mode: Literal["exact", "upper_bound"]
 
 
 def required_review_fixture_ids(
@@ -388,7 +435,7 @@ def _validate_result(
     identity_completed_at: datetime,
     price_captured_at: datetime,
     price_valid_until: datetime,
-) -> tuple[int, int, Literal["exact", "upper_bound"]]:
+) -> _ValidatedCalibrationCall:
     if (
         record.fixture_id != fixture.fixture_id
         or record.case_id != fixture.case_id
@@ -462,6 +509,7 @@ def _validate_result(
         or call.provider_attempts is None
         or isinstance(call.provider_attempts, bool)
         or call.provider_attempts != 1
+        or call.logical_call_sha256 is None
     ):
         raise CalibrationAttestationError(
             "A calibration model call has invalid model or protocol evidence."
@@ -491,11 +539,124 @@ def _validate_result(
         rates_cny=rates_cny,
         tokens_per_price_unit=tokens_per_price_unit,
     )
-    return (
-        call.provider_attempts,
-        usage_cost_units,
-        settlement_mode,
+    return _ValidatedCalibrationCall(
+        logical_call_sha256=call.logical_call_sha256,
+        started_at=call.started_at,
+        provider_attempts=call.provider_attempts,
+        usage_cost_units=usage_cost_units,
+        settlement_mode=settlement_mode,
     )
+
+
+def _budget_amount_identity(
+    amount: BudgetAmountSummary,
+) -> dict[str, object]:
+    payload = amount.model_dump(mode="json")
+    # The ledger deliberately reports the current cumulative remaining amount
+    # in both scopes. Later paid runs can change it without changing this run.
+    payload.pop("remaining_execution_cny")
+    return payload
+
+
+def _attempt_bucket_identity(
+    bucket: BudgetAttemptBucket,
+) -> tuple[object, ...]:
+    return (
+        bucket.logical_call_sha256,
+        bucket.status,
+        bucket.settlement_mode,
+        bucket.reserved_cny,
+        bucket.known_cost_cny,
+        bucket.error_code,
+        (
+            bucket.completed_at.isoformat()
+            if bucket.completed_at is not None
+            else None
+        ),
+        bucket.count,
+    )
+
+
+def _require_trusted_ledger_matches_report(
+    *,
+    report_budget: BudgetSummary,
+    trusted_budget: _TrustedLedgerEvidence,
+    validated_calls: list[_ValidatedCalibrationCall],
+) -> None:
+    report_identity = report_budget.run_identity
+    report_attempts = report_budget.attempt_evidence
+    report_price = report_budget.price
+    assert report_identity is not None
+    assert report_identity.completed_at is not None
+    assert report_attempts is not None
+    assert report_price is not None
+    if (
+        trusted_budget.run_identity.model_dump(mode="json")
+        != report_identity.model_dump(mode="json")
+        or _budget_amount_identity(trusted_budget.run)
+        != _budget_amount_identity(report_budget.run)
+        or Counter(
+            _attempt_bucket_identity(bucket)
+            for bucket in trusted_budget.attempt_evidence.run
+        )
+        != Counter(
+            _attempt_bucket_identity(bucket)
+            for bucket in report_attempts.run
+        )
+    ):
+        raise CalibrationAttestationError(
+            "The calibration report does not match the trusted persistent "
+            "ledger run."
+        )
+
+    call_hashes = [
+        call.logical_call_sha256
+        for call in validated_calls
+    ]
+    report_bucket_by_hash: dict[str, BudgetAttemptBucket] = {}
+    for bucket in report_attempts.run:
+        if (
+            bucket.count != 1
+            or bucket.logical_call_sha256 in report_bucket_by_hash
+        ):
+            raise CalibrationAttestationError(
+                "Calibration calls require unique single-attempt ledger "
+                "identities."
+            )
+        report_bucket_by_hash[bucket.logical_call_sha256] = bucket
+    if (
+        len(call_hashes) != 49
+        or len(call_hashes) != len(set(call_hashes))
+        or set(call_hashes) != set(report_bucket_by_hash)
+    ):
+        raise CalibrationAttestationError(
+            "The 49 calibration calls do not match unique trusted ledger "
+            "identities."
+        )
+
+    for call in validated_calls:
+        bucket = report_bucket_by_hash[call.logical_call_sha256]
+        expected_status = (
+            "settled_exact"
+            if call.settlement_mode == "exact"
+            else "settled_upper_bound"
+        )
+        if (
+            bucket.status != expected_status
+            or bucket.settlement_mode != call.settlement_mode
+            or bucket.known_cost_cny is None
+            or cny_to_units(Decimal(bucket.known_cost_cny))
+            != call.usage_cost_units
+            or bucket.error_code is not None
+            or bucket.completed_at is None
+            or bucket.completed_at < call.started_at
+            or bucket.completed_at > report_identity.completed_at
+            or bucket.completed_at > report_price.valid_until
+        ):
+            raise CalibrationAttestationError(
+                "A calibration call does not match its settled trusted "
+                "ledger attempt."
+            )
 
 
 def validate_calibration_attestation(
@@ -552,6 +713,15 @@ def validate_calibration_attestation(
         raise CalibrationAttestationError(
             "The calibration report failed its strict schema or budget "
             "lifecycle validation."
+        ) from exc
+    try:
+        trusted_budget = _TrustedLedgerEvidence.model_validate(
+            _read_trusted_budget_evidence(run_id=report.run_id)
+        )
+    except ValidationError as exc:
+        raise CalibrationAttestationError(
+            "The trusted persistent calibration budget ledger has an "
+            "invalid evidence schema."
         ) from exc
     if report.source_git_commit != trusted_context.source_git_commit:
         raise CalibrationAttestationError(
@@ -709,19 +879,25 @@ def validate_calibration_attestation(
         )
         for record in report.results
     ]
-    provider_attempts = sum(item[0] for item in validated_calls)
-    expected_settled_units = sum(item[1] for item in validated_calls)
+    provider_attempts = sum(
+        item.provider_attempts
+        for item in validated_calls
+    )
+    expected_settled_units = sum(
+        item.usage_cost_units
+        for item in validated_calls
+    )
     expected_buckets: Counter[tuple[str, str, int]] = Counter()
-    for _, cost_units, settlement_mode in validated_calls:
+    for validated_call in validated_calls:
         expected_buckets[
             (
                 (
                     "settled_exact"
-                    if settlement_mode == "exact"
+                    if validated_call.settlement_mode == "exact"
                     else "settled_upper_bound"
                 ),
-                settlement_mode,
-                cost_units,
+                validated_call.settlement_mode,
+                validated_call.usage_cost_units,
             )
         ] += 1
     actual_buckets: Counter[tuple[str, str, int]] = Counter()
@@ -768,6 +944,11 @@ def validate_calibration_attestation(
         raise CalibrationAttestationError(
             "The calibration budget evidence is unsettled or inconsistent."
         )
+    _require_trusted_ledger_matches_report(
+        report_budget=budget,
+        trusted_budget=trusted_budget,
+        validated_calls=validated_calls,
+    )
     _require_trusted_context_still_current(trusted_context)
     return ValidatedCalibrationAttestation(
         report_sha256=report_sha256,

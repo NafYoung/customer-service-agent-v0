@@ -31,8 +31,13 @@ from evals.file_snapshot import (
     read_file_snapshot,
     read_json_object_snapshot,
 )
+from evals.nonformal_paid_contract import nonformal_paid_contract
 from evals.private_paths import PrivatePathError, require_private_input_file
-from evals.readonly_eval import ReadonlyEvalCase
+from evals.readonly_eval import (
+    ReadonlyEvalCase,
+    load_cases,
+    rescore_readonly_case_evidence,
+)
 from evals.readonly_reporting import (
     current_readonly_harness_fingerprints,
     current_readonly_source_snapshot,
@@ -240,6 +245,30 @@ def validate_regression_gate(
 
     manifest = evidence.manifest
     summary = evidence.summary
+    regression_contract = nonformal_paid_contract("dev_repeat")
+    try:
+        canonical_cases = {
+            case.case_id: case
+            for case in load_cases(regression_contract.case_dir)
+        }
+        raw_rescores = [
+            rescore_readonly_case_evidence(
+                case=canonical_cases[record.case_id],
+                input_sha256=record.input_sha256,
+                final_text=record.final_text,
+                tool_trace=record.tool_trace,
+                business_state_changed=record.business_state.changed,
+                business_write_count=record.counted_action_records,
+                error_code=record.error_code,
+                semantic_verdict=record.semantic_verdict,
+            )
+            for record in evidence.cases
+        ]
+    except (KeyError, OSError, ValueError) as exc:
+        raise HoldoutLockError(
+            "The formal public regression raw evidence cannot be rescored."
+        ) from exc
+    raw_passed_trials = sum(score.passed for score in raw_rescores)
     runtime_settings = settings or Settings()
     try:
         require_canonical_calibration_runtime(runtime_settings)
@@ -366,6 +395,7 @@ def validate_regression_gate(
         or summary.business_state.unknown_trials != 0
         or summary.business_state.all_trials_unchanged is not True
         or summary.errors
+        or raw_passed_trials != 28
         or manifest.source.model_dump(mode="json") != expected_source
         or manifest.eval.scorer_version != harness_fingerprints["scorer_version"]
         or manifest.eval.scorer_sha256 != harness_fingerprints["scorer_sha256"]
@@ -394,7 +424,7 @@ def validate_regression_gate(
         "case_set_sha256": manifest.eval.case_set_sha256,
         "harness_sha256": current_harness_sha256,
         "runtime_identity_sha256": runtime_identity_sha256,
-        "passed_trials": 28,
+        "passed_trials": raw_passed_trials,
     }
     return ValidatedRegressionGate(
         bundle_path=absolute_bundle,
@@ -408,7 +438,7 @@ def validate_regression_gate(
         source_tree_sha256=str(source_snapshot["source_tree_sha256"]),
         source_identity_sha256=source_identity_sha256,
         runtime_identity_sha256=runtime_identity_sha256,
-        passed_trials=28,
+        passed_trials=raw_passed_trials,
     )
 
 

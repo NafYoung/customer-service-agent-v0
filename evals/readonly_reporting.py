@@ -34,12 +34,13 @@ from evals.canonical_pricing import (
 from evals.diagnostic_evidence import (
     require_completed_diagnostic_evidence,
 )
-from evals.evidence import stable_sha256
+from evals.evidence import model_call_evidence_record, stable_sha256
 from evals.evidence_schema import BudgetSummary
 from evals.file_snapshot import FileSnapshot, read_file_snapshot
 from evals.nonformal_paid_contract import (
     require_nonformal_paid_case_payload,
 )
+from evals.paid_attempt_binding import require_paid_attempt_bindings
 from evals.readonly_eval import (
     EVAL_DATABASE_URL,
     EVAL_HOST_CONFIRMATION_TOKEN,
@@ -568,7 +569,15 @@ def result_to_record(
         "termination_reason": result.error_code or "completed",
         "error_code": result.error_code,
         "final_text": result.final_text,
-        "model_calls": [asdict(call) for call in result.model_calls],
+        "semantic_verdict": (
+            result.semantic_verdict.model_dump(mode="json")
+            if result.semantic_verdict is not None
+            else None
+        ),
+        "model_calls": [
+            model_call_evidence_record(call)
+            for call in result.model_calls
+        ],
         "tool_trace": [asdict(item) for item in result.tool_trace],
         "business_state": business_state,
         "counted_action_records": result.business_write_count,
@@ -715,6 +724,18 @@ def _require_completed_paid_evidence(
         expected_model=settings.deepseek_model,
     )
     model_calls = [call for result in results for call in result.model_calls]
+    require_paid_attempt_bindings(
+        label=label,
+        model_calls=[
+            model_call_evidence_record(call)
+            for call in model_calls
+        ],
+        attempt_buckets=[
+            bucket.model_dump(mode="python")
+            for bucket in validated_budget.attempt_evidence.run
+        ],
+        price_valid_until=canonical_price.valid_until,
+    )
     expected_buckets: Counter[tuple[str, str, str, str]] = Counter()
     recomputed_cost_units = 0
     try:

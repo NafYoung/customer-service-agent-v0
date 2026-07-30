@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import os
 import re
 import stat
@@ -19,8 +20,14 @@ from app.agent.deepseek_budget import (
     DeepSeekBudgetGuard,
     SQLiteBudgetLedger,
 )
-from app.agent.factory import build_deepseek_client
-from app.agent.openai_compatible import ChatModel
+from app.agent.factory import (
+    build_deepseek_client,
+    deepseek_public_runtime_config,
+)
+from app.agent.openai_compatible import (
+    ChatModel,
+    OpenAICompatibleChatClient,
+)
 from app.config import Settings
 from evals.calibration_attestation import (
     CANONICAL_AGENT_MAX_TOOL_CALLS,
@@ -104,12 +111,31 @@ DEFAULT_HOLDOUT_LOCK_ROOT = (
     ROOT / "artifacts" / "private" / "holdout" / "formal-run-locks"
 )
 _FORMAL_CONTEXT_SENTINEL = object()
-_ISSUED_FORMAL_CONTEXT_IDS: set[int] = set()
+_FORMAL_EXECUTION_CAPABILITY_SENTINEL = object()
+_ISSUED_FORMAL_EXECUTION_CAPABILITIES: dict[int, object] = {}
+_FORMAL_MODEL_METHODS = {
+    "complete": OpenAICompatibleChatClient.complete,
+    "complete_json": OpenAICompatibleChatClient.complete_json,
+    "_complete": OpenAICompatibleChatClient._complete,
+    "public_runtime_config": (
+        OpenAICompatibleChatClient.public_runtime_config
+    ),
+    "uses_budget_guard": OpenAICompatibleChatClient.uses_budget_guard,
+}
+_FORMAL_BUDGET_GUARD_METHODS = {
+    "reserve_attempt": DeepSeekBudgetGuard.reserve_attempt,
+    "settle_attempt": DeepSeekBudgetGuard.settle_attempt,
+    "ensure_response_in_price_window": (
+        DeepSeekBudgetGuard.ensure_response_in_price_window
+    ),
+    "mark_uncertain": DeepSeekBudgetGuard.mark_uncertain,
+    "snapshot": DeepSeekBudgetGuard.snapshot,
+}
 
 
 @dataclass(frozen=True)
 class ValidatedFormalRunContext:
-    """In-process capability created only after the formal start receipt."""
+    """Immutable formal identity record; not an execution authorization."""
 
     run_id: str
     purpose: Literal["holdout_formal"]
@@ -138,6 +164,118 @@ class ValidatedFormalRunContext:
     lock_start_receipt_sha256: str
     output_root: Path
     _sentinel: object
+
+
+@dataclass(frozen=True)
+class ValidatedFormalExecutionCapability:
+    """One-use binding of the complete formal execution object graph."""
+
+    context: ValidatedFormalRunContext
+    settings: Settings
+    model: OpenAICompatibleChatClient
+    semantic_judge_model: SemanticJsonModel
+    budget_guard: DeepSeekBudgetGuard
+    budget_report_provider: Callable[[], dict]
+    frozen_harness: FrozenReadonlyHarness
+    frozen_harness_entity_sha256: str
+    _sentinel: object
+
+
+def _frozen_harness_entity_sha256(
+    frozen_harness: FrozenReadonlyHarness,
+) -> str:
+    """Bind execution entities, not only their caller-supplied fingerprints."""
+
+    fixture_raw_sha256 = hashlib.sha256(
+        frozen_harness.calibration_fixture_snapshot.raw
+    ).hexdigest()
+    if (
+        fixture_raw_sha256
+        != frozen_harness.calibration_fixture_snapshot.sha256
+    ):
+        raise ValueError("The frozen formal harness identity is inconsistent.")
+    price_snapshot = require_frozen_canonical_price(
+        frozen_harness.canonical_price,
+        expected_file_sha256=frozen_harness.fingerprints[
+            "canonical_price_snapshot_sha256"
+        ],
+    )
+    return stable_sha256(
+        {
+            "agent_system_prompt": frozen_harness.agent_system_prompt,
+            "semantic_judge_system_prompt": (
+                frozen_harness.semantic_judge_system_prompt
+            ),
+            "policy_documents": dict(frozen_harness.policy_documents),
+            "tool_contracts": list(frozen_harness.tool_contracts),
+            "calibration_fixture": {
+                "sha256": fixture_raw_sha256,
+                "size_bytes": len(
+                    frozen_harness.calibration_fixture_snapshot.raw
+                ),
+            },
+            "canonical_price": {
+                "file_sha256": (
+                    frozen_harness.canonical_price.file_snapshot.sha256
+                ),
+                "payload": price_snapshot.model_dump(mode="json"),
+            },
+            "fingerprints": dict(frozen_harness.fingerprints),
+        }
+    )
+
+
+def _require_bound_formal_runtime_objects(
+    *,
+    settings: Settings,
+    model: object,
+    semantic_judge_model: object,
+    budget_guard: object,
+    budget_report_provider: object,
+) -> None:
+    if (
+        type(model) is not OpenAICompatibleChatClient
+        or type(budget_guard) is not DeepSeekBudgetGuard
+    ):
+        raise ValueError(
+            "holdout_formal requires a validated formal execution capability"
+        )
+    shadowed_execution_methods = {
+        "complete",
+        "complete_json",
+        "_complete",
+    }.intersection(vars(model))
+    shadowed_guard_methods = set(
+        _FORMAL_BUDGET_GUARD_METHODS
+    ).intersection(vars(budget_guard))
+    model_class_methods_changed = any(
+        getattr(OpenAICompatibleChatClient, name) is not method
+        for name, method in _FORMAL_MODEL_METHODS.items()
+    )
+    guard_class_methods_changed = any(
+        getattr(DeepSeekBudgetGuard, name) is not method
+        for name, method in _FORMAL_BUDGET_GUARD_METHODS.items()
+    )
+    if (
+        shadowed_execution_methods
+        or shadowed_guard_methods
+        or model_class_methods_changed
+        or guard_class_methods_changed
+        or semantic_judge_model is not model
+        or not callable(budget_report_provider)
+        or getattr(budget_report_provider, "__self__", None) is not budget_guard
+        or getattr(budget_report_provider, "__func__", None)
+        is not DeepSeekBudgetGuard.snapshot
+        or OpenAICompatibleChatClient.public_runtime_config(model)
+        != deepseek_public_runtime_config(settings)
+        or not OpenAICompatibleChatClient.uses_budget_guard(
+            model,
+            budget_guard,
+        )
+    ):
+        raise ValueError(
+            "holdout_formal requires a validated formal execution capability"
+        )
 
 
 def _formal_case_set_sha256(
@@ -243,23 +381,144 @@ def _create_validated_formal_run_context(
         output_root=Path(os.path.abspath(DEFAULT_OUTPUT_ROOT)),
         _sentinel=_FORMAL_CONTEXT_SENTINEL,
     )
-    _ISSUED_FORMAL_CONTEXT_IDS.add(id(context))
     return context
 
 
-def _consume_validated_formal_run_context(
-    context: ValidatedFormalRunContext,
+def _create_validated_formal_execution_capability(
+    *,
+    run_id: str,
+    purpose: str,
+    split: str,
+    cases: Sequence[ReadonlyEvalCase],
+    case_set_name: str,
+    trials: int,
+    source_git_commit: str,
+    source_tree_sha256: str,
+    settings: Settings,
+    model: object,
+    semantic_judge_model: object,
+    budget_guard: object,
+    budget_report_provider: object,
+    frozen_harness: FrozenReadonlyHarness,
+    calibration_attestation: ValidatedCalibrationAttestation,
+    calibration_review: ValidatedCalibrationReview,
+    declaration: HoldoutDeclaration,
+    regression_gate: ValidatedRegressionGate,
+    acquired_lock: AcquiredHoldoutRunLock,
+) -> ValidatedFormalExecutionCapability:
+    """Issue a one-use capability after the complete runtime exists."""
+
+    try:
+        validate_paid_eval_settings(settings)
+        require_canonical_calibration_runtime(settings)
+        _require_bound_formal_runtime_objects(
+            settings=settings,
+            model=model,
+            semantic_judge_model=semantic_judge_model,
+            budget_guard=budget_guard,
+            budget_report_provider=budget_report_provider,
+        )
+        harness_entity_sha256 = _frozen_harness_entity_sha256(
+            frozen_harness
+        )
+    except (
+        CalibrationAttestationError,
+        CanonicalPricingError,
+        KeyError,
+        ValueError,
+    ) as exc:
+        raise ValueError(
+            "holdout_formal requires a validated formal execution capability"
+        ) from exc
+    context = _create_validated_formal_run_context(
+        run_id=run_id,
+        purpose=purpose,
+        split=split,
+        cases=cases,
+        case_set_name=case_set_name,
+        trials=trials,
+        source_git_commit=source_git_commit,
+        source_tree_sha256=source_tree_sha256,
+        frozen_harness=frozen_harness,
+        calibration_attestation=calibration_attestation,
+        calibration_review=calibration_review,
+        declaration=declaration,
+        regression_gate=regression_gate,
+        acquired_lock=acquired_lock,
+    )
+    assert isinstance(model, OpenAICompatibleChatClient)
+    assert isinstance(budget_guard, DeepSeekBudgetGuard)
+    assert callable(budget_report_provider)
+    capability = ValidatedFormalExecutionCapability(
+        context=context,
+        settings=settings,
+        model=model,
+        semantic_judge_model=model,
+        budget_guard=budget_guard,
+        budget_report_provider=budget_report_provider,
+        frozen_harness=frozen_harness,
+        frozen_harness_entity_sha256=harness_entity_sha256,
+        _sentinel=_FORMAL_EXECUTION_CAPABILITY_SENTINEL,
+    )
+    _ISSUED_FORMAL_EXECUTION_CAPABILITIES[id(capability)] = capability
+    return capability
+
+
+def _consume_validated_formal_execution_capability(
+    capability: ValidatedFormalExecutionCapability,
     *,
     output_root: Path,
     settings: Settings,
+    model: object,
+    semantic_judge_model: object,
+    budget_report_provider: object,
     frozen_harness: FrozenReadonlyHarness | None,
-) -> None:
+) -> FrozenReadonlyHarness:
     """Validate and consume one issued capability before any model call."""
 
-    context_id = id(context)
-    if context_id not in _ISSUED_FORMAL_CONTEXT_IDS:
-        raise ValueError("holdout_formal requires a validated formal run context")
-    _ISSUED_FORMAL_CONTEXT_IDS.discard(context_id)
+    capability_id = id(capability)
+    if (
+        _ISSUED_FORMAL_EXECUTION_CAPABILITIES.get(capability_id)
+        is not capability
+    ):
+        raise ValueError(
+            "holdout_formal requires a validated formal execution capability"
+        )
+    _ISSUED_FORMAL_EXECUTION_CAPABILITIES.pop(capability_id)
+    context = capability.context
+    if (
+        capability._sentinel
+        is not _FORMAL_EXECUTION_CAPABILITY_SENTINEL
+        or context._sentinel is not _FORMAL_CONTEXT_SENTINEL
+        or settings is not capability.settings
+        or model is not capability.model
+        or semantic_judge_model is not capability.semantic_judge_model
+        or semantic_judge_model is not model
+        or budget_report_provider is not capability.budget_report_provider
+        or frozen_harness is not capability.frozen_harness
+    ):
+        raise ValueError(
+            "holdout_formal requires a validated formal execution capability"
+        )
+    try:
+        _require_bound_formal_runtime_objects(
+            settings=settings,
+            model=model,
+            semantic_judge_model=semantic_judge_model,
+            budget_guard=capability.budget_guard,
+            budget_report_provider=budget_report_provider,
+        )
+        if (
+            _frozen_harness_entity_sha256(capability.frozen_harness)
+            != capability.frozen_harness_entity_sha256
+        ):
+            raise ValueError(
+                "The bound formal harness changed before execution."
+            )
+    except (CanonicalPricingError, KeyError, ValueError) as exc:
+        raise ValueError(
+            "holdout_formal requires a validated formal execution capability"
+        ) from exc
     expected_path = DEFAULT_HOLDOUT_LOCK_ROOT / ("readonly-holdout-v2.start.json")
     try:
         expected_output_root = prepare_fixed_private_output_root(
@@ -269,7 +528,7 @@ def _consume_validated_formal_run_context(
         )
     except PrivatePathError as exc:
         raise ValueError(
-            "holdout_formal requires a validated formal run context"
+            "holdout_formal requires a validated formal execution capability"
         ) from exc
     if (
         Path(os.path.abspath(context.lock_start_path))
@@ -277,7 +536,9 @@ def _consume_validated_formal_run_context(
         or context.output_root != expected_output_root
         or Path(os.path.abspath(output_root)) != expected_output_root
     ):
-        raise ValueError("holdout_formal requires a validated formal run context")
+        raise ValueError(
+            "holdout_formal requires a validated formal execution capability"
+        )
     try:
         file_mode = context.lock_start_path.lstat().st_mode
         parent_mode = context.lock_start_path.parent.lstat().st_mode
@@ -287,7 +548,7 @@ def _consume_validated_formal_run_context(
         )
     except (FileSnapshotError, OSError) as exc:
         raise ValueError(
-            "holdout_formal requires a validated formal run context"
+            "holdout_formal requires a validated formal execution capability"
         ) from exc
     expected_receipt_values: dict[str, object] = {
         "schema_version": "1.0",
@@ -331,7 +592,9 @@ def _consume_validated_formal_run_context(
             for field_name, expected in expected_receipt_values.items()
         )
     ):
-        raise ValueError("holdout_formal requires a validated formal run context")
+        raise ValueError(
+            "holdout_formal requires a validated formal execution capability"
+        )
     current_source = current_readonly_source_snapshot()
     if (
         current_source["git_commit"] != context.source_git_commit
@@ -340,19 +603,33 @@ def _consume_validated_formal_run_context(
         or stable_sha256(current_source) != context.regression_source_identity_sha256
     ):
         raise ValueError("holdout_formal source identity changed before execution")
-    if frozen_harness is None:
-        raise ValueError("holdout_formal runtime identity is unavailable")
     try:
         require_canonical_calibration_runtime(settings)
+        refreshed_harness = freeze_readonly_harness(settings)
+        if (
+            _frozen_harness_entity_sha256(refreshed_harness)
+            != capability.frozen_harness_entity_sha256
+            or stable_sha256(dict(refreshed_harness.fingerprints))
+            != context.harness_sha256
+        ):
+            raise ValueError(
+                "The canonical formal harness changed before execution."
+            )
         runtime_harness = readonly_harness_snapshot(
             settings=settings,
-            fingerprints=dict(frozen_harness.fingerprints),
+            fingerprints=dict(refreshed_harness.fingerprints),
         )
         runtime_model = readonly_model_snapshot(
             settings=settings,
             observed_models=[settings.deepseek_model],
         )
-    except (CalibrationAttestationError, KeyError, ValueError) as exc:
+    except (
+        CalibrationAttestationError,
+        CanonicalPricingError,
+        FileSnapshotError,
+        KeyError,
+        ValueError,
+    ) as exc:
         raise ValueError("holdout_formal runtime identity is not canonical") from exc
     if (
         stable_sha256(
@@ -365,6 +642,7 @@ def _consume_validated_formal_run_context(
         != context.regression_runtime_identity_sha256
     ):
         raise ValueError("holdout_formal runtime identity changed before execution")
+    return refreshed_harness
 
 
 class ClosableChatModel(ChatModel, Protocol):
@@ -664,6 +942,9 @@ def run_eval_suite(
     source_git_commit: str | None = None,
     source_tree_sha256: str | None = None,
     formal_run_context: ValidatedFormalRunContext | object | None = None,
+    formal_execution_capability: (
+        ValidatedFormalExecutionCapability | object | None
+    ) = None,
     partial_results: list[ReadonlyEvalResult] | None = None,
     pre_write_check: Callable[[], None] | None = None,
 ) -> tuple[list[ReadonlyEvalResult], dict, Path]:
@@ -673,73 +954,91 @@ def run_eval_suite(
         "holdout_formal",
     }:
         raise ValueError("Unsupported Eval purpose")
+    validated_runtime_harness: FrozenReadonlyHarness | None = None
     if purpose == "holdout_formal":
         if (
             not isinstance(
-                formal_run_context,
-                ValidatedFormalRunContext,
+                formal_execution_capability,
+                ValidatedFormalExecutionCapability,
             )
-            or formal_run_context._sentinel is not _FORMAL_CONTEXT_SENTINEL
+            or formal_execution_capability._sentinel
+            is not _FORMAL_EXECUTION_CAPABILITY_SENTINEL
+            or formal_run_context is not None
         ):
-            raise ValueError("holdout_formal requires a validated formal run context")
-        _consume_validated_formal_run_context(
-            formal_run_context,
-            output_root=output_root,
-            settings=settings,
-            frozen_harness=frozen_harness,
+            raise ValueError(
+                "holdout_formal requires a validated formal execution capability"
+            )
+        validated_runtime_harness = (
+            _consume_validated_formal_execution_capability(
+                formal_execution_capability,
+                output_root=output_root,
+                settings=settings,
+                model=model,
+                semantic_judge_model=semantic_judge_model,
+                budget_report_provider=budget_report_provider,
+                frozen_harness=frozen_harness,
+            )
         )
+        formal_context = formal_execution_capability.context
         case_set_sha256 = _formal_case_set_sha256(cases)
         if (
-            formal_run_context.purpose != purpose
-            or formal_run_context.split != split
-            or formal_run_context.run_id != run_id
-            or formal_run_context.case_set_name != case_set_name
-            or formal_run_context.case_set_sha256 != case_set_sha256
-            or formal_run_context.planned_case_count != len(cases)
-            or formal_run_context.planned_trials != trials
-            or frozen_harness is None
-            or formal_run_context.harness_sha256
-            != stable_sha256(dict(frozen_harness.fingerprints))
-            or source_git_commit != formal_run_context.source_git_commit
-            or source_tree_sha256 != formal_run_context.source_tree_sha256
+            formal_context.purpose != purpose
+            or formal_context.split != split
+            or formal_context.run_id != run_id
+            or formal_context.case_set_name != case_set_name
+            or formal_context.case_set_sha256 != case_set_sha256
+            or formal_context.planned_case_count != len(cases)
+            or formal_context.planned_trials != trials
+            or formal_context.harness_sha256
+            != stable_sha256(
+                dict(validated_runtime_harness.fingerprints)
+            )
+            or source_git_commit != formal_context.source_git_commit
+            or source_tree_sha256 != formal_context.source_tree_sha256
             or calibration_attestation is None
             or calibration_attestation.report_sha256
-            != formal_run_context.calibration_report_sha256
+            != formal_context.calibration_report_sha256
             or calibration_review is None
             or calibration_review.review_sha256
-            != formal_run_context.calibration_review_sha256
+            != formal_context.calibration_review_sha256
             or formal_holdout_evidence is None
             or formal_holdout_evidence.declaration_manifest_sha256
-            != formal_run_context.declaration_manifest_sha256
+            != formal_context.declaration_manifest_sha256
             or formal_holdout_evidence.lock_start_receipt_sha256
-            != formal_run_context.lock_start_receipt_sha256
+            != formal_context.lock_start_receipt_sha256
             or formal_holdout_evidence.declared_harness_sha256
-            != formal_run_context.harness_sha256
+            != formal_context.harness_sha256
             or formal_holdout_evidence.regression_bundle_integrity_sha256
-            != formal_run_context.regression_bundle_integrity_sha256
+            != formal_context.regression_bundle_integrity_sha256
             or formal_holdout_evidence.regression_gate_sha256
-            != formal_run_context.regression_gate_sha256
+            != formal_context.regression_gate_sha256
             or formal_holdout_evidence.regression_run_id
-            != formal_run_context.regression_run_id
+            != formal_context.regression_run_id
             or formal_holdout_evidence.regression_source_git_commit
-            != formal_run_context.regression_source_git_commit
+            != formal_context.regression_source_git_commit
             or formal_holdout_evidence.regression_case_set_name
-            != formal_run_context.regression_case_set_name
+            != formal_context.regression_case_set_name
             or formal_holdout_evidence.regression_case_set_sha256
-            != formal_run_context.regression_case_set_sha256
+            != formal_context.regression_case_set_sha256
             or formal_holdout_evidence.regression_harness_sha256
-            != formal_run_context.regression_harness_sha256
+            != formal_context.regression_harness_sha256
             or formal_holdout_evidence.regression_source_tree_sha256
-            != formal_run_context.regression_source_tree_sha256
+            != formal_context.regression_source_tree_sha256
             or formal_holdout_evidence.regression_source_identity_sha256
-            != formal_run_context.regression_source_identity_sha256
+            != formal_context.regression_source_identity_sha256
             or formal_holdout_evidence.regression_runtime_identity_sha256
-            != formal_run_context.regression_runtime_identity_sha256
+            != formal_context.regression_runtime_identity_sha256
         ):
-            raise ValueError("holdout_formal requires a validated formal run context")
-    elif formal_run_context is not None:
+            raise ValueError(
+                "holdout_formal requires a validated formal execution capability"
+            )
+    elif (
+        formal_execution_capability is not None
+        or formal_run_context is not None
+    ):
         raise ValueError(
-            "validated formal run context is only valid for holdout_formal"
+            "validated formal execution capability is only valid for "
+            "holdout_formal"
         )
     if purpose in {"diagnostic", "dev_repeat"}:
         require_nonformal_paid_case_payload(
@@ -749,7 +1048,11 @@ def run_eval_suite(
             planned_trials=trials,
         )
     started_at = datetime.now(UTC)
-    runtime_harness = frozen_harness or freeze_readonly_harness(settings)
+    runtime_harness = (
+        validated_runtime_harness
+        or frozen_harness
+        or freeze_readonly_harness(settings)
+    )
     results = partial_results if partial_results is not None else []
     if results:
         raise ValueError("partial_results must be empty before a new Eval")
@@ -1041,7 +1344,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     formal_holdout_evidence: FormalHoldoutEvidence | None = None
     formal_attempt_started_at: datetime | None = None
     acquired_lock: AcquiredHoldoutRunLock | None = None
-    formal_run_context: ValidatedFormalRunContext | None = None
+    budget_report_provider = budget_guard.snapshot
+    formal_execution_capability: (
+        ValidatedFormalExecutionCapability | None
+    ) = None
     if declaration is not None:
         holdout_lock_path = DEFAULT_HOLDOUT_LOCK_ROOT / (
             "readonly-holdout-v2.start.json"
@@ -1085,21 +1391,28 @@ def main(argv: Sequence[str] | None = None) -> int:
                     declaration.regression_runtime_identity_sha256
                 ),
             )
-            formal_run_context = _create_validated_formal_run_context(
-                run_id=run_id,
-                purpose=args.purpose,
-                split=args.split,
-                cases=cases,
-                case_set_name=args.case_set_name,
-                trials=args.trials,
-                source_git_commit=source_git_commit,
-                source_tree_sha256=formal_source_tree_sha256,
-                frozen_harness=frozen_harness,
-                calibration_attestation=calibration_attestation,
-                calibration_review=calibration_review,
-                declaration=declaration,
-                regression_gate=regression_gate,
-                acquired_lock=acquired_lock,
+            formal_execution_capability = (
+                _create_validated_formal_execution_capability(
+                    run_id=run_id,
+                    purpose=args.purpose,
+                    split=args.split,
+                    cases=cases,
+                    case_set_name=args.case_set_name,
+                    trials=args.trials,
+                    source_git_commit=source_git_commit,
+                    source_tree_sha256=formal_source_tree_sha256,
+                    settings=settings,
+                    model=model,
+                    semantic_judge_model=model,
+                    budget_guard=budget_guard,
+                    budget_report_provider=budget_report_provider,
+                    frozen_harness=frozen_harness,
+                    calibration_attestation=calibration_attestation,
+                    calibration_review=calibration_review,
+                    declaration=declaration,
+                    regression_gate=regression_gate,
+                    acquired_lock=acquired_lock,
+                )
             )
         except BaseException as exc:
             for close_resource in (model.close, budget_guard.close):
@@ -1156,14 +1469,15 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         def check_source_before_write() -> None:
             require_clean_git_worktree(expected_commit=source_git_commit)
-            if formal_run_context is None:
+            if formal_execution_capability is None:
                 raise ValueError("formal source identity is unavailable before write")
+            formal_context = formal_execution_capability.context
             current_source = current_readonly_source_snapshot()
             if (
                 current_source["source_tree_sha256"]
-                != formal_run_context.regression_source_tree_sha256
+                != formal_context.regression_source_tree_sha256
                 or stable_sha256(current_source)
-                != formal_run_context.regression_source_identity_sha256
+                != formal_context.regression_source_identity_sha256
             ):
                 raise ValueError("formal source identity changed before write")
 
@@ -1179,7 +1493,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             case_set_name=args.case_set_name,
             trials=args.trials,
             output_root=args.output_root,
-            budget_report_provider=budget_guard.snapshot,
+            budget_report_provider=budget_report_provider,
             semantic_judge_model=model,
             calibration_attestation=calibration_attestation,
             calibration_review=calibration_review,
@@ -1187,7 +1501,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             frozen_harness=frozen_harness,
             source_git_commit=source_git_commit,
             source_tree_sha256=formal_source_tree_sha256,
-            formal_run_context=formal_run_context,
+            formal_execution_capability=formal_execution_capability,
             partial_results=partial_results,
             pre_write_check=pre_write_check,
         )

@@ -45,6 +45,9 @@ _SENSITIVE_KEYS = {
     "token",
     "verification_code",
 }
+_NULL_ONLY_EVIDENCE_KEYS = {
+    "provider_request_id",
+}
 _RUNTIME_TABLES = {"auth_sessions", "tool_events"}
 _EMAIL_PATTERN = re.compile(
     r"(?<![\w.+-])[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}(?![\w.-])"
@@ -82,6 +85,18 @@ class ModelCallEvidence:
     http_status: int | None = None
     provider_request_id: str | None = None
     provider_attempts: int | None = None
+    logical_call_sha256: str | None = None
+    error_stage: str | None = None
+
+
+def model_call_evidence_record(
+    call: ModelCallEvidence,
+) -> dict[str, Any]:
+    """Serialize call metadata without provider-private request identity."""
+
+    payload = asdict(call)
+    payload["provider_request_id"] = None
+    return payload
 
 
 class ObservedChatModel:
@@ -117,6 +132,8 @@ class ObservedChatModel:
                     http_status=exc.status_code,
                     provider_request_id=exc.request_id,
                     provider_attempts=exc.attempts,
+                    logical_call_sha256=exc.logical_call_sha256,
+                    error_stage=exc.error_stage,
                 )
             )
             raise
@@ -158,6 +175,7 @@ class ObservedChatModel:
                 usage=dict(turn.usage) if turn.usage is not None else None,
                 provider_request_id=turn.provider_request_id,
                 provider_attempts=turn.provider_attempts,
+                logical_call_sha256=turn.logical_call_sha256,
             )
         )
         return turn
@@ -293,6 +311,12 @@ def sanitize_for_evidence(
         sanitized: dict[str, Any] = {}
         for item_key, item_value in value.items():
             normalized_key = str(item_key)
+            if (
+                normalized_key.casefold()
+                in _NULL_ONLY_EVIDENCE_KEYS
+            ):
+                sanitized[normalized_key] = None
+                continue
             if normalized_key.casefold() in _SENSITIVE_KEYS:
                 continue
             sanitized[normalized_key] = sanitize_for_evidence(

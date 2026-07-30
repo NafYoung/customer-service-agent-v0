@@ -6,6 +6,7 @@ import math
 import os
 import re
 import sqlite3
+import stat
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -200,6 +201,12 @@ def format_cny(units: int) -> str:
     amount = units_to_cny(units)
     normalized = amount.normalize()
     return format(normalized, "f")
+
+
+def logical_call_sha256(logical_call_id: str) -> str:
+    if not isinstance(logical_call_id, str) or not logical_call_id:
+        raise BudgetInvariantError("Logical model-call identity is invalid.")
+    return hashlib.sha256(logical_call_id.encode("utf-8")).hexdigest()
 
 
 def require_paid_purpose(purpose: object) -> PaidPurpose:
@@ -936,28 +943,40 @@ class SQLiteBudgetLedger:
         rows = connection.execute(
             f"""
             SELECT
+                logical_call_id,
                 status,
                 settlement_mode,
                 reserved_units,
                 settled_units,
+                error_code,
+                settled_at,
                 COUNT(*) AS attempt_count
             FROM budget_attempts
             {where}
             GROUP BY
+                logical_call_id,
                 status,
                 settlement_mode,
                 reserved_units,
-                settled_units
+                settled_units,
+                error_code,
+                settled_at
             ORDER BY
+                logical_call_id,
                 status,
                 settlement_mode,
                 reserved_units,
-                settled_units
+                settled_units,
+                error_code,
+                settled_at
             """,
             params,
         ).fetchall()
         return [
             {
+                "logical_call_sha256": logical_call_sha256(
+                    row["logical_call_id"]
+                ),
                 "status": row["status"],
                 "settlement_mode": row["settlement_mode"],
                 "reserved_cny": format_cny(
@@ -968,6 +987,8 @@ class SQLiteBudgetLedger:
                     if row["settled_units"] is not None
                     else None
                 ),
+                "error_code": row["error_code"],
+                "completed_at": row["settled_at"],
                 "count": int(row["attempt_count"]),
             }
             for row in rows
@@ -1075,6 +1096,193 @@ class SQLiteBudgetLedger:
             raise
         finally:
             connection.close()
+
+    @classmethod
+    def read_existing_evidence_snapshot(
+        cls,
+        *,
+        path: Path,
+        hard_limit_cny: Decimal,
+        execution_limit_cny: Decimal,
+        run_id: str,
+    ) -> dict[str, Any]:
+        """Read one existing private ledger without creating or modifying it."""
+
+        ledger_path = Path(path)
+        hard_limit_units = cny_to_units(hard_limit_cny)
+        execution_limit_units = cny_to_units(execution_limit_cny)
+        if execution_limit_units > hard_limit_units:
+            raise BudgetInvariantError(
+                "Execution limit cannot exceed the hard budget limit."
+            )
+        if not _RUN_ID_PATTERN.fullmatch(run_id):
+            raise BudgetInvariantError("Budget run_id is invalid.")
+        try:
+            absolute_path = Path(os.path.abspath(ledger_path))
+            resolved_path = ledger_path.resolve(strict=True)
+            file_stat = ledger_path.lstat()
+            parent_stat = ledger_path.parent.lstat()
+        except OSError as exc:
+            raise BudgetInvariantError(
+                "Existing budget ledger is unavailable."
+            ) from exc
+        if (
+            not stat.S_ISREG(file_stat.st_mode)
+            or stat.S_ISLNK(file_stat.st_mode)
+            or resolved_path != absolute_path
+            or file_stat.st_uid != os.getuid()
+            or stat.S_IMODE(file_stat.st_mode) != 0o600
+            or not stat.S_ISDIR(parent_stat.st_mode)
+            or stat.S_ISLNK(parent_stat.st_mode)
+            or parent_stat.st_uid != os.getuid()
+            or stat.S_IMODE(parent_stat.st_mode) & 0o077
+        ):
+            raise BudgetInvariantError(
+                "Existing budget ledger must be a private regular file."
+            )
+
+        connection: sqlite3.Connection | None = None
+        try:
+            connection = sqlite3.connect(
+                f"{resolved_path.as_uri()}?mode=ro&immutable=1",
+                uri=True,
+                timeout=10,
+                isolation_level=None,
+            )
+            connection.row_factory = sqlite3.Row
+            connection.execute("PRAGMA query_only = ON")
+            connection.execute("PRAGMA foreign_keys = ON")
+            cls._validate_existing_schema(
+                connection,
+                hard_limit_units=hard_limit_units,
+                execution_limit_units=execution_limit_units,
+            )
+            reader = object.__new__(cls)
+            reader.path = ledger_path
+            reader.hard_limit_units = hard_limit_units
+            reader.execution_limit_units = execution_limit_units
+            connection.execute("BEGIN")
+            run_identity = reader._run_identity(
+                connection,
+                run_id=run_id,
+            )
+            run_snapshot = reader._amount_snapshot(
+                connection,
+                run_id=run_id,
+            )
+            cumulative_snapshot = reader._amount_snapshot(
+                connection,
+                run_id=None,
+            )
+            run_snapshot["remaining_execution_cny"] = cumulative_snapshot[
+                "remaining_execution_cny"
+            ]
+            result = {
+                "run_identity": run_identity,
+                "run": run_snapshot,
+                "cumulative": cumulative_snapshot,
+                "attempt_evidence": {
+                    "run": reader._attempt_evidence(
+                        connection,
+                        run_id=run_id,
+                    ),
+                    "cumulative": reader._attempt_evidence(
+                        connection,
+                        run_id=None,
+                    ),
+                },
+            }
+            connection.execute("COMMIT")
+            return result
+        except (OSError, sqlite3.Error) as exc:
+            if connection is not None and connection.in_transaction:
+                connection.execute("ROLLBACK")
+            raise BudgetInvariantError(
+                "Existing budget ledger cannot be read safely."
+            ) from exc
+        finally:
+            if connection is not None:
+                connection.close()
+
+    @staticmethod
+    def _validate_existing_schema(
+        connection: sqlite3.Connection,
+        *,
+        hard_limit_units: int,
+        execution_limit_units: int,
+    ) -> None:
+        expected_meta = {
+            "schema_version": "1.0",
+            "currency": "CNY",
+            "units_per_cny": str(CNY_UNITS_PER_CNY),
+            "hard_limit_units": str(hard_limit_units),
+            "execution_limit_units": str(execution_limit_units),
+        }
+        tables = {
+            row["name"]
+            for row in connection.execute(
+                """
+                SELECT name
+                FROM sqlite_schema
+                WHERE type = 'table'
+                  AND name NOT LIKE 'sqlite_%'
+                """
+            )
+        }
+        expected_columns = {
+            "budget_meta": (
+                "key",
+                "value",
+            ),
+            "budget_runs": (
+                "run_id",
+                "purpose",
+                "model",
+                "price_sha256",
+                "status",
+                "started_at",
+                "completed_at",
+            ),
+            "budget_attempts": (
+                "attempt_id",
+                "run_id",
+                "logical_call_id",
+                "attempt_number",
+                "model",
+                "reserved_units",
+                "settled_units",
+                "status",
+                "settlement_mode",
+                "usage_json",
+                "provider_request_id",
+                "error_code",
+                "created_at",
+                "settled_at",
+            ),
+        }
+        if tables != set(expected_columns) or any(
+            tuple(
+                row["name"]
+                for row in connection.execute(
+                    f"PRAGMA table_info({table})"
+                )
+            )
+            != columns
+            for table, columns in expected_columns.items()
+        ):
+            raise BudgetInvariantError(
+                "Existing budget ledger schema is invalid."
+            )
+        meta = {
+            row["key"]: row["value"]
+            for row in connection.execute(
+                "SELECT key, value FROM budget_meta"
+            )
+        }
+        if meta != expected_meta:
+            raise BudgetInvariantError(
+                "Existing budget ledger metadata does not match."
+            )
 
 
 class DeepSeekBudgetGuard:

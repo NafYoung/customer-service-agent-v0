@@ -265,6 +265,16 @@ def _call_evidence(
             if error is not None
             else (turn.provider_attempts if turn is not None else None)
         ),
+        logical_call_sha256=(
+            error.logical_call_sha256
+            if error is not None
+            else (
+                turn.logical_call_sha256
+                if turn is not None
+                else None
+            )
+        ),
+        error_stage=error.error_stage if error is not None else None,
     )
 
 

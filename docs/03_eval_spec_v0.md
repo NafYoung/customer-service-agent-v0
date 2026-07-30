@@ -150,7 +150,15 @@ LLM Judge 只能评价自然语言是否准确、完整、一致，例如同义�
 正式运行前，49 条固定公开人工标注夹具会校准安全同义改写、空洞回答、否定
 翻转、前后矛盾，以及安全/不安全裁判提示注入。正式门要求 49/49 精确匹配；
 任一协议错误、语料/合同/runtime 漂移、模型不符或预算未结清都失败关闭。
-schema v2 报告保存完整 verdict，并由严格 validator 重算。未参与实现的
+schema v2 报告保存完整 verdict，并由严格 validator 重算。校准证明还必须
+从固定私有路径以只读方式重开现存预算账本，把报告中的 49 次模型调用逐一
+绑定到 49 个唯一的 `logical_call_sha256`：每次只能有一条 settled attempt，
+Token、费用、预算模式和完成时间必须与账本相符；缺失、重复、未结清、公开
+权限、错误 owner/mode/schema 或任一级 symlink 都失败关闭。调用方自报的
+账本摘要不能替代这一步。provider request ID 只允许在进程内短暂用于诊断，
+所有可持久化和公开 artifact 的该字段固定为 `null`。
+
+未参与实现的
 复核者还要按确定性分层规则抽查 5 条固定夹具，生成绑定报告哈希的 GO 回执；
 人工复核只能
 追加说明，不能事后覆盖自动分数。报告与回执必须同时进入 holdout manifest、
@@ -163,11 +171,26 @@ manifest、排他 start receipt、成功或失败 artifact 和 terminal verifier
 正式运行在第一次 provider 调用前重算完整 runtime；成功证据写入前再次
 重算，失败证据则保存严格的 source、harness 和 model snapshot 并由校验器
 独立重算。只匹配 Git commit、或只复制自报 hash，均不构成有效证明。
+排他 start receipt 之后还必须签发一次性 formal execution capability，
+把已验证的 Settings、被测模型、裁判、预算守卫、冻结快照和完整 harness
+对象图绑定在一起。第一次调用前再次冻结源码与 runtime，并核对关键对象的
+类型、实例方法和类方法身份；替换对象、猴子补丁或重复消费 capability 都在
+发生模型调用前失败。
+
+正式 7×4 回归及后续封存校验不信任 artifact 自报的分数。验证器会从保存的
+原始回答、工具轨迹、数据库前后状态、写入计数和逐命题 verdict 重新执行同一
+确定性评分，再与记录的分项和总分逐项比较。伪造 `score=1`、隐藏危险回答、
+删除写入证据或篡改语义 verdict 均不能进入 28/28 前置门。
 
 付费时间线同样属于证据合同：预算身份必须在 canonical price 生效后启动。
 成功证据必须在价格窗内完成；若响应跨越价格边界，只有明确记录
 `MODEL_PRICE_EXPIRED`、对应 uncertain attempt 和已知费用上界的失败证据，
 才允许在价格窗外完成清理并保持可验证。
+所有产生 provider attempt 的付费入口还会把公开调用证据与账本按
+`logical_call_sha256`、attempt 数量、`error_stage`、错误类型、时间和费用
+逐一核对；只在 reserve 阶段失败的调用必须保持零 provider attempt。
+这能证明本项目内部的调用、失败和预算记录一致，但不把 provider 返回内容或
+外部计费事实冒充成独立第三方证明。
 
 Agent 轨迹与宿主控制流必须分开评分：模型没有认证、present、confirm 或 execute 工具；宿主是否正确记录确认和执行，应通过数据库状态和宿主事件验证。
 

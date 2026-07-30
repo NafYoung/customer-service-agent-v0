@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from app.agent.deepseek_budget import logical_call_sha256
 from app.agent.openai_compatible import AssistantTurn
 from evals import calibration_attestation as calibration_attestation_module
 from evals import run_semantic_judge_calibration as calibration_cli
@@ -20,12 +21,15 @@ class _ClosedBudgetGuard:
         self.attempt_count = attempt_count
         self.closed = False
         self.started_at = datetime.now(UTC)
+        self.completed_at: datetime | None = None
 
     def close(self) -> None:
         self.closed = True
+        self.completed_at = datetime.now(UTC)
 
     def snapshot(self) -> dict[str, object]:
         assert self.closed is True
+        assert self.completed_at is not None
         price = canonical_budget_price_payload()
         settled = Decimal(self.attempt_count) * Decimal("0.00002")
         settled_cny = format(settled, "f")
@@ -54,7 +58,7 @@ class _ClosedBudgetGuard:
                 "price_sha256": price["snapshot_sha256"],
                 "status": "completed",
                 "started_at": self.started_at.isoformat(),
-                "completed_at": datetime.now(UTC).isoformat(),
+                "completed_at": self.completed_at.isoformat(),
             },
             "price": price,
             "reservation_cny_per_attempt": "1.002048",
@@ -63,21 +67,33 @@ class _ClosedBudgetGuard:
             "attempt_evidence": {
                 "run": [
                     {
+                        "logical_call_sha256": logical_call_sha256(
+                            f"calibration-cli-logical-call-{index:02d}"
+                        ),
                         "status": "settled_upper_bound",
                         "settlement_mode": "upper_bound",
                         "reserved_cny": "1.002048",
                         "known_cost_cny": "0.00002",
-                        "count": self.attempt_count,
+                        "error_code": None,
+                        "completed_at": self.completed_at.isoformat(),
+                        "count": 1,
                     }
+                    for index in range(self.attempt_count)
                 ],
                 "cumulative": [
                     {
+                        "logical_call_sha256": logical_call_sha256(
+                            f"calibration-cli-logical-call-{index:02d}"
+                        ),
                         "status": "settled_upper_bound",
                         "settlement_mode": "upper_bound",
                         "reserved_cny": "1.002048",
                         "known_cost_cny": "0.00002",
-                        "count": self.attempt_count,
+                        "error_code": None,
+                        "completed_at": self.completed_at.isoformat(),
+                        "count": 1,
                     }
+                    for index in range(self.attempt_count)
                 ],
             },
         }
@@ -94,6 +110,7 @@ class _CanonicalCalibrationModel:
         }
         self.budget_guard = budget_guard
         self.closed = False
+        self.call_index = 0
 
     def complete_json(self, *, messages):
         request = json.loads(messages[1]["content"])
@@ -124,6 +141,8 @@ class _CanonicalCalibrationModel:
                 ]
             return [regions[0]]
 
+        call_index = self.call_index
+        self.call_index += 1
         return AssistantTurn(
             content=json.dumps(
                 {
@@ -155,6 +174,9 @@ class _CanonicalCalibrationModel:
             },
             model="deepseek-v4-flash",
             provider_attempts=1,
+            logical_call_sha256=logical_call_sha256(
+                f"calibration-cli-logical-call-{call_index:02d}"
+            ),
         )
 
     def close(self) -> None:
@@ -212,6 +234,22 @@ def test_holdout_eligible_calibration_writes_a_validated_closed_report(
         calibration_cli,
         "build_deepseek_client",
         lambda settings, *, budget_guard: model,
+    )
+
+    def read_trusted_budget(*, run_id: str) -> dict[str, object]:
+        snapshot = budget_guard.snapshot()
+        assert snapshot["run_identity"]["run_id"] == run_id
+        return {
+            "run_identity": snapshot["run_identity"],
+            "run": snapshot["run"],
+            "cumulative": snapshot["cumulative"],
+            "attempt_evidence": snapshot["attempt_evidence"],
+        }
+
+    monkeypatch.setattr(
+        calibration_attestation_module,
+        "_read_trusted_budget_evidence",
+        read_trusted_budget,
     )
 
     exit_code = calibration_cli.main(

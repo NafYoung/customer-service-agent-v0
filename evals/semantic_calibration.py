@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import unicodedata
 from collections import Counter
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Sequence
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from evals.evidence import stable_sha256
+from evals.evidence import model_call_evidence_record, stable_sha256
 from evals.file_snapshot import FileSnapshot, read_file_snapshot
 from evals.readonly_eval import ReadonlyEvalCase
 from evals.semantic_judge import (
@@ -590,7 +590,7 @@ def run_calibration_fixture(
             observed_relations={},
             verdict=None,
             model_calls=tuple(
-                asdict(call)
+                model_call_evidence_record(call)
                 for call in exc.model_calls
             ),
         )
@@ -628,7 +628,7 @@ def run_calibration_fixture(
         observed_relations=observed_relations,
         verdict=evaluation.verdict.model_dump(mode="json"),
         model_calls=tuple(
-            asdict(call)
+            model_call_evidence_record(call)
             for call in evaluation.model_calls
         ),
     )

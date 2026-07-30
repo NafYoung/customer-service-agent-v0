@@ -37,12 +37,23 @@ from evals.evidence import (
     verify_private_eval_bundle_permissions,
 )
 from evals.nonformal_paid_contract import nonformal_paid_contract
-from evals.readonly_eval import SCORE_CATEGORIES
+from evals.paid_attempt_binding import require_paid_attempt_bindings
+from evals.readonly_eval import (
+    SCORE_CATEGORIES,
+    ReadonlyEvalCase,
+    load_cases,
+    rescore_readonly_case_evidence,
+)
+from evals.semantic_judge import SemanticJudgeVerdict
 
 Sha256 = str
 MoneyCny = Annotated[
     str,
     Field(pattern=r"^(0|[1-9][0-9]*)(\.[0-9]{1,8})?$"),
+]
+BudgetAttemptErrorCode = Annotated[
+    str,
+    Field(pattern=r"^[A-Z][A-Z0-9_]{2,95}$"),
 ]
 
 
@@ -511,6 +522,7 @@ class BudgetRunIdentity(StrictEvidenceModel):
 
 
 class BudgetAttemptBucket(StrictEvidenceModel):
+    logical_call_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     status: Literal[
         "reserved",
         "uncertain",
@@ -520,6 +532,8 @@ class BudgetAttemptBucket(StrictEvidenceModel):
     settlement_mode: Literal["exact", "upper_bound"] | None
     reserved_cny: MoneyCny
     known_cost_cny: MoneyCny | None
+    error_code: BudgetAttemptErrorCode | None
+    completed_at: datetime | None
     count: int = Field(ge=1)
 
     @field_validator("count", mode="before")
@@ -538,10 +552,20 @@ class BudgetAttemptBucket(StrictEvidenceModel):
         if reserved <= 0:
             raise ValueError("Budget attempt reservation must be positive")
         if self.status == "reserved":
-            if self.settlement_mode is not None or known is not None:
+            if (
+                self.settlement_mode is not None
+                or known is not None
+                or self.error_code is not None
+                or self.completed_at is not None
+            ):
                 raise ValueError("Reserved budget attempts cannot claim settlement")
         elif self.status == "uncertain":
-            if (self.settlement_mode is None) != (known is None):
+            if (
+                (self.settlement_mode is None) != (known is None)
+                or self.error_code is None
+                or self.completed_at is None
+                or self.completed_at.tzinfo is None
+            ):
                 raise ValueError("Uncertain budget attempt settlement is incomplete")
         else:
             required_mode = "exact" if self.status == "settled_exact" else "upper_bound"
@@ -549,6 +573,9 @@ class BudgetAttemptBucket(StrictEvidenceModel):
                 self.settlement_mode != required_mode
                 or known is None
                 or known > reserved
+                or self.error_code is not None
+                or self.completed_at is None
+                or self.completed_at.tzinfo is None
             ):
                 raise ValueError("Settled budget attempt evidence is inconsistent")
         return self
@@ -559,14 +586,28 @@ class BudgetAttemptEvidence(StrictEvidenceModel):
     cumulative: list[BudgetAttemptBucket]
 
 
+BudgetAttemptBucketKey = tuple[
+    str,
+    str,
+    str | None,
+    str,
+    str | None,
+    str | None,
+    datetime | None,
+]
+
+
 def _attempt_bucket_key(
     bucket: BudgetAttemptBucket,
-) -> tuple[str, str | None, str, str | None]:
+) -> BudgetAttemptBucketKey:
     return (
+        bucket.logical_call_sha256,
         bucket.status,
         bucket.settlement_mode,
         bucket.reserved_cny,
         bucket.known_cost_cny,
+        bucket.error_code,
+        bucket.completed_at,
     )
 
 
@@ -712,6 +753,20 @@ class BudgetSummary(StrictEvidenceModel):
                 raise ValueError(
                     "Current-run attempt bucket reservation differs from the paid guard"
                 )
+            if self.run_identity is not None and any(
+                bucket.completed_at is not None
+                and (
+                    bucket.completed_at < self.run_identity.started_at
+                    or (
+                        self.run_identity.completed_at is not None
+                        and bucket.completed_at > self.run_identity.completed_at
+                    )
+                )
+                for bucket in self.attempt_evidence.run
+            ):
+                raise ValueError(
+                    "Current-run attempt completion is outside the budget run"
+                )
             _require_attempt_amounts(
                 buckets=self.attempt_evidence.run,
                 amount=self.run,
@@ -722,10 +777,8 @@ class BudgetSummary(StrictEvidenceModel):
                 amount=self.cumulative,
                 cumulative=True,
             )
-            run_buckets: Counter[tuple[str, str | None, str, str | None]] = Counter()
-            cumulative_buckets: Counter[tuple[str, str | None, str, str | None]] = (
-                Counter()
-            )
+            run_buckets: Counter[BudgetAttemptBucketKey] = Counter()
+            cumulative_buckets: Counter[BudgetAttemptBucketKey] = Counter()
             for bucket in self.attempt_evidence.run:
                 run_buckets[_attempt_bucket_key(bucket)] += bucket.count
             for bucket in self.attempt_evidence.cumulative:
@@ -783,8 +836,13 @@ class ModelCallRecord(StrictEvidenceModel):
     usage: dict[str, int] | None
     error_code: str | None
     http_status: int | None
-    provider_request_id: str | None
+    provider_request_id: None = None
     provider_attempts: int | None
+    logical_call_sha256: str | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{64}$",
+    )
+    error_stage: Literal["reserve_attempt", "provider_attempt"] | None = None
 
     @field_validator("provider_attempts", mode="before")
     @classmethod
@@ -882,6 +940,7 @@ class ReadonlyCaseRecord(StrictEvidenceModel):
     termination_reason: str
     error_code: str | None
     final_text: str
+    semantic_verdict: SemanticJudgeVerdict | None = None
     model_calls: list[ModelCallRecord]
     tool_trace: list[ToolTraceRecord]
     business_state: BusinessStateRecord
@@ -921,6 +980,41 @@ class ReadonlyCaseRecord(StrictEvidenceModel):
         if self.termination_reason != (self.error_code or "completed"):
             raise ValueError("Case termination reason differs from its error")
         return self
+
+
+def _require_canonical_record_rescore(
+    *,
+    case: ReadonlyEvalCase,
+    record: ReadonlyCaseRecord,
+) -> None:
+    rescored = rescore_readonly_case_evidence(
+        case=case,
+        input_sha256=record.input_sha256,
+        final_text=record.final_text,
+        tool_trace=record.tool_trace,
+        business_state_changed=record.business_state.changed,
+        business_write_count=record.counted_action_records,
+        error_code=record.error_code,
+        semantic_verdict=record.semantic_verdict,
+    )
+    reported_checks = [
+        (check.category, check.message, check.passed)
+        for check in record.score_checks
+    ]
+    rescored_checks = [
+        (check.category, check.message, check.passed)
+        for check in rescored.score_checks
+    ]
+    if (
+        record.scores != rescored.scores
+        or reported_checks != rescored_checks
+        or record.checks != list(rescored.checks)
+        or record.failures != list(rescored.failures)
+        or (record.status == "passed") is not rescored.passed
+    ):
+        raise ValueError(
+            "Case scores differ from canonical raw-evidence rescoring"
+        )
 
 
 def _summary_rate(passed: int, total: int) -> float:
@@ -1158,6 +1252,18 @@ def _require_completed_paid_bundle_records(
     } or manifest.model.observed_models != sorted(observed_models):
         raise ValueError(f"{label} manifest observed models differ from records")
     model_calls = [call for item in records for call in item.model_calls]
+    require_paid_attempt_bindings(
+        label=label,
+        model_calls=[
+            call.model_dump(mode="python")
+            for call in model_calls
+        ],
+        attempt_buckets=[
+            bucket.model_dump(mode="python")
+            for bucket in attempt_evidence.run
+        ],
+        price_valid_until=canonical_price.valid_until,
+    )
     expected_buckets: Counter[tuple[str, str, str, str]] = Counter()
     recomputed_cost_units = 0
     try:
@@ -1328,6 +1434,24 @@ class ReadonlyEvidenceBundle(StrictEvidenceModel):
             )
         if self.manifest.purpose == "dev_repeat":
             contract = nonformal_paid_contract("dev_repeat")
+            canonical_cases = {
+                case.case_id: case
+                for case in load_cases(contract.case_dir)
+            }
+            if set(canonical_cases) != set(contract.case_ids):
+                raise ValueError(
+                    "dev_repeat canonical cases differ from their contract"
+                )
+            for record in self.cases:
+                case = canonical_cases.get(record.case_id)
+                if case is None:
+                    raise ValueError(
+                        "dev_repeat record is absent from canonical cases"
+                    )
+                _require_canonical_record_rescore(
+                    case=case,
+                    record=record,
+                )
             _require_completed_paid_bundle_records(
                 label="dev_repeat",
                 manifest=self.manifest,

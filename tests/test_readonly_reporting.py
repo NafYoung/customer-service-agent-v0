@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from copy import deepcopy
 from dataclasses import asdict, replace
@@ -88,6 +89,7 @@ def _budget_report(
     purpose: str = "holdout_formal",
     started_at: datetime | None = None,
     completed_at: datetime | None = None,
+    logical_call_hashes: list[str] | None = None,
 ) -> dict:
     if (started_at is None) != (completed_at is None):
         raise ValueError("started_at and completed_at must be provided together")
@@ -103,6 +105,27 @@ def _budget_report(
     )
     settled = Decimal(attempt_count) * Decimal("0.000012")
     settled_cny = format(settled, "f")
+    call_hashes = logical_call_hashes or [
+        hashlib.sha256(
+            f"{run_id}:fixture-call:{index}".encode("utf-8")
+        ).hexdigest()
+        for index in range(attempt_count)
+    ]
+    if len(call_hashes) != attempt_count:
+        raise ValueError("logical_call_hashes must match attempt_count")
+    attempt_buckets = [
+        {
+            "logical_call_sha256": logical_hash,
+            "status": "settled_upper_bound",
+            "settlement_mode": "upper_bound",
+            "reserved_cny": "1.002048",
+            "known_cost_cny": "0.000012",
+            "error_code": None,
+            "completed_at": identity_completed_at.isoformat(),
+            "count": 1,
+        }
+        for logical_hash in call_hashes
+    ]
     amount = {
         "currency": "CNY",
         "hard_limit_cny": "20",
@@ -135,24 +158,8 @@ def _budget_report(
         "run": dict(amount),
         "cumulative": dict(amount),
         "attempt_evidence": {
-            "run": [
-                {
-                    "status": "settled_upper_bound",
-                    "settlement_mode": "upper_bound",
-                    "reserved_cny": "1.002048",
-                    "known_cost_cny": "0.000012",
-                    "count": attempt_count,
-                }
-            ],
-            "cumulative": [
-                {
-                    "status": "settled_upper_bound",
-                    "settlement_mode": "upper_bound",
-                    "reserved_cny": "1.002048",
-                    "known_cost_cny": "0.000012",
-                    "count": attempt_count,
-                }
-            ],
+            "run": deepcopy(attempt_buckets),
+            "cumulative": deepcopy(attempt_buckets),
         },
     }
 
@@ -233,7 +240,11 @@ def _result(
                     "completion_tokens": 2,
                     "total_tokens": 10,
                 },
+                provider_request_id="private-provider-request-id",
                 provider_attempts=1,
+                logical_call_sha256=hashlib.sha256(
+                    f"{case_id}:{trial}:agent".encode("utf-8")
+                ).hexdigest(),
             ),
             ModelCallEvidence(
                 sequence=1,
@@ -252,6 +263,9 @@ def _result(
                     "total_tokens": 10,
                 },
                 provider_attempts=1,
+                logical_call_sha256=hashlib.sha256(
+                    f"{case_id}:{trial}:semantic_judge".encode("utf-8")
+                ).hexdigest(),
             ),
         ),
         business_state_delta=BusinessStateDelta(
@@ -265,6 +279,20 @@ def _result(
 
 def _attempt_count(results: list[ReadonlyEvalResult]) -> int:
     return sum(len(result.model_calls) for result in results)
+
+
+def _logical_call_hashes(results: list[ReadonlyEvalResult]) -> list[str]:
+    hashes = [
+        call.logical_call_sha256
+        for result in results
+        for call in result.model_calls
+    ]
+    assert all(logical_hash is not None for logical_hash in hashes)
+    return [
+        logical_hash
+        for logical_hash in hashes
+        if logical_hash is not None
+    ]
 
 
 def _formal_cases() -> list[ReadonlyEvalCase]:
@@ -417,6 +445,8 @@ def test_result_record_contains_trial_trajectory_without_eval_expectations():
     assert record["trial"] == 1
     assert record["split"] == "dev"
     assert record["model_calls"][0]["usage"]["total_tokens"] == 10
+    assert record["model_calls"][0]["provider_request_id"] is None
+    assert "private-provider-request-id" not in json.dumps(record)
     assert record["business_state"]["changed"] is False
     assert record["scores"]["security"] is True
     assert "expected" not in json.dumps(record)
@@ -454,6 +484,7 @@ def test_manifest_fingerprints_harness_and_never_serializes_secret_or_holdout_id
             _attempt_count(results),
             started_at=started,
             completed_at=completed,
+            logical_call_hashes=_logical_call_hashes(results),
         ),
         calibration_attestation=_attestation(),
         calibration_review=_review(),
@@ -542,6 +573,7 @@ def test_manifest_fingerprints_harness_and_never_serializes_secret_or_holdout_id
             purpose="dev_repeat",
             started_at=started,
             completed_at=completed,
+            logical_call_hashes=_logical_call_hashes(dev_results),
         ),
     )
     assert dev_manifest["eval"]["case_ids"] == [case.case_id for case in dev_cases]
@@ -812,6 +844,7 @@ def test_completed_paid_manifest_allows_a_scored_trial_to_fail() -> None:
             run_id=run_id,
             started_at=started,
             completed_at=started + timedelta(seconds=1),
+            logical_call_hashes=_logical_call_hashes(results),
         ),
         calibration_attestation=_attestation(),
         calibration_review=_review(),
@@ -959,6 +992,7 @@ def test_formal_bundle_schema_recomputes_cost_instead_of_trusting_summary():
         run_id="eval-20260729-formal-schema-cost",
         started_at=started,
         completed_at=started + timedelta(seconds=1),
+        logical_call_hashes=_logical_call_hashes(results),
     )
     manifest = build_readonly_manifest(
         run_id="eval-20260729-formal-schema-cost",
@@ -1032,7 +1066,8 @@ def test_formal_bundle_schema_recomputes_cost_instead_of_trusting_summary():
         forged_budget[scope]["committed_cny"] = "0"
         forged_budget[scope]["settled_cny"] = "0"
         forged_budget[scope]["remaining_execution_cny"] = "18"
-        forged_budget["attempt_evidence"][scope][0]["known_cost_cny"] = "0"
+        for bucket in forged_budget["attempt_evidence"][scope]:
+            bucket["known_cost_cny"] = "0"
     with pytest.raises(ValueError, match="canonical|pricing|price"):
         validate_readonly_payload(forged_price)
 

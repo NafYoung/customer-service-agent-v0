@@ -347,6 +347,12 @@ def test_budget_guard_reserves_every_retry_and_settles_success(tmp_path):
     assert report["run"]["attempt_count"] == 2
     assert report["run"]["uncertain_count"] == 1
     assert report["run"]["settled_cny"] == "0.0012"
+    assert turn.logical_call_sha256 is not None
+    assert len(turn.logical_call_sha256) == 64
+    assert {
+        bucket["logical_call_sha256"]
+        for bucket in report["attempt_evidence"]["run"]
+    } == {turn.logical_call_sha256}
 
 
 def test_budget_guard_blocks_retry_before_second_http_attempt(tmp_path):
@@ -382,8 +388,62 @@ def test_budget_guard_blocks_retry_before_second_http_attempt(tmp_path):
         client.close()
 
     assert caught.value.code == "MODEL_BUDGET_EXHAUSTED"
+    assert caught.value.error_stage == "reserve_attempt"
+    assert caught.value.logical_call_sha256 is not None
     assert call_count == 1
-    assert guard.snapshot()["run"]["uncertain_count"] == 1
+    report = guard.snapshot()
+    assert report["run"]["uncertain_count"] == 1
+    assert {
+        bucket["logical_call_sha256"]
+        for bucket in report["attempt_evidence"]["run"]
+    } == {caught.value.logical_call_sha256}
+
+
+def test_missing_usage_preserves_provider_stage_and_ledger_namespace(
+    tmp_path,
+) -> None:
+    guard = _budget_guard(
+        tmp_path,
+        run_id="eval-budget-missing-usage",
+    )
+    client = OpenAICompatibleChatClient(
+        api_key="fixture-key",
+        base_url="https://api.deepseek.com",
+        model="deepseek-v4-flash",
+        max_tokens=1024,
+        budget_guard=guard,
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(
+                200,
+                json={
+                    "choices": [
+                        {
+                            "finish_reason": "stop",
+                            "message": {
+                                "role": "assistant",
+                                "content": "ok",
+                            },
+                        }
+                    ]
+                },
+            )
+        ),
+    )
+    try:
+        with pytest.raises(ModelAPIError) as caught:
+            client.complete(
+                messages=[{"role": "user", "content": "hello"}],
+                tools=[],
+            )
+    finally:
+        client.close()
+
+    assert caught.value.code == "MODEL_BUDGET_USAGE_ERROR"
+    assert caught.value.error_stage == "provider_attempt"
+    assert caught.value.logical_call_sha256 is not None
+    bucket = guard.snapshot()["attempt_evidence"]["run"][0]
+    assert bucket["logical_call_sha256"] == caught.value.logical_call_sha256
+    assert bucket["error_code"] == "MISSING_PROVIDER_USAGE"
 
 
 def test_budget_guard_retains_malformed_success_reservation(tmp_path):
@@ -467,15 +527,17 @@ def test_malformed_success_crossing_price_window_reports_expiry_first(
     assert caught.value.code == "MODEL_PRICE_EXPIRED"
     assert caught.value.attempts == 1
     assert call_count == 1
-    assert guard.snapshot()["attempt_evidence"]["run"] == [
-        {
-            "status": "uncertain",
-            "settlement_mode": None,
-            "reserved_cny": "1.002048",
-            "known_cost_cny": None,
-            "count": 1,
-        }
-    ]
+    bucket = guard.snapshot()["attempt_evidence"]["run"][0]
+    assert bucket == {
+        "logical_call_sha256": bucket["logical_call_sha256"],
+        "status": "uncertain",
+        "settlement_mode": None,
+        "reserved_cny": "1.002048",
+        "known_cost_cny": None,
+        "error_code": "MODEL_PRICE_EXPIRED",
+        "completed_at": bucket["completed_at"],
+        "count": 1,
+    }
 
 
 @pytest.mark.parametrize(

@@ -6,6 +6,7 @@ from dataclasses import asdict
 from types import SimpleNamespace
 
 import pytest
+from pydantic import ValidationError
 from sqlalchemy import select
 
 from app.agent.openai_compatible import AssistantTurn, ModelAPIError, ToolCall
@@ -16,6 +17,7 @@ from app.seed import seed_demo_data
 from evals import evidence_schema
 from evals.evidence import (
     ArtifactIntegrityError,
+    ModelCallEvidence,
     ObservedChatModel,
     capture_business_state,
     compare_business_states,
@@ -23,6 +25,7 @@ from evals.evidence import (
     verify_eval_bundle,
     write_eval_bundle,
 )
+from evals.evidence_schema import ModelCallRecord
 
 
 class SuccessfulModel:
@@ -40,6 +43,7 @@ class SuccessfulModel:
             model="observed-model",
             provider_request_id="provider-request-success-1",
             provider_attempts=2,
+            logical_call_sha256="a" * 64,
         )
 
 
@@ -51,6 +55,7 @@ class FailingModel:
             status_code=503,
             request_id="provider-request-456",
             attempts=2,
+            logical_call_sha256="b" * 64,
         )
 
 
@@ -85,6 +90,7 @@ def test_observed_model_records_usage_latency_and_safe_error_metadata():
     assert call.observed_model == "observed-model"
     assert call.provider_request_id == "provider-request-success-1"
     assert call.provider_attempts == 2
+    assert call.logical_call_sha256 == "a" * 64
     assert call.usage["total_tokens"] == 14
     assert "PRIVATE-INPUT-CANARY" not in json.dumps(
         asdict(call),
@@ -104,6 +110,7 @@ def test_observed_model_records_usage_latency_and_safe_error_metadata():
     assert failed_call.http_status == 503
     assert failed_call.provider_request_id == "provider-request-456"
     assert failed_call.provider_attempts == 2
+    assert failed_call.logical_call_sha256 == "b" * 64
     assert "PRIVATE-PROVIDER-CANARY" not in json.dumps(
         asdict(failed_call),
         ensure_ascii=False,
@@ -143,6 +150,31 @@ def test_observed_model_preserves_structured_tool_requests_without_messages():
         asdict(call),
         ensure_ascii=False,
     )
+
+
+def test_public_model_call_schema_rejects_provider_request_identity() -> None:
+    payload = asdict(
+        ModelCallEvidence(
+            sequence=1,
+            status="success",
+            started_at="2026-07-29T12:00:00+00:00",
+            latency_ms=1,
+            message_count=2,
+            tool_contract_count=0,
+            finish_reason="stop",
+            observed_model="deepseek-v4-flash",
+            usage={
+                "prompt_tokens": 1,
+                "completion_tokens": 1,
+                "total_tokens": 2,
+            },
+            provider_request_id="private-provider-request-id",
+            provider_attempts=1,
+        )
+    )
+
+    with pytest.raises(ValidationError, match="provider_request_id"):
+        ModelCallRecord.model_validate(payload)
 
 
 def test_business_state_snapshot_ignores_runtime_records_and_detects_inventory_change():
@@ -212,6 +244,13 @@ def test_eval_bundle_is_private_integrity_checked_and_never_overwritten(tmp_path
             "passed": False,
             "final_text": f"accidental echo {secret}",
             "authorization": f"Bearer {secret}",
+            "model_calls": [
+                {
+                    "provider_request_id": (
+                        "private-provider-request-id"
+                    )
+                }
+            ],
             "scores": {
                 "task_success": True,
                 "security": False,
@@ -261,6 +300,12 @@ def test_eval_bundle_is_private_integrity_checked_and_never_overwritten(tmp_path
     assert verified["manifest"]["run_id"] == run_id
     assert "deepseek_api_key" not in verified["manifest"]["model"]
     assert verified["cases"][0]["final_text"] == "accidental echo [REDACTED]"
+    assert (
+        verified["cases"][0]["model_calls"][0][
+            "provider_request_id"
+        ]
+        is None
+    )
     assert verified["summary"]["provider_error"] == "must redact [REDACTED]"
     assert verified["trajectories"][0]["case_id"] == "case-1"
 

@@ -716,6 +716,7 @@ class _JsonJudge:
             finish_reason="stop",
             usage={"total_tokens": 7},
             model="offline-judge",
+            provider_request_id="private-calibration-request-id",
         )
 
 
@@ -820,6 +821,7 @@ def test_calibration_result_preserves_full_validated_verdict() -> None:
     assert result.passed is True
     assert result.verdict == verdict
     assert result.model_calls
+    assert result.model_calls[0]["provider_request_id"] is None
 
 
 def test_calibration_fixture_uses_supplied_frozen_judge_prompt() -> None:

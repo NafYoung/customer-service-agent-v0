@@ -28,6 +28,7 @@ from evals.evidence_schema import (
     ModelSnapshot,
     ReadonlyCaseRecord,
 )
+from evals.paid_attempt_binding import require_paid_attempt_bindings
 
 Sha256 = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 GitCommit = Annotated[str, Field(pattern=r"^[0-9a-f]{40,64}$")]
@@ -232,12 +233,26 @@ class FormalFailureSummary(StrictFailureModel):
         return self
 
 
-def _bucket_key(bucket: Any) -> tuple[str, str | None, str, str | None]:
+AttemptBucketKey = tuple[
+    str,
+    str,
+    str | None,
+    str,
+    str | None,
+    str | None,
+    datetime | None,
+]
+
+
+def _bucket_key(bucket: Any) -> AttemptBucketKey:
     return (
+        bucket.logical_call_sha256,
         bucket.status,
         bucket.settlement_mode,
         bucket.reserved_cny,
         bucket.known_cost_cny,
+        bucket.error_code,
+        bucket.completed_at,
     )
 
 
@@ -426,12 +441,8 @@ class FormalFailureEvidenceBundle(StrictFailureModel):
                 reservation_cny=None,
                 cumulative=True,
             )
-            run_bucket_counts: Counter[tuple[str, str | None, str, str | None]] = (
-                Counter()
-            )
-            cumulative_bucket_counts: Counter[
-                tuple[str, str | None, str, str | None]
-            ] = Counter()
+            run_bucket_counts: Counter[AttemptBucketKey] = Counter()
+            cumulative_bucket_counts: Counter[AttemptBucketKey] = Counter()
             for bucket in attempt_evidence.run:
                 run_bucket_counts[_bucket_key(bucket)] += bucket.count
             for bucket in attempt_evidence.cumulative:
@@ -446,6 +457,8 @@ class FormalFailureEvidenceBundle(StrictFailureModel):
                 )
             available_settled_attempts: Counter[tuple[str, str, int]] = Counter()
             for bucket in attempt_evidence.run:
+                if bucket.status == "uncertain":
+                    continue
                 if bucket.status not in {
                     "settled_exact",
                     "settled_upper_bound",
@@ -463,6 +476,22 @@ class FormalFailureEvidenceBundle(StrictFailureModel):
             observable_usage_units = 0
             priced_attempt_count = 0
             captured_provider_attempts = 0
+            require_paid_attempt_bindings(
+                label="Failed-attempt",
+                model_calls=[
+                    call.model_dump(mode="python")
+                    for case in self.cases
+                    for call in case.model_calls
+                ],
+                attempt_buckets=[
+                    bucket.model_dump(mode="python")
+                    for bucket in attempt_evidence.run
+                ],
+                price_valid_until=canonical_price.valid_until,
+                allow_unbound_attempts=(
+                    summary.budget_attempt_delta or 0
+                ),
+            )
             for case in self.cases:
                 for call in case.model_calls:
                     provider_attempts = call.provider_attempts
@@ -524,6 +553,8 @@ class FormalFailureEvidenceBundle(StrictFailureModel):
                                 "Failed-attempt error model-call "
                                 "attempt count is invalid"
                             )
+                        if provider_attempts > 0:
+                            assert call.error_code is not None
                         captured_provider_attempts += provider_attempts
             run_committed_units = cny_to_units(
                 Decimal(summary.budget.run.committed_cny)

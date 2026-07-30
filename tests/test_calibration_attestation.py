@@ -11,7 +11,12 @@ from pathlib import Path
 
 import pytest
 
-from app.agent.deepseek_budget import load_price_snapshot
+from app.agent.deepseek_budget import (
+    DeepSeekBudgetGuard,
+    SQLiteBudgetLedger,
+    load_price_snapshot,
+    logical_call_sha256,
+)
 from app.config import Settings
 from evals import calibration_attestation as calibration_attestation_module
 from evals.calibration_attestation import (
@@ -53,6 +58,39 @@ def _trusted_clean_source(monkeypatch: pytest.MonkeyPatch) -> None:
         "require_clean_git_worktree",
         require_clean_source,
         raising=False,
+    )
+
+
+@pytest.fixture(autouse=True)
+def _trusted_test_budget_loader(
+    request: pytest.FixtureRequest,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    if request.node.name.startswith(
+        (
+            "test_calibration_attestation_rejects_synthetic_report_without_live_ledger",
+            "test_calibration_attestation_rejects_untrusted_ledger",
+            "test_calibration_attestation_accepts_matching_temporary_ledger",
+        )
+    ):
+        return
+
+    def read_trusted_budget(*, run_id: str) -> dict[str, object]:
+        report_budget = _valid_report()["budget"]
+        assert report_budget["run_identity"]["run_id"] == run_id
+        return deepcopy(
+            {
+                "run_identity": report_budget["run_identity"],
+                "run": report_budget["run"],
+                "cumulative": report_budget["cumulative"],
+                "attempt_evidence": report_budget["attempt_evidence"],
+            }
+        )
+
+    monkeypatch.setattr(
+        calibration_attestation_module,
+        "_read_trusted_budget_evidence",
+        read_trusted_budget,
     )
 
 
@@ -102,7 +140,17 @@ def _verdict_for_fixture(fixture) -> dict[str, object]:
     }
 
 
-def _model_call(model_name: str) -> dict[str, object]:
+def _synthetic_logical_call_sha256(index: int) -> str:
+    return logical_call_sha256(
+        f"synthetic-calibration-logical-call-{index:02d}"
+    )
+
+
+def _model_call(
+    model_name: str,
+    *,
+    logical_call_hash: str,
+) -> dict[str, object]:
     return {
         "sequence": 1,
         "status": "success",
@@ -124,6 +172,7 @@ def _model_call(model_name: str) -> dict[str, object]:
         "http_status": None,
         "provider_request_id": None,
         "provider_attempts": 1,
+        "logical_call_sha256": logical_call_hash,
     }
 
 
@@ -161,6 +210,21 @@ def _settled_budget(attempt_count: int) -> dict[str, object]:
         "reserved_count": 0,
         "uncertain_count": 0,
     }
+    attempt_buckets = [
+        {
+            "logical_call_sha256": (
+                _synthetic_logical_call_sha256(index)
+            ),
+            "status": "settled_upper_bound",
+            "settlement_mode": "upper_bound",
+            "reserved_cny": "1.002048",
+            "known_cost_cny": "0.00002",
+            "error_code": None,
+            "completed_at": "2026-07-29T12:04:59+00:00",
+            "count": 1,
+        }
+        for index in range(attempt_count)
+    ]
     return {
         "schema_version": "1.0",
         "enforcement_mode": "persistent_sqlite",
@@ -181,24 +245,8 @@ def _settled_budget(attempt_count: int) -> dict[str, object]:
         "run": dict(snapshot),
         "cumulative": dict(snapshot),
         "attempt_evidence": {
-            "run": [
-                {
-                    "status": "settled_upper_bound",
-                    "settlement_mode": "upper_bound",
-                    "reserved_cny": "1.002048",
-                    "known_cost_cny": "0.00002",
-                    "count": attempt_count,
-                }
-            ],
-            "cumulative": [
-                {
-                    "status": "settled_upper_bound",
-                    "settlement_mode": "upper_bound",
-                    "reserved_cny": "1.002048",
-                    "known_cost_cny": "0.00002",
-                    "count": attempt_count,
-                }
-            ],
+            "run": attempt_buckets,
+            "cumulative": deepcopy(attempt_buckets),
         },
     }
 
@@ -226,9 +274,16 @@ def _valid_report() -> dict[str, object]:
                 fixture.effective_expected_relations
             ),
             verdict=_verdict_for_fixture(fixture),
-            model_calls=(_model_call(settings.deepseek_model),),
+            model_calls=(
+                _model_call(
+                    settings.deepseek_model,
+                    logical_call_hash=(
+                        _synthetic_logical_call_sha256(index)
+                    ),
+                ),
+            ),
         )
-        for fixture in fixtures
+        for index, fixture in enumerate(fixtures)
     ]
     return {
         "schema_version": "2.0",
@@ -253,6 +308,173 @@ def _write_json(path: Path, payload: dict[str, object]) -> Path:
     )
     path.chmod(0o600)
     return path
+
+
+def _matching_temporary_calibration_ledger(
+    *,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[Path, dict[str, object], datetime]:
+    fixed_now = datetime(2026, 7, 29, 12, tzinfo=UTC)
+
+    class _FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            if tz is None:
+                return fixed_now.replace(tzinfo=None)
+            return fixed_now.astimezone(tz)
+
+    monkeypatch.setattr(
+        "app.agent.deepseek_budget.datetime",
+        _FixedDateTime,
+    )
+    ledger_path = tmp_path / "trusted-private" / "budget.sqlite3"
+    ledger = SQLiteBudgetLedger(
+        path=ledger_path,
+        hard_limit_cny=Decimal("20"),
+        execution_limit_cny=Decimal("18"),
+    )
+    price_snapshot = load_price_snapshot(PRICE_SNAPSHOT_PATH)
+    run_id = "eval-20260729-calibration-attestation"
+    guard = DeepSeekBudgetGuard(
+        ledger=ledger,
+        run_id=run_id,
+        purpose="semantic_judge_calibration",
+        price_snapshot=price_snapshot,
+        model="deepseek-v4-flash",
+        max_output_tokens=1024,
+        now=fixed_now,
+        now_provider=lambda: fixed_now,
+    )
+    for index in range(49):
+        reservation = guard.reserve_attempt(
+            logical_call_id=(
+                f"synthetic-calibration-logical-call-{index:02d}"
+            ),
+            attempt_number=1,
+        )
+        guard.settle_attempt(
+            reservation=reservation,
+            usage={
+                "prompt_tokens": 10,
+                "completion_tokens": 5,
+                "total_tokens": 15,
+            },
+            provider_request_id=None,
+        )
+    guard.close()
+    return ledger_path, guard.snapshot(), fixed_now
+
+
+def _report_with_matching_temporary_ledger(
+    *,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[Path, Path, datetime]:
+    ledger_path, budget, fixed_now = (
+        _matching_temporary_calibration_ledger(
+            tmp_path=tmp_path,
+            monkeypatch=monkeypatch,
+        )
+    )
+    report = _valid_report()
+    run_identity = budget["run_identity"]
+    assert isinstance(run_identity, dict)
+    report["started_at"] = run_identity["started_at"]
+    report["completed_at"] = run_identity["completed_at"]
+    report["budget"] = budget
+    for result in report["results"]:
+        result["model_calls"][0]["started_at"] = run_identity[
+            "started_at"
+        ]
+    report_path = _write_json(
+        tmp_path / "matching-live-ledger-report.json",
+        report,
+    )
+    return ledger_path, report_path, fixed_now
+
+
+def test_calibration_attestation_rejects_synthetic_report_without_live_ledger(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    missing_ledger = tmp_path / "missing-private-ledger.sqlite3"
+    monkeypatch.setattr(
+        calibration_attestation_module,
+        "DEFAULT_BUDGET_LEDGER",
+        missing_ledger,
+        raising=False,
+    )
+    report_path = _write_json(
+        tmp_path / "synthetic-49-of-49.json",
+        _valid_report(),
+    )
+
+    with pytest.raises(
+        CalibrationAttestationError,
+        match="ledger|budget|persistent",
+    ):
+        validate_calibration_attestation(
+            report_path=report_path,
+            settings=Settings(deepseek_temperature=0),
+            now=datetime(2026, 7, 29, 13, tzinfo=UTC),
+        )
+
+    assert not missing_ledger.exists()
+
+
+def test_calibration_attestation_accepts_matching_temporary_ledger(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ledger_path, report_path, fixed_now = (
+        _report_with_matching_temporary_ledger(
+            tmp_path=tmp_path,
+            monkeypatch=monkeypatch,
+        )
+    )
+    monkeypatch.setattr(
+        calibration_attestation_module,
+        "DEFAULT_BUDGET_LEDGER",
+        ledger_path,
+    )
+
+    attestation = validate_calibration_attestation(
+        report_path=report_path,
+        settings=Settings(deepseek_temperature=0),
+        now=fixed_now,
+    )
+
+    assert attestation.result_count == 49
+    assert attestation.run_id == "eval-20260729-calibration-attestation"
+
+
+def test_calibration_attestation_rejects_untrusted_ledger_permissions(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ledger_path, report_path, fixed_now = (
+        _report_with_matching_temporary_ledger(
+            tmp_path=tmp_path,
+            monkeypatch=monkeypatch,
+        )
+    )
+    ledger_path.chmod(0o644)
+    monkeypatch.setattr(
+        calibration_attestation_module,
+        "DEFAULT_BUDGET_LEDGER",
+        ledger_path,
+    )
+
+    with pytest.raises(
+        CalibrationAttestationError,
+        match="ledger|budget|persistent",
+    ):
+        validate_calibration_attestation(
+            report_path=report_path,
+            settings=Settings(deepseek_temperature=0),
+            now=fixed_now,
+        )
 
 
 def test_calibration_attestation_recomputes_results_summary_and_budget(
@@ -812,19 +1034,25 @@ def test_calibration_attestation_rejects_contradictory_attempt_buckets(
     budget["attempt_evidence"] = {
         "run": [
             {
+                "logical_call_sha256": "b" * 64,
                 "status": "reserved",
                 "settlement_mode": None,
                 "reserved_cny": "9.999999",
                 "known_cost_cny": None,
+                "error_code": None,
+                "completed_at": None,
                 "count": 1,
             }
         ],
         "cumulative": [
             {
+                "logical_call_sha256": "c" * 64,
                 "status": "uncertain",
                 "settlement_mode": "upper_bound",
                 "reserved_cny": "8",
                 "known_cost_cny": "19",
+                "error_code": "COST_EXCEEDS_RESERVATION",
+                "completed_at": "2026-07-29T12:04:59+00:00",
                 "count": 2,
             }
         ],

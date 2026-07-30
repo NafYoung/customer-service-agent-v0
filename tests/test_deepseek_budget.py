@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -283,15 +285,20 @@ def test_cost_over_reservation_commits_observed_cost_and_blocks_next_attempt(
     evidence = reopened.evidence_snapshot(
         run_id="eval-budget-overrun-0001"
     )
-    assert evidence["attempt_evidence"]["run"] == [
-        {
-            "status": "uncertain",
-            "settlement_mode": "upper_bound",
-            "reserved_cny": "0.4",
-            "known_cost_cny": "0.8",
-            "count": 1,
-        }
-    ]
+    bucket = evidence["attempt_evidence"]["run"][0]
+    assert bucket == {
+        "logical_call_sha256": hashlib.sha256(
+            b"logical-call-1"
+        ).hexdigest(),
+        "status": "uncertain",
+        "settlement_mode": "upper_bound",
+        "reserved_cny": "0.4",
+        "known_cost_cny": "0.8",
+        "error_code": "COST_EXCEEDS_RESERVATION",
+        "completed_at": bucket["completed_at"],
+        "count": 1,
+    }
+    assert datetime.fromisoformat(bucket["completed_at"]).tzinfo is not None
     assert evidence["attempt_evidence"]["cumulative"] == (
         evidence["attempt_evidence"]["run"]
     )
@@ -343,6 +350,175 @@ def test_uncertain_attempt_remains_committed_across_connections(tmp_path):
             attempt_number=1,
             model=snapshot.model,
             reserved_units=cny_to_units(Decimal("0.50000001")),
+        )
+
+
+def test_attempt_evidence_exposes_anonymous_logical_call_outcome_and_completion(
+    tmp_path: Path,
+) -> None:
+    ledger = _ledger(tmp_path)
+    snapshot = _price_snapshot()
+    run_id = "eval-budget-anonymous-evidence-1"
+    logical_call_id = "logical-call-private-1"
+    ledger.start_run(
+        run_id=run_id,
+        purpose="diagnostic",
+        price_snapshot=snapshot,
+    )
+    reservation = ledger.reserve_attempt(
+        run_id=run_id,
+        logical_call_id=logical_call_id,
+        attempt_number=1,
+        model=snapshot.model,
+        reserved_units=cny_to_units(Decimal("1")),
+    )
+    ledger.mark_uncertain(
+        reservation=reservation,
+        error_code="MODEL_TRANSPORT_ERROR",
+    )
+
+    bucket = ledger.evidence_snapshot(run_id=run_id)["attempt_evidence"]["run"][0]
+
+    assert bucket["logical_call_sha256"] == hashlib.sha256(
+        logical_call_id.encode("utf-8")
+    ).hexdigest()
+    assert bucket["error_code"] == "MODEL_TRANSPORT_ERROR"
+    assert datetime.fromisoformat(bucket["completed_at"]).tzinfo is not None
+    assert "provider_request_id" not in bucket
+    assert logical_call_id not in json.dumps(bucket)
+
+
+def test_read_existing_evidence_snapshot_is_read_only_and_requires_existing_file(
+    tmp_path: Path,
+) -> None:
+    ledger = _ledger(tmp_path)
+    snapshot = _price_snapshot()
+    run_id = "eval-budget-read-existing-1"
+    ledger.start_run(
+        run_id=run_id,
+        purpose="semantic_judge_calibration",
+        price_snapshot=snapshot,
+    )
+    ledger.complete_run(run_id)
+    ledger_path = tmp_path / "private" / "budget.sqlite3"
+    before = ledger_path.stat()
+
+    reread = SQLiteBudgetLedger.read_existing_evidence_snapshot(
+        path=ledger_path,
+        hard_limit_cny=Decimal("20"),
+        execution_limit_cny=Decimal("20"),
+        run_id=run_id,
+    )
+
+    after = ledger_path.stat()
+    assert reread == ledger.evidence_snapshot(run_id=run_id)
+    assert (after.st_ino, after.st_size, after.st_mtime_ns) == (
+        before.st_ino,
+        before.st_size,
+        before.st_mtime_ns,
+    )
+
+    missing = tmp_path / "private" / "missing.sqlite3"
+    with pytest.raises(BudgetInvariantError, match="exist|regular|ledger"):
+        SQLiteBudgetLedger.read_existing_evidence_snapshot(
+            path=missing,
+            hard_limit_cny=Decimal("20"),
+            execution_limit_cny=Decimal("20"),
+            run_id=run_id,
+        )
+    assert not missing.exists()
+
+
+def test_read_existing_evidence_snapshot_rejects_symlinked_parent(
+    tmp_path: Path,
+) -> None:
+    real_root = tmp_path / "real-private"
+    ledger = SQLiteBudgetLedger(
+        path=real_root / "budget.sqlite3",
+        hard_limit_cny=Decimal("20"),
+        execution_limit_cny=Decimal("20"),
+    )
+    run_id = "eval-budget-read-symlink-parent-1"
+    ledger.start_run(
+        run_id=run_id,
+        purpose="semantic_judge_calibration",
+        price_snapshot=_price_snapshot(),
+    )
+    ledger.complete_run(run_id)
+    linked_root = tmp_path / "linked-private"
+    linked_root.symlink_to(real_root, target_is_directory=True)
+
+    with pytest.raises(BudgetInvariantError, match="private|regular|ledger"):
+        SQLiteBudgetLedger.read_existing_evidence_snapshot(
+            path=linked_root / "budget.sqlite3",
+            hard_limit_cny=Decimal("20"),
+            execution_limit_cny=Decimal("20"),
+            run_id=run_id,
+        )
+
+
+def test_read_existing_evidence_snapshot_rejects_symlinked_ancestor(
+    tmp_path: Path,
+) -> None:
+    real_root = tmp_path / "real-root"
+    ledger = SQLiteBudgetLedger(
+        path=real_root / "private" / "budget.sqlite3",
+        hard_limit_cny=Decimal("20"),
+        execution_limit_cny=Decimal("20"),
+    )
+    run_id = "eval-budget-read-symlink-ancestor-1"
+    ledger.start_run(
+        run_id=run_id,
+        purpose="semantic_judge_calibration",
+        price_snapshot=_price_snapshot(),
+    )
+    ledger.complete_run(run_id)
+    linked_root = tmp_path / "linked-root"
+    linked_root.symlink_to(real_root, target_is_directory=True)
+
+    with pytest.raises(BudgetInvariantError, match="private|regular|ledger"):
+        SQLiteBudgetLedger.read_existing_evidence_snapshot(
+            path=linked_root / "private" / "budget.sqlite3",
+            hard_limit_cny=Decimal("20"),
+            execution_limit_cny=Decimal("20"),
+            run_id=run_id,
+        )
+
+
+def test_read_existing_evidence_snapshot_rejects_public_or_malformed_ledger(
+    tmp_path: Path,
+) -> None:
+    ledger = _ledger(tmp_path)
+    run_id = "eval-budget-read-untrusted-1"
+    ledger.start_run(
+        run_id=run_id,
+        purpose="semantic_judge_calibration",
+        price_snapshot=_price_snapshot(),
+    )
+    ledger.complete_run(run_id)
+    ledger_path = tmp_path / "private" / "budget.sqlite3"
+
+    ledger_path.chmod(0o644)
+    with pytest.raises(BudgetInvariantError, match="private|regular|ledger"):
+        SQLiteBudgetLedger.read_existing_evidence_snapshot(
+            path=ledger_path,
+            hard_limit_cny=Decimal("20"),
+            execution_limit_cny=Decimal("20"),
+            run_id=run_id,
+        )
+
+    ledger_path.chmod(0o600)
+    with sqlite3.connect(ledger_path) as connection:
+        connection.execute(
+            "UPDATE budget_meta SET value = 'tampered' "
+            "WHERE key = 'schema_version'"
+        )
+    with pytest.raises(BudgetInvariantError, match="metadata|schema|ledger"):
+        SQLiteBudgetLedger.read_existing_evidence_snapshot(
+            path=ledger_path,
+            hard_limit_cny=Decimal("20"),
+            execution_limit_cny=Decimal("20"),
+            run_id=run_id,
         )
 
 

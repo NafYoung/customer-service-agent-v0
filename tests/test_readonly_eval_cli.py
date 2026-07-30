@@ -1135,6 +1135,11 @@ def test_formal_runtime_failure_keeps_partial_evidence_and_terminal(
     )
     monkeypatch.setattr(
         run_readonly_agent_evals,
+        "_create_validated_formal_execution_capability",
+        lambda **kwargs: object(),
+    )
+    monkeypatch.setattr(
+        run_readonly_agent_evals,
         "DEFAULT_HOLDOUT_LOCK_ROOT",
         lock_root,
     )

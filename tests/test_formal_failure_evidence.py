@@ -161,10 +161,15 @@ def _persistent_budget_report(
         if committed == reservation * attempt_count:
             attempt_buckets.append(
                 {
+                    "logical_call_sha256": hashlib.sha256(
+                        f"{run_id}:uncertain".encode("utf-8")
+                    ).hexdigest(),
                     "status": "uncertain",
                     "settlement_mode": None,
                     "reserved_cny": format(reservation, "f"),
                     "known_cost_cny": None,
+                    "error_code": "MODEL_HTTP_ERROR",
+                    "completed_at": "2026-07-29T16:00:01+00:00",
                     "count": attempt_count,
                 }
             )
@@ -173,15 +178,23 @@ def _persistent_budget_report(
             if attempt_count > 1:
                 attempt_buckets.append(
                     {
+                        "logical_call_sha256": hashlib.sha256(
+                            f"{run_id}:uncertain-retry".encode("utf-8")
+                        ).hexdigest(),
                         "status": "uncertain",
                         "settlement_mode": None,
                         "reserved_cny": format(reservation, "f"),
                         "known_cost_cny": None,
+                        "error_code": "MODEL_HTTP_ERROR",
+                        "completed_at": "2026-07-29T16:00:01+00:00",
                         "count": attempt_count - 1,
                     }
                 )
             attempt_buckets.append(
                 {
+                    "logical_call_sha256": hashlib.sha256(
+                        f"{run_id}:uncertain-cost".encode("utf-8")
+                    ).hexdigest(),
                     "status": "uncertain",
                     "settlement_mode": "exact",
                     "reserved_cny": format(reservation, "f"),
@@ -189,6 +202,8 @@ def _persistent_budget_report(
                         committed - reservation * (attempt_count - 1),
                         "f",
                     ),
+                    "error_code": "MODEL_HTTP_ERROR",
+                    "completed_at": "2026-07-29T16:00:01+00:00",
                     "count": 1,
                 }
             )
@@ -237,12 +252,36 @@ def _budget_report_with_attempt_buckets(
     run_id: str,
     buckets: list[dict[str, object]],
 ) -> dict[str, object]:
+    normalized_buckets: list[dict[str, object]] = []
+    for raw_bucket in buckets:
+        bucket = dict(raw_bucket)
+        status = bucket["status"]
+        bucket.setdefault(
+            "logical_call_sha256",
+            "a" * 64,
+        )
+        if status == "reserved":
+            bucket.setdefault("error_code", None)
+            bucket.setdefault("completed_at", None)
+        elif status == "uncertain":
+            bucket.setdefault("error_code", "MODEL_HTTP_ERROR")
+            bucket.setdefault(
+                "completed_at",
+                "2026-07-29T16:00:01+00:00",
+            )
+        else:
+            bucket.setdefault("error_code", None)
+            bucket.setdefault(
+                "completed_at",
+                "2026-07-29T16:00:01+00:00",
+            )
+        normalized_buckets.append(bucket)
     committed = Decimal("0")
     settled = Decimal("0")
     attempt_count = 0
     reserved_count = 0
     uncertain_count = 0
-    for bucket in buckets:
+    for bucket in normalized_buckets:
         count = int(bucket["count"])
         reserved = Decimal(str(bucket["reserved_cny"]))
         known_raw = bucket["known_cost_cny"]
@@ -280,8 +319,8 @@ def _budget_report_with_attempt_buckets(
     report["run"] = dict(amount)
     report["cumulative"] = dict(amount)
     report["attempt_evidence"] = {
-        "run": list(buckets),
-        "cumulative": list(buckets),
+        "run": list(normalized_buckets),
+        "cumulative": list(normalized_buckets),
     }
     return report
 
@@ -321,7 +360,13 @@ def test_failed_attempt_preserves_cross_window_budget_lifecycle(
     assert validated.summary.budget.run_status == run_status
 
 
-def _model_error_with_attempts(attempts: int) -> dict[str, object]:
+def _model_error_with_attempts(
+    attempts: int,
+    *,
+    error_code: str = "MODEL_HTTP_ERROR",
+    error_stage: str = "provider_attempt",
+    logical_call_sha256: str = "a" * 64,
+) -> dict[str, object]:
     return {
         "sequence": 1,
         "status": "error",
@@ -335,16 +380,19 @@ def _model_error_with_attempts(attempts: int) -> dict[str, object]:
         "response_id": None,
         "observed_model": None,
         "usage": None,
-        "error_code": "MODEL_HTTP_ERROR",
+        "error_code": error_code,
         "http_status": 500,
         "provider_request_id": None,
         "provider_attempts": attempts,
+        "logical_call_sha256": logical_call_sha256,
+        "error_stage": error_stage,
     }
 
 
 def _successful_model_call_with_usage(
     *,
     prompt_tokens: int,
+    logical_call_sha256: str = "a" * 64,
 ) -> dict[str, object]:
     return {
         "sequence": 1,
@@ -367,8 +415,10 @@ def _successful_model_call_with_usage(
         },
         "error_code": None,
         "http_status": None,
-        "provider_request_id": "provider-visible-usage-1",
+        "provider_request_id": None,
         "provider_attempts": 1,
+        "logical_call_sha256": logical_call_sha256,
+        "error_stage": None,
     }
 
 
@@ -531,7 +581,14 @@ def test_failed_attempt_preserves_a_real_budget_overrun(
 ) -> None:
     run_id = "formal-failed-20260729-overrun"
     failed_record = _case_record(status="failed")
-    failed_record["model_calls"] = [_model_error_with_attempts(3)]
+    failed_record["model_calls"] = [
+        _model_error_with_attempts(
+            3,
+            logical_call_sha256=hashlib.sha256(
+                f"{run_id}:uncertain-retry".encode("utf-8")
+            ).hexdigest(),
+        )
+    ]
 
     bundle_path = write_formal_failure_bundle(
         output_root=tmp_path / "failed-attempts",
@@ -557,7 +614,14 @@ def test_failed_attempt_rejects_false_breach_with_hidden_bucket_cost(
 ) -> None:
     run_id = "formal-failed-20260729-false-breach"
     failed_record = _case_record(status="failed")
-    failed_record["model_calls"] = [_model_error_with_attempts(3)]
+    failed_record["model_calls"] = [
+        _model_error_with_attempts(
+            3,
+            logical_call_sha256=hashlib.sha256(
+                f"{run_id}:uncertain-retry".encode("utf-8")
+            ).hexdigest(),
+        )
+    ]
     bundle_path = write_formal_failure_bundle(
         output_root=tmp_path / "failed-attempts",
         context=_context(run_id=run_id),
@@ -653,19 +717,25 @@ def test_failed_attempt_accepts_canonical_usage_matched_to_ledger_bucket(
     budget["attempt_evidence"] = {
         "run": [
             {
+                "logical_call_sha256": "a" * 64,
                 "status": "settled_exact",
                 "settlement_mode": "exact",
                 "reserved_cny": "1.002048",
                 "known_cost_cny": "0.000001",
+                "error_code": None,
+                "completed_at": "2026-07-29T16:00:01+00:00",
                 "count": 1,
             }
         ],
         "cumulative": [
             {
+                "logical_call_sha256": "a" * 64,
                 "status": "settled_exact",
                 "settlement_mode": "exact",
                 "reserved_cny": "1.002048",
                 "known_cost_cny": "0.000001",
+                "error_code": None,
+                "completed_at": "2026-07-29T16:00:01+00:00",
                 "count": 1,
             }
         ],
@@ -762,6 +832,260 @@ def test_failed_attempt_matches_retries_to_uncertain_attempt_buckets(
     bundle = validate_formal_failure_bundle(bundle_path)
     assert bundle.summary.budget is not None
     assert bundle.summary.budget.run.uncertain_count == (uncertain_bucket["count"])
+
+
+def test_failed_attempt_rejects_relabelled_error_without_matching_ledger_outcome(
+    tmp_path: Path,
+) -> None:
+    run_id = "formal-failed-20260729-relabelled-error"
+    failed_record = _case_record(status="failed")
+    failed_record["model_calls"] = [_model_error_with_attempts(1)]
+    budget = _budget_report_with_attempt_buckets(
+        run_id=run_id,
+        buckets=[
+            {
+                "status": "uncertain",
+                "settlement_mode": None,
+                "reserved_cny": "1.002048",
+                "known_cost_cny": None,
+                "error_code": "MODEL_TRANSPORT_ERROR",
+                "count": 1,
+            }
+        ],
+    )
+
+    with pytest.raises(
+        (ValidationError, ValueError),
+        match="error|outcome|ledger|attempt",
+    ):
+        write_formal_failure_bundle(
+            output_root=tmp_path / run_id,
+            context=_context(run_id=run_id),
+            case_records=[failed_record],
+            records_captured=True,
+            budget_summary=budget,
+        )
+
+
+def test_failed_attempt_rejects_swapped_provider_outcomes_between_hashes(
+    tmp_path: Path,
+) -> None:
+    run_id = "formal-failed-20260729-swapped-outcomes"
+    price = canonical_budget_price_payload()
+    valid_until = datetime.fromisoformat(str(price["valid_until"]))
+    context = _context(run_id=run_id).model_dump(mode="json")
+    context["created_at"] = (valid_until - timedelta(seconds=1)).isoformat()
+    context["failed_at"] = (valid_until + timedelta(seconds=3)).isoformat()
+    records: list[dict[str, object]] = []
+    for index, (logical_hash, error_code) in enumerate(
+        (
+            ("a" * 64, "MODEL_PRICE_EXPIRED"),
+            ("b" * 64, "MODEL_HTTP_ERROR"),
+        ),
+        start=1,
+    ):
+        record = _case_record(
+            case_id=f"formal-case-{index:02d}",
+            status="failed",
+        )
+        record["started_at"] = (
+            valid_until - timedelta(milliseconds=500)
+        ).isoformat()
+        record["completed_at"] = (
+            valid_until + timedelta(seconds=2)
+        ).isoformat()
+        record["termination_reason"] = error_code
+        record["error_code"] = error_code
+        call = _model_error_with_attempts(
+            1,
+            error_code=error_code,
+            logical_call_sha256=logical_hash,
+        )
+        call["started_at"] = (
+            valid_until - timedelta(milliseconds=250)
+        ).isoformat()
+        record["model_calls"] = [call]
+        records.append(record)
+    budget = _budget_report_with_attempt_buckets(
+        run_id=run_id,
+        buckets=[
+            {
+                "logical_call_sha256": "a" * 64,
+                "status": "uncertain",
+                "settlement_mode": None,
+                "reserved_cny": "1.002048",
+                "known_cost_cny": None,
+                "error_code": "MODEL_HTTP_ERROR",
+                "completed_at": (
+                    valid_until - timedelta(milliseconds=100)
+                ).isoformat(),
+                "count": 1,
+            },
+            {
+                "logical_call_sha256": "b" * 64,
+                "status": "uncertain",
+                "settlement_mode": "upper_bound",
+                "reserved_cny": "1.002048",
+                "known_cost_cny": "0.0012",
+                "error_code": "MODEL_PRICE_EXPIRED",
+                "completed_at": (
+                    valid_until + timedelta(seconds=1)
+                ).isoformat(),
+                "count": 1,
+            },
+        ],
+    )
+    budget["run_identity"]["started_at"] = (
+        valid_until - timedelta(seconds=2)
+    ).isoformat()
+    budget["run_identity"]["completed_at"] = (
+        valid_until + timedelta(seconds=1)
+    ).isoformat()
+
+    with pytest.raises(
+        (ValidationError, ValueError),
+        match="logical|outcome|price|hash",
+    ):
+        write_formal_failure_bundle(
+            output_root=tmp_path / run_id,
+            context=context,
+            case_records=records,
+            records_captured=True,
+            budget_summary=budget,
+        )
+
+
+@pytest.mark.parametrize(
+    ("model_error", "ledger_error"),
+    [
+        ("MODEL_BUDGET_USAGE_ERROR", "MISSING_PROVIDER_USAGE"),
+        ("MODEL_BUDGET_USAGE_ERROR", "INVALID_PROVIDER_USAGE"),
+        ("MODEL_BUDGET_ERROR", "COST_EXCEEDS_RESERVATION"),
+        ("MODEL_BUDGET_ERROR", "MODEL_BUDGET_ERROR"),
+    ],
+)
+def test_failed_attempt_accepts_budget_error_namespace_aliases(
+    tmp_path: Path,
+    model_error: str,
+    ledger_error: str,
+) -> None:
+    run_id = (
+        "formal-failed-20260729-alias-"
+        + ledger_error.lower().replace("_", "-")
+    )
+    record = _case_record(status="failed")
+    record["termination_reason"] = model_error
+    record["error_code"] = model_error
+    record["model_calls"] = [
+        _model_error_with_attempts(
+            1,
+            error_code=model_error,
+        )
+    ]
+    budget = _budget_report_with_attempt_buckets(
+        run_id=run_id,
+        buckets=[
+            {
+                "status": "uncertain",
+                "settlement_mode": None,
+                "reserved_cny": "1.002048",
+                "known_cost_cny": None,
+                "error_code": ledger_error,
+                "count": 1,
+            }
+        ],
+    )
+
+    bundle_path = write_formal_failure_bundle(
+        output_root=tmp_path / run_id,
+        context=_context(run_id=run_id),
+        case_records=[record],
+        records_captured=True,
+        budget_summary=budget,
+    )
+
+    validated = validate_formal_failure_bundle(bundle_path)
+    assert validated.summary.budget is not None
+    assert validated.summary.budget.run.uncertain_count == 1
+
+
+@pytest.mark.parametrize(
+    "terminal_error",
+    ["MODEL_BUDGET_EXHAUSTED", "MODEL_PRICE_EXPIRED"],
+)
+def test_failed_attempt_accepts_retry_then_reserve_stage_failure(
+    tmp_path: Path,
+    terminal_error: str,
+) -> None:
+    run_id = (
+        "formal-failed-20260729-reserve-"
+        + terminal_error.lower().replace("_", "-")
+    )
+    context = _context(run_id=run_id).model_dump(mode="json")
+    record = _case_record(status="failed")
+    record["termination_reason"] = terminal_error
+    record["error_code"] = terminal_error
+    record["model_calls"] = [
+        _model_error_with_attempts(
+            1,
+            error_code=terminal_error,
+            error_stage="reserve_attempt",
+        )
+    ]
+    budget = _budget_report_with_attempt_buckets(
+        run_id=run_id,
+        buckets=[
+            {
+                "status": "uncertain",
+                "settlement_mode": None,
+                "reserved_cny": "1.002048",
+                "known_cost_cny": None,
+                "error_code": "MODEL_HTTP_ERROR",
+                "count": 1,
+            }
+        ],
+    )
+    if terminal_error == "MODEL_PRICE_EXPIRED":
+        price = canonical_budget_price_payload()
+        valid_until = datetime.fromisoformat(str(price["valid_until"]))
+        context["created_at"] = (
+            valid_until - timedelta(seconds=1)
+        ).isoformat()
+        context["failed_at"] = (
+            valid_until + timedelta(seconds=3)
+        ).isoformat()
+        record["started_at"] = (
+            valid_until - timedelta(milliseconds=500)
+        ).isoformat()
+        record["completed_at"] = (
+            valid_until + timedelta(seconds=2)
+        ).isoformat()
+        record["model_calls"][0]["started_at"] = (
+            valid_until - timedelta(milliseconds=250)
+        ).isoformat()
+        budget["run_identity"]["started_at"] = (
+            valid_until - timedelta(seconds=2)
+        ).isoformat()
+        budget["run_identity"]["completed_at"] = (
+            valid_until + timedelta(seconds=1)
+        ).isoformat()
+        for scope in ("run", "cumulative"):
+            for bucket in budget["attempt_evidence"][scope]:
+                bucket["completed_at"] = (
+                    valid_until - timedelta(milliseconds=100)
+                ).isoformat()
+
+    bundle_path = write_formal_failure_bundle(
+        output_root=tmp_path / run_id,
+        context=context,
+        case_records=[record],
+        records_captured=True,
+        budget_summary=budget,
+    )
+
+    validated = validate_formal_failure_bundle(bundle_path)
+    assert validated.summary.budget is not None
+    assert validated.summary.budget.run.uncertain_count == 1
 
 
 def test_failed_attempt_rejects_usage_on_an_error_model_call(

@@ -3,8 +3,9 @@ from __future__ import annotations
 import random
 import time
 import uuid
-from dataclasses import dataclass
-from typing import Any, Mapping, Protocol, Sequence
+from copy import deepcopy
+from dataclasses import dataclass, replace
+from typing import Any, Literal, Mapping, Protocol, Sequence
 
 import httpx
 
@@ -13,10 +14,12 @@ from app.agent.deepseek_budget import (
     BudgetExceededError,
     BudgetPriceWindowError,
     BudgetUsageError,
+    logical_call_sha256,
 )
 
 Message = dict[str, Any]
 ToolContract = dict[str, Any]
+ModelErrorStage = Literal["reserve_attempt", "provider_attempt"]
 
 
 @dataclass(frozen=True)
@@ -36,6 +39,7 @@ class AssistantTurn:
     model: str | None = None
     provider_request_id: str | None = None
     provider_attempts: int = 1
+    logical_call_sha256: str | None = None
 
 
 class ChatModel(Protocol):
@@ -92,12 +96,16 @@ class ModelAdapterError(RuntimeError):
         status_code: int | None = None,
         request_id: str | None = None,
         attempts: int | None = None,
+        logical_call_sha256: str | None = None,
+        error_stage: ModelErrorStage | None = None,
     ):
         super().__init__(message)
         self.code = code
         self.status_code = status_code
         self.request_id = request_id
         self.attempts = attempts
+        self.logical_call_sha256 = logical_call_sha256
+        self.error_stage = error_stage
 
 
 class ModelAPIError(ModelAdapterError):
@@ -166,12 +174,14 @@ class OpenAICompatibleChatClient:
         self._api_key = api_key
         self._base_url = base_url.rstrip("/")
         self._model = model
+        self._timeout_seconds = timeout_seconds
         self._max_tokens = max_tokens
         self._temperature = temperature
         self._max_retries = max_retries
         self._retry_backoff_seconds = retry_backoff_seconds
         self._extra_body = dict(extra_body or {})
         self._budget_guard = budget_guard
+        self._transport_mode = "custom" if transport is not None else "default"
         if self._budget_guard is not None:
             self._budget_guard.bind_request_timeout(
                 timeout_seconds=timeout_seconds,
@@ -195,6 +205,28 @@ class OpenAICompatibleChatClient:
 
     def __exit__(self, *_: object) -> None:
         self.close()
+
+    def public_runtime_config(self) -> dict[str, object]:
+        """Return credential-free configuration suitable for runtime binding."""
+
+        return {
+            "adapter": "openai_compatible_chat_completions",
+            "base_url": self._base_url,
+            "model": self._model,
+            "timeout_seconds": self._timeout_seconds,
+            "max_tokens": self._max_tokens,
+            "temperature": self._temperature,
+            "max_retries": self._max_retries,
+            "retry_backoff_seconds": self._retry_backoff_seconds,
+            "extra_body": deepcopy(self._extra_body),
+            "transport_mode": self._transport_mode,
+            "budget_guard_attached": self._budget_guard is not None,
+        }
+
+    def uses_budget_guard(self, budget_guard: object) -> bool:
+        """Check guard identity without exposing the guard or any credential."""
+
+        return self._budget_guard is budget_guard
 
     @staticmethod
     def _openai_tools(
@@ -261,6 +293,7 @@ class OpenAICompatibleChatClient:
         payload.update(self._extra_body)
 
         logical_call_id = f"model-call-{uuid.uuid4().hex}"
+        logical_call_hash = logical_call_sha256(logical_call_id)
         for attempt_index in range(self._max_retries + 1):
             attempt_count = attempt_index + 1
             reservation: Any | None = None
@@ -275,18 +308,24 @@ class OpenAICompatibleChatClient:
                         "MODEL_PRICE_EXPIRED",
                         "Paid model request blocked by the local pricing window.",
                         attempts=attempt_index,
+                        logical_call_sha256=logical_call_hash,
+                        error_stage="reserve_attempt",
                     ) from exc
                 except BudgetExceededError as exc:
                     raise ModelAPIError(
                         "MODEL_BUDGET_EXHAUSTED",
                         "Paid model request blocked by the local CNY budget limit.",
                         attempts=attempt_index,
+                        logical_call_sha256=logical_call_hash,
+                        error_stage="reserve_attempt",
                     ) from exc
                 except BudgetError as exc:
                     raise ModelAPIError(
                         "MODEL_BUDGET_ERROR",
                         "Paid model request blocked by a local budget ledger error.",
                         attempts=attempt_index,
+                        logical_call_sha256=logical_call_hash,
+                        error_stage="reserve_attempt",
                     ) from exc
 
             try:
@@ -303,6 +342,7 @@ class OpenAICompatibleChatClient:
                     reservation,
                     error_code="MODEL_TRANSPORT_ERROR",
                     attempts=attempt_count,
+                    logical_call_hash=logical_call_hash,
                 )
                 if attempt_index < self._max_retries:
                     self._retry_delay(attempt_index)
@@ -311,6 +351,8 @@ class OpenAICompatibleChatClient:
                     "MODEL_TRANSPORT_ERROR",
                     "Model provider request failed before a response was received.",
                     attempts=attempt_count,
+                    logical_call_sha256=logical_call_hash,
+                    error_stage="provider_attempt",
                 ) from exc
 
             request_id = (
@@ -323,11 +365,13 @@ class OpenAICompatibleChatClient:
                     usage=None,
                     provider_request_id=request_id,
                     attempts=attempt_count,
+                    logical_call_hash=logical_call_hash,
                 )
                 self._mark_budget_uncertain(
                     reservation,
                     error_code="MODEL_HTTP_ERROR",
                     attempts=attempt_count,
+                    logical_call_hash=logical_call_hash,
                 )
                 retryable_status = (
                     response.status_code == 429
@@ -345,6 +389,8 @@ class OpenAICompatibleChatClient:
                     status_code=response.status_code,
                     request_id=request_id,
                     attempts=attempt_count,
+                    logical_call_sha256=logical_call_hash,
+                    error_stage="provider_attempt",
                 )
 
             try:
@@ -353,17 +399,25 @@ class OpenAICompatibleChatClient:
                     request_id=request_id,
                     attempt_count=attempt_count,
                 )
+                turn = replace(
+                    turn,
+                    logical_call_sha256=logical_call_hash,
+                )
             except ModelAdapterError as exc:
+                exc.logical_call_sha256 = logical_call_hash
+                exc.error_stage = "provider_attempt"
                 self._ensure_response_price_window(
                     reservation,
                     usage=None,
                     provider_request_id=request_id,
                     attempts=attempt_count,
+                    logical_call_hash=logical_call_hash,
                 )
                 self._mark_budget_uncertain(
                     reservation,
                     error_code=exc.code,
                     attempts=attempt_count,
+                    logical_call_hash=logical_call_hash,
                 )
                 raise
 
@@ -373,18 +427,22 @@ class OpenAICompatibleChatClient:
                     usage=turn.usage,
                     provider_request_id=request_id,
                     attempts=attempt_count,
+                    logical_call_hash=logical_call_hash,
                 )
                 if turn.usage is None:
                     self._mark_budget_uncertain(
                         reservation,
                         error_code="MISSING_PROVIDER_USAGE",
                         attempts=attempt_count,
+                        logical_call_hash=logical_call_hash,
                     )
                     raise ModelAPIError(
                         "MODEL_BUDGET_USAGE_ERROR",
                         "Provider response omitted billable usage evidence.",
                         request_id=request_id,
                         attempts=attempt_count,
+                        logical_call_sha256=logical_call_hash,
+                        error_stage="provider_attempt",
                     )
                 try:
                     self._budget_guard.settle_attempt(
@@ -398,18 +456,23 @@ class OpenAICompatibleChatClient:
                         "Provider returned inconsistent billable usage evidence.",
                         request_id=request_id,
                         attempts=attempt_count,
+                        logical_call_sha256=logical_call_hash,
+                        error_stage="provider_attempt",
                     ) from exc
                 except BudgetError as exc:
                     self._mark_budget_uncertain(
                         reservation,
                         error_code="MODEL_BUDGET_ERROR",
                         attempts=attempt_count,
+                        logical_call_hash=logical_call_hash,
                     )
                     raise ModelAPIError(
                         "MODEL_BUDGET_ERROR",
                         "Paid model response could not be settled safely.",
                         request_id=request_id,
                         attempts=attempt_count,
+                        logical_call_sha256=logical_call_hash,
+                        error_stage="provider_attempt",
                     ) from exc
             return turn
 
@@ -417,6 +480,8 @@ class OpenAICompatibleChatClient:
             "MODEL_TRANSPORT_ERROR",
             "Model provider request loop ended unexpectedly.",
             attempts=self._max_retries + 1,
+            logical_call_sha256=logical_call_hash,
+            error_stage="provider_attempt",
         )
 
     def _ensure_response_price_window(
@@ -426,6 +491,7 @@ class OpenAICompatibleChatClient:
         usage: Mapping[str, Any] | None,
         provider_request_id: str | None,
         attempts: int,
+        logical_call_hash: str,
     ) -> None:
         if self._budget_guard is None or reservation is None:
             return
@@ -441,6 +507,8 @@ class OpenAICompatibleChatClient:
                 "Paid model response crossed the local pricing window.",
                 request_id=provider_request_id,
                 attempts=attempts,
+                logical_call_sha256=logical_call_hash,
+                error_stage="provider_attempt",
             ) from exc
         except BudgetError as exc:
             raise ModelAPIError(
@@ -448,6 +516,8 @@ class OpenAICompatibleChatClient:
                 "Paid model response could not be recorded safely.",
                 request_id=provider_request_id,
                 attempts=attempts,
+                logical_call_sha256=logical_call_hash,
+                error_stage="provider_attempt",
             ) from exc
 
     def _retry_delay(self, attempt_index: int) -> None:
@@ -461,6 +531,7 @@ class OpenAICompatibleChatClient:
         *,
         error_code: str,
         attempts: int,
+        logical_call_hash: str,
     ) -> None:
         if self._budget_guard is None or reservation is None:
             return
@@ -474,6 +545,8 @@ class OpenAICompatibleChatClient:
                 "MODEL_BUDGET_ERROR",
                 "Paid model attempt could not be recorded safely.",
                 attempts=attempts,
+                logical_call_sha256=logical_call_hash,
+                error_stage="provider_attempt",
             ) from exc
 
     @staticmethod
