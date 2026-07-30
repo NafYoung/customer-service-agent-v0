@@ -42,6 +42,19 @@ PRICE_SNAPSHOT_PATH = (
 )
 
 
+@pytest.fixture(autouse=True)
+def _stub_paid_ledger_binding(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _noop(**_kwargs: object) -> None:
+        return None
+
+    monkeypatch.setattr(
+        "evals.paid_ledger_binding.require_persistent_budget_matches_trusted_ledger",
+        _noop,
+    )
+
+
 def test_source_snapshot_captures_runtime_dependency_closure() -> None:
     package_versions = readonly_reporting.current_readonly_source_snapshot()[
         "package_versions"
@@ -446,6 +459,7 @@ def test_result_record_contains_trial_trajectory_without_eval_expectations():
     assert record["split"] == "dev"
     assert record["model_calls"][0]["usage"]["total_tokens"] == 10
     assert record["model_calls"][0]["provider_request_id"] is None
+    assert record["model_calls"][0]["response_id"] is None
     assert "private-provider-request-id" not in json.dumps(record)
     assert record["business_state"]["changed"] is False
     assert record["scores"]["security"] is True

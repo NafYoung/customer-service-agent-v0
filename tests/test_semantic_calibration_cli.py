@@ -22,6 +22,17 @@ class _ClosedBudgetGuard:
         self.closed = False
         self.started_at = datetime.now(UTC)
         self.completed_at: datetime | None = None
+        self.response_digests: dict[str, str] = {}
+
+    def bind_response_content_sha256(
+        self,
+        *,
+        logical_call_sha256: str,
+        response_content_sha256: str,
+    ) -> None:
+        self.response_digests[logical_call_sha256] = (
+            response_content_sha256
+        )
 
     def close(self) -> None:
         self.closed = True
@@ -47,6 +58,26 @@ class _ClosedBudgetGuard:
             "reserved_count": 0,
             "uncertain_count": 0,
         }
+
+        def _bucket(index: int) -> dict[str, object]:
+            call_hash = logical_call_sha256(
+                f"calibration-cli-logical-call-{index:02d}"
+            )
+            return {
+                "logical_call_sha256": call_hash,
+                "status": "settled_upper_bound",
+                "settlement_mode": "upper_bound",
+                "reserved_cny": "1.002048",
+                "known_cost_cny": "0.00002",
+                "error_code": None,
+                "completed_at": self.completed_at.isoformat(),
+                "response_content_sha256": self.response_digests.get(
+                    call_hash
+                ),
+                "count": 1,
+            }
+
+        buckets = [_bucket(index) for index in range(self.attempt_count)]
         return {
             "schema_version": "1.0",
             "enforcement_mode": "persistent_sqlite",
@@ -65,36 +96,8 @@ class _ClosedBudgetGuard:
             "run": dict(amounts),
             "cumulative": dict(amounts),
             "attempt_evidence": {
-                "run": [
-                    {
-                        "logical_call_sha256": logical_call_sha256(
-                            f"calibration-cli-logical-call-{index:02d}"
-                        ),
-                        "status": "settled_upper_bound",
-                        "settlement_mode": "upper_bound",
-                        "reserved_cny": "1.002048",
-                        "known_cost_cny": "0.00002",
-                        "error_code": None,
-                        "completed_at": self.completed_at.isoformat(),
-                        "count": 1,
-                    }
-                    for index in range(self.attempt_count)
-                ],
-                "cumulative": [
-                    {
-                        "logical_call_sha256": logical_call_sha256(
-                            f"calibration-cli-logical-call-{index:02d}"
-                        ),
-                        "status": "settled_upper_bound",
-                        "settlement_mode": "upper_bound",
-                        "reserved_cny": "1.002048",
-                        "known_cost_cny": "0.00002",
-                        "error_code": None,
-                        "completed_at": self.completed_at.isoformat(),
-                        "count": 1,
-                    }
-                    for index in range(self.attempt_count)
-                ],
+                "run": buckets,
+                "cumulative": [dict(bucket) for bucket in buckets],
             },
         }
 
@@ -177,6 +180,17 @@ class _CanonicalCalibrationModel:
             logical_call_sha256=logical_call_sha256(
                 f"calibration-cli-logical-call-{call_index:02d}"
             ),
+        )
+
+    def bind_response_content_sha256(
+        self,
+        *,
+        logical_call_sha256: str,
+        response_content_sha256: str,
+    ) -> None:
+        self.budget_guard.bind_response_content_sha256(
+            logical_call_sha256=logical_call_sha256,
+            response_content_sha256=response_content_sha256,
         )
 
     def close(self) -> None:

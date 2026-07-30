@@ -67,7 +67,15 @@ class AttemptBudgetGuard(Protocol):
         reservation: Any,
         usage: Mapping[str, Any],
         provider_request_id: str | None,
+        response_content_sha256: str | None = None,
     ) -> Any: ...
+
+    def bind_response_content_sha256(
+        self,
+        *,
+        logical_call_sha256: str,
+        response_content_sha256: str,
+    ) -> None: ...
 
     def ensure_response_in_price_window(
         self,
@@ -181,6 +189,8 @@ class OpenAICompatibleChatClient:
         self._retry_backoff_seconds = retry_backoff_seconds
         self._extra_body = dict(extra_body or {})
         self._budget_guard = budget_guard
+        # Construction-time hint only; formal binding derives mode from the live
+        # httpx client transport (see live_transport_mode).
         self._transport_mode = "custom" if transport is not None else "default"
         if self._budget_guard is not None:
             self._budget_guard.bind_request_timeout(
@@ -206,6 +216,37 @@ class OpenAICompatibleChatClient:
     def __exit__(self, *_: object) -> None:
         self.close()
 
+    @staticmethod
+    def transport_mode_for_client(client: object) -> str:
+        """Derive transport mode from the live httpx client, not a writable flag."""
+
+        if type(client) is not httpx.Client:
+            return "custom"
+        transport = getattr(client, "_transport", None)
+        if type(transport) is httpx.HTTPTransport:
+            return "default"
+        return "custom"
+
+    def live_transport_mode(self) -> str:
+        """Return transport mode sealed to the current ``_client`` object."""
+
+        return self.transport_mode_for_client(getattr(self, "_client", None))
+
+    def bind_response_content_sha256(
+        self,
+        *,
+        logical_call_sha256: str,
+        response_content_sha256: str,
+    ) -> None:
+        """Seal a settled paid attempt to one judge response digest."""
+
+        if self._budget_guard is None:
+            return
+        self._budget_guard.bind_response_content_sha256(
+            logical_call_sha256=logical_call_sha256,
+            response_content_sha256=response_content_sha256,
+        )
+
     def public_runtime_config(self) -> dict[str, object]:
         """Return credential-free configuration suitable for runtime binding."""
 
@@ -219,7 +260,7 @@ class OpenAICompatibleChatClient:
             "max_retries": self._max_retries,
             "retry_backoff_seconds": self._retry_backoff_seconds,
             "extra_body": deepcopy(self._extra_body),
-            "transport_mode": self._transport_mode,
+            "transport_mode": self.live_transport_mode(),
             "budget_guard_attached": self._budget_guard is not None,
         }
 

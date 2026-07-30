@@ -209,6 +209,22 @@ def logical_call_sha256(logical_call_id: str) -> str:
     return hashlib.sha256(logical_call_id.encode("utf-8")).hexdigest()
 
 
+_RESPONSE_DIGEST_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+
+
+def _require_optional_response_digest(value: object) -> str | None:
+    if value is None:
+        return None
+    if (
+        type(value) is not str
+        or not _RESPONSE_DIGEST_PATTERN.fullmatch(value)
+    ):
+        raise BudgetInvariantError(
+            "Response-content digest must be a SHA-256 hex digest."
+        )
+    return value
+
+
 def require_paid_purpose(purpose: object) -> PaidPurpose:
     if type(purpose) is not str or purpose not in PAID_PURPOSES:
         raise BudgetInvariantError(
@@ -473,10 +489,24 @@ class SQLiteBudgetLedger:
                     error_code TEXT,
                     created_at TEXT NOT NULL,
                     settled_at TEXT,
+                    response_content_sha256 TEXT,
                     UNIQUE(run_id, logical_call_id, attempt_number)
                 );
                 """
             )
+            attempt_columns = {
+                row["name"]
+                for row in connection.execute(
+                    "PRAGMA table_info(budget_attempts)"
+                )
+            }
+            if "response_content_sha256" not in attempt_columns:
+                connection.execute(
+                    """
+                    ALTER TABLE budget_attempts
+                    ADD COLUMN response_content_sha256 TEXT
+                    """
+                )
             expected_meta = {
                 "schema_version": "1.0",
                 "currency": "CNY",
@@ -686,6 +716,7 @@ class SQLiteBudgetLedger:
         price_snapshot: DeepSeekPriceSnapshot,
         usage: Mapping[str, Any],
         provider_request_id: str | None,
+        response_content_sha256: str | None = None,
     ) -> UsageCost:
         cost = calculate_usage_cost(price_snapshot, usage)
         safe_usage = {
@@ -695,6 +726,9 @@ class SQLiteBudgetLedger:
             and isinstance(value, int)
             and not isinstance(value, bool)
         }
+        digest = _require_optional_response_digest(
+            response_content_sha256
+        )
         connection = self._connect()
         try:
             connection.execute("BEGIN IMMEDIATE")
@@ -708,9 +742,26 @@ class SQLiteBudgetLedger:
                 if (
                     row["settled_units"] != cost.units
                     or row["settlement_mode"] != cost.mode
+                    or (
+                        digest is not None
+                        and row["response_content_sha256"] is not None
+                        and row["response_content_sha256"] != digest
+                    )
                 ):
                     raise BudgetInvariantError(
                         "Repeated settlement data does not match."
+                    )
+                if (
+                    digest is not None
+                    and row["response_content_sha256"] is None
+                ):
+                    connection.execute(
+                        """
+                        UPDATE budget_attempts
+                        SET response_content_sha256 = ?
+                        WHERE attempt_id = ?
+                        """,
+                        (digest, reservation.attempt_id),
                     )
                 connection.execute("COMMIT")
                 return cost
@@ -757,7 +808,8 @@ class SQLiteBudgetLedger:
                     settlement_mode = ?,
                     usage_json = ?,
                     provider_request_id = ?,
-                    settled_at = ?
+                    settled_at = ?,
+                    response_content_sha256 = ?
                 WHERE attempt_id = ?
                 """,
                 (
@@ -767,11 +819,78 @@ class SQLiteBudgetLedger:
                     json.dumps(safe_usage, sort_keys=True),
                     provider_request_id,
                     self._now_provider().isoformat(),
+                    digest,
                     reservation.attempt_id,
                 ),
             )
             connection.execute("COMMIT")
             return cost
+        except Exception:
+            if connection.in_transaction:
+                connection.execute("ROLLBACK")
+            raise
+        finally:
+            connection.close()
+
+    def bind_response_content_sha256(
+        self,
+        *,
+        run_id: str,
+        logical_call_sha256_value: str,
+        response_content_sha256: str,
+    ) -> None:
+        """Seal a settled attempt to one response-content digest (once)."""
+
+        digest = _require_optional_response_digest(
+            response_content_sha256
+        )
+        call_digest = _require_optional_response_digest(
+            logical_call_sha256_value
+        )
+        if digest is None or call_digest is None:
+            raise BudgetInvariantError(
+                "Response-content digest binding requires SHA-256 digests."
+            )
+        connection = self._connect()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            rows = connection.execute(
+                """
+                SELECT attempt_id, logical_call_id, status,
+                       response_content_sha256
+                FROM budget_attempts
+                WHERE run_id = ?
+                  AND status IN ('settled_exact', 'settled_upper_bound')
+                """,
+                (run_id,),
+            ).fetchall()
+            matches = [
+                row
+                for row in rows
+                if logical_call_sha256(row["logical_call_id"])
+                == call_digest
+            ]
+            if len(matches) != 1:
+                raise BudgetInvariantError(
+                    "Response-content digest requires exactly one settled "
+                    "ledger attempt."
+                )
+            row = matches[0]
+            existing = row["response_content_sha256"]
+            if existing is not None and existing != digest:
+                raise BudgetInvariantError(
+                    "Settled response-content digest does not match."
+                )
+            if existing is None:
+                connection.execute(
+                    """
+                    UPDATE budget_attempts
+                    SET response_content_sha256 = ?
+                    WHERE attempt_id = ?
+                    """,
+                    (digest, row["attempt_id"]),
+                )
+            connection.execute("COMMIT")
         except Exception:
             if connection.in_transaction:
                 connection.execute("ROLLBACK")
@@ -979,6 +1098,48 @@ class SQLiteBudgetLedger:
             """,
             params,
         ).fetchall()
+        has_response_digest = any(
+            row["name"] == "response_content_sha256"
+            for row in connection.execute(
+                "PRAGMA table_info(budget_attempts)"
+            )
+        )
+        if has_response_digest:
+            rows = connection.execute(
+                f"""
+                SELECT
+                    logical_call_id,
+                    status,
+                    settlement_mode,
+                    reserved_units,
+                    settled_units,
+                    error_code,
+                    settled_at,
+                    response_content_sha256,
+                    COUNT(*) AS attempt_count
+                FROM budget_attempts
+                {where}
+                GROUP BY
+                    logical_call_id,
+                    status,
+                    settlement_mode,
+                    reserved_units,
+                    settled_units,
+                    error_code,
+                    settled_at,
+                    response_content_sha256
+                ORDER BY
+                    logical_call_id,
+                    status,
+                    settlement_mode,
+                    reserved_units,
+                    settled_units,
+                    error_code,
+                    settled_at,
+                    response_content_sha256
+                """,
+                params,
+            ).fetchall()
         return [
             {
                 "logical_call_sha256": logical_call_sha256(
@@ -996,6 +1157,11 @@ class SQLiteBudgetLedger:
                 ),
                 "error_code": row["error_code"],
                 "completed_at": row["settled_at"],
+                "response_content_sha256": (
+                    row["response_content_sha256"]
+                    if has_response_digest
+                    else None
+                ),
                 "count": int(row["attempt_count"]),
             }
             for row in rows
@@ -1267,19 +1433,35 @@ class SQLiteBudgetLedger:
                 "settled_at",
             ),
         }
-        if tables != set(expected_columns) or any(
-            tuple(
+        legacy_attempt_columns = expected_columns["budget_attempts"]
+        current_attempt_columns = (
+            *legacy_attempt_columns,
+            "response_content_sha256",
+        )
+        if tables != set(expected_columns):
+            raise BudgetInvariantError(
+                "Existing budget ledger schema is invalid."
+            )
+        for table, columns in expected_columns.items():
+            observed = tuple(
                 row["name"]
                 for row in connection.execute(
                     f"PRAGMA table_info({table})"
                 )
             )
-            != columns
-            for table, columns in expected_columns.items()
-        ):
-            raise BudgetInvariantError(
-                "Existing budget ledger schema is invalid."
-            )
+            if table == "budget_attempts":
+                if observed not in {
+                    legacy_attempt_columns,
+                    current_attempt_columns,
+                }:
+                    raise BudgetInvariantError(
+                        "Existing budget ledger schema is invalid."
+                    )
+                continue
+            if observed != columns:
+                raise BudgetInvariantError(
+                    "Existing budget ledger schema is invalid."
+                )
         meta = {
             row["key"]: row["value"]
             for row in connection.execute(
@@ -1390,6 +1572,7 @@ class DeepSeekBudgetGuard:
         reservation: BudgetReservation,
         usage: Mapping[str, Any],
         provider_request_id: str | None,
+        response_content_sha256: str | None = None,
     ) -> UsageCost:
         try:
             return self._ledger.settle_attempt(
@@ -1397,6 +1580,7 @@ class DeepSeekBudgetGuard:
                 price_snapshot=self._price_snapshot,
                 usage=usage,
                 provider_request_id=provider_request_id,
+                response_content_sha256=response_content_sha256,
             )
         except BudgetUsageError:
             self._ledger.mark_uncertain(
@@ -1404,6 +1588,20 @@ class DeepSeekBudgetGuard:
                 error_code="INVALID_PROVIDER_USAGE",
             )
             raise
+
+    def bind_response_content_sha256(
+        self,
+        *,
+        logical_call_sha256: str,
+        response_content_sha256: str,
+    ) -> None:
+        if self._closed:
+            raise BudgetInvariantError("Budget guard is already closed.")
+        self._ledger.bind_response_content_sha256(
+            run_id=self._run_id,
+            logical_call_sha256_value=logical_call_sha256,
+            response_content_sha256=response_content_sha256,
+        )
 
     def ensure_response_in_price_window(
         self,

@@ -404,7 +404,7 @@ def _successful_model_call_with_usage(
         "phase": "agent",
         "tool_calls": [],
         "finish_reason": "stop",
-        "response_id": "response-visible-usage-1",
+        "response_id": None,
         "observed_model": "deepseek-v4-flash",
         "usage": {
             "prompt_tokens": prompt_tokens,

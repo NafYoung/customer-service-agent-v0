@@ -534,6 +534,10 @@ class BudgetAttemptBucket(StrictEvidenceModel):
     known_cost_cny: MoneyCny | None
     error_code: BudgetAttemptErrorCode | None
     completed_at: datetime | None
+    response_content_sha256: str | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{64}$",
+    )
     count: int = Field(ge=1)
 
     @field_validator("count", mode="before")
@@ -831,7 +835,7 @@ class ModelCallRecord(StrictEvidenceModel):
     phase: Literal["agent", "semantic_judge"] = "agent"
     tool_calls: list[ModelToolRequest]
     finish_reason: str | None
-    response_id: str | None
+    response_id: None = None
     observed_model: str | None
     usage: dict[str, int] | None
     error_code: str | None
@@ -843,6 +847,10 @@ class ModelCallRecord(StrictEvidenceModel):
         pattern=r"^[0-9a-f]{64}$",
     )
     error_stage: Literal["reserve_attempt", "provider_attempt"] | None = None
+    response_content_sha256: str | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{64}$",
+    )
 
     @field_validator("provider_attempts", mode="before")
     @classmethod
@@ -1318,6 +1326,18 @@ def _require_completed_paid_bundle_records(
         or Decimal(cumulative_budget.remaining_execution_cny) != expected_remaining
     ):
         raise ValueError(f"{label} attempt buckets or costs differ from records")
+    from evals.paid_ledger_binding import (
+        PaidLedgerBindingError,
+        require_persistent_budget_matches_trusted_ledger,
+    )
+
+    try:
+        require_persistent_budget_matches_trusted_ledger(
+            budget=budget,
+            label=label,
+        )
+    except PaidLedgerBindingError as exc:
+        raise ValueError(str(exc)) from exc
 
 
 class FileIntegrity(StrictEvidenceModel):

@@ -8,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
+import httpx
 import pytest
 
 from app.agent.deepseek_budget import (
@@ -16,10 +17,12 @@ from app.agent.deepseek_budget import (
     calculate_usage_cost_from_rates,
     format_cny,
 )
+from app.agent.factory import build_deepseek_client
 from app.agent.openai_compatible import AssistantTurn
 from app.agent.readonly import ToolTrace
 from app.config import Settings
 from evals import holdout_lock as holdout_protocol
+from evals import paid_ledger_binding as paid_ledger_binding_module
 from evals import run_readonly_agent_evals as runner
 from evals.calibration_attestation import (
     ValidatedCalibrationAttestation,
@@ -58,14 +61,31 @@ from evals.semantic_judge import (
     SemanticJudgeVerdict,
     effective_semantic_contract,
 )
+from tests.paid_ledger_testutil import install_matching_ledger_for_paid_payload
 
 ROOT = Path(__file__).resolve().parents[1]
+_REAL_PAID_LEDGER_REQUIRE = (
+    paid_ledger_binding_module.require_persistent_budget_matches_trusted_ledger
+)
 REGRESSION_CASE_DIR = ROOT / "evals" / "readonly_regression_cases"
 USAGE = {
     "prompt_tokens": 8,
     "completion_tokens": 2,
     "total_tokens": 10,
 }
+
+
+@pytest.fixture(autouse=True)
+def _stub_paid_ledger_binding(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _noop(**_kwargs: object) -> None:
+        return None
+
+    monkeypatch.setattr(
+        "evals.paid_ledger_binding.require_persistent_budget_matches_trusted_ledger",
+        _noop,
+    )
 
 
 def _settings() -> Settings:
@@ -99,7 +119,7 @@ def _model_call(
         tool_contract_count=tool_contract_count,
         phase=phase,
         finish_reason="stop",
-        response_id=f"response-{phase}-{case_id}-{trial}",
+        response_id=None,
         observed_model="deepseek-v4-flash",
         usage=usage,
         provider_attempts=provider_attempts,
@@ -1209,6 +1229,156 @@ def test_formal_execution_capability_rejects_runtime_object_replacement_zero_cal
     finally:
         bound_model._model = runtime.settings.deepseek_model
         bound_model._budget_guard = guard
+        bound_model.close()
+        replacement_guard.close()
+
+
+def test_formal_execution_capability_rejects_post_issue_httpx_client_swap_zero_calls(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = _formal_runtime_inputs(tmp_path, monkeypatch)
+    guard = _formal_budget_guard(
+        tmp_path,
+        run_id="eval-20260729-formal-client-swap",
+        settings=runtime.settings,
+    )
+    bound_model = runner.build_deepseek_client(
+        runtime.settings,
+        budget_guard=guard,
+    )
+    report_provider = guard.snapshot
+    mock_hits = 0
+
+    def _mock_handler(request: httpx.Request) -> httpx.Response:
+        del request
+        nonlocal mock_hits
+        mock_hits += 1
+        return httpx.Response(200, json={"choices": []})
+
+    sealed_client = bound_model._client
+    swapped_client = httpx.Client(
+        transport=httpx.MockTransport(_mock_handler),
+    )
+    try:
+        capability = _issue_formal_execution_capability(
+            runtime=runtime,
+            model=bound_model,
+            semantic_judge_model=bound_model,
+            budget_guard=guard,
+            budget_report_provider=report_provider,
+        )
+        bound_model._client = swapped_client
+        with pytest.raises(ValueError, match="formal execution capability"):
+            _run_formal_runtime_attack(
+                runtime=runtime,
+                model=bound_model,
+                semantic_judge_model=bound_model,
+                budget_report_provider=report_provider,
+                frozen_harness=runtime.frozen_harness,
+                capability=capability,
+            )
+        assert mock_hits == 0
+        _assert_zero_budget_attempts(guard)
+    finally:
+        bound_model._client = sealed_client
+        swapped_client.close()
+        bound_model.close()
+
+
+def test_formal_execution_capability_rejects_transport_mode_lie_zero_calls(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = _formal_runtime_inputs(tmp_path, monkeypatch)
+    guard = _formal_budget_guard(
+        tmp_path,
+        run_id="eval-20260729-formal-transport-lie",
+        settings=runtime.settings,
+    )
+    mock_hits = 0
+
+    def _mock_handler(request: httpx.Request) -> httpx.Response:
+        del request
+        nonlocal mock_hits
+        mock_hits += 1
+        return httpx.Response(200, json={"choices": []})
+
+    lied_model = build_deepseek_client(
+        runtime.settings,
+        budget_guard=guard,
+        transport=httpx.MockTransport(_mock_handler),
+    )
+    report_provider = guard.snapshot
+    try:
+        lied_model._transport_mode = "default"
+        assert lied_model.live_transport_mode() == "custom"
+        with pytest.raises(ValueError, match="formal execution capability"):
+            _issue_formal_execution_capability(
+                runtime=runtime,
+                model=lied_model,
+                semantic_judge_model=lied_model,
+                budget_guard=guard,
+                budget_report_provider=report_provider,
+            )
+        assert mock_hits == 0
+        _assert_zero_budget_attempts(guard)
+    finally:
+        lied_model.close()
+
+
+@pytest.mark.parametrize("rebinding", ["ledger", "price_snapshot"])
+def test_formal_execution_capability_rejects_budget_graph_rebinding_zero_calls(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    rebinding: str,
+) -> None:
+    runtime = _formal_runtime_inputs(tmp_path, monkeypatch)
+    guard = _formal_budget_guard(
+        tmp_path,
+        run_id=f"eval-20260729-formal-budget-graph-{rebinding}",
+        settings=runtime.settings,
+    )
+    replacement_guard = _formal_budget_guard(
+        tmp_path,
+        run_id=f"eval-20260729-formal-budget-graph-replacement-{rebinding}",
+        settings=runtime.settings,
+    )
+    bound_model = runner.build_deepseek_client(
+        runtime.settings,
+        budget_guard=guard,
+    )
+    report_provider = guard.snapshot
+    original_ledger = guard._ledger
+    original_price = guard._price_snapshot
+    try:
+        capability = _issue_formal_execution_capability(
+            runtime=runtime,
+            model=bound_model,
+            semantic_judge_model=bound_model,
+            budget_guard=guard,
+            budget_report_provider=report_provider,
+        )
+        if rebinding == "ledger":
+            guard._ledger = replacement_guard._ledger
+        else:
+            guard._price_snapshot = replacement_guard._price_snapshot
+        with pytest.raises(ValueError, match="formal execution capability"):
+            _run_formal_runtime_attack(
+                runtime=runtime,
+                model=bound_model,
+                semantic_judge_model=bound_model,
+                budget_report_provider=report_provider,
+                frozen_harness=runtime.frozen_harness,
+                capability=capability,
+            )
+        guard._ledger = original_ledger
+        guard._price_snapshot = original_price
+        _assert_zero_budget_attempts(guard)
+        _assert_zero_budget_attempts(replacement_guard)
+    finally:
+        guard._ledger = original_ledger
+        guard._price_snapshot = original_price
         bound_model.close()
         replacement_guard.close()
 
@@ -2593,3 +2763,82 @@ def test_model_call_evidence_rejects_coerced_usage_and_attempt_types(
 
     with pytest.raises(ValueError, match="usage|provider|attempt|integer"):
         ModelCallRecord.model_validate(payload)
+
+
+def test_dev_repeat_live_ledger_accepts_matching_temporary_ledger(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = _dev_repeat_payload()
+    install_matching_ledger_for_paid_payload(
+        tmp_path=tmp_path,
+        monkeypatch=monkeypatch,
+        payload=payload,
+    )
+    monkeypatch.setattr(
+        paid_ledger_binding_module,
+        "require_persistent_budget_matches_trusted_ledger",
+        _REAL_PAID_LEDGER_REQUIRE,
+    )
+
+    _REAL_PAID_LEDGER_REQUIRE(
+        budget=BudgetSummary.model_validate(
+            payload["summary"]["budget"]
+        ),
+        label="dev_repeat",
+    )
+
+
+def test_dev_repeat_live_ledger_rejects_missing_trusted_ledger(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = _dev_repeat_payload()
+    missing = tmp_path / "missing-private" / "budget.sqlite3"
+    monkeypatch.setattr(
+        paid_ledger_binding_module,
+        "DEFAULT_BUDGET_LEDGER",
+        missing,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        paid_ledger_binding_module,
+        "require_persistent_budget_matches_trusted_ledger",
+        _REAL_PAID_LEDGER_REQUIRE,
+    )
+
+    with pytest.raises(ValueError, match="ledger|trusted|persistent"):
+        _REAL_PAID_LEDGER_REQUIRE(
+            budget=BudgetSummary.model_validate(
+                payload["summary"]["budget"]
+            ),
+            label="dev_repeat",
+        )
+
+
+def test_dev_repeat_live_ledger_rejects_tampered_settled_cost(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = _dev_repeat_payload()
+    install_matching_ledger_for_paid_payload(
+        tmp_path=tmp_path,
+        monkeypatch=monkeypatch,
+        payload=payload,
+    )
+    for scope in ("run", "cumulative"):
+        payload["summary"]["budget"][scope]["settled_cny"] = "0.000001"
+        payload["summary"]["budget"][scope]["committed_cny"] = "0.000001"
+    monkeypatch.setattr(
+        paid_ledger_binding_module,
+        "require_persistent_budget_matches_trusted_ledger",
+        _REAL_PAID_LEDGER_REQUIRE,
+    )
+
+    with pytest.raises(ValueError, match="ledger|trusted|persistent|budget"):
+        _REAL_PAID_LEDGER_REQUIRE(
+            budget=BudgetSummary.model_validate(
+                payload["summary"]["budget"]
+            ),
+            label="dev_repeat",
+        )

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import time
 import unicodedata
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal, Protocol, Sequence
@@ -23,7 +23,7 @@ from app.agent.openai_compatible import (
     Message,
     ModelAdapterError,
 )
-from evals.evidence import ModelCallEvidence, ModelToolCallEvidence
+from evals.evidence import ModelCallEvidence, ModelToolCallEvidence, stable_sha256
 
 ROOT = Path(__file__).resolve().parents[1]
 SEMANTIC_JUDGE_PROMPT_PATH = (
@@ -90,6 +90,14 @@ class SemanticJudgeVerdict(StrictSemanticModel):
         default_factory=list,
         max_length=8,
     )
+
+
+def semantic_verdict_content_sha256(
+    verdict: SemanticJudgeVerdict,
+) -> str:
+    """Stable digest of the canonical judge verdict payload."""
+
+    return stable_sha256(verdict.model_dump(mode="json"))
 
 
 class SemanticJsonModel(Protocol):
@@ -242,7 +250,7 @@ def _call_evidence(
             else ()
         ),
         finish_reason=turn.finish_reason if turn is not None else None,
-        response_id=turn.response_id if turn is not None else None,
+        response_id=None,
         observed_model=turn.model if turn is not None else None,
         usage=(
             dict(turn.usage)
@@ -488,6 +496,34 @@ def evaluate_semantic_contract(
             str(exc),
             model_calls=(evidence,),
         ) from exc
+    evidence = replace(
+        evidence,
+        response_content_sha256=semantic_verdict_content_sha256(
+            verdict
+        ),
+    )
+    digest = evidence.response_content_sha256
+    assert digest is not None
+    binder = getattr(model, "bind_response_content_sha256", None)
+    if callable(binder):
+        if evidence.logical_call_sha256 is None:
+            raise SemanticJudgeError(
+                "SEMANTIC_JUDGE_PROTOCOL_ERROR",
+                "The semantic judge response lacks a logical-call digest.",
+                model_calls=(evidence,),
+            )
+        try:
+            binder(
+                logical_call_sha256=evidence.logical_call_sha256,
+                response_content_sha256=digest,
+            )
+        except Exception as exc:
+            raise SemanticJudgeError(
+                "SEMANTIC_JUDGE_PROTOCOL_ERROR",
+                "The semantic judge response digest could not be sealed "
+                "into the budget ledger.",
+                model_calls=(evidence,),
+            ) from exc
     return SemanticJudgeEvaluation(
         verdict=verdict,
         model_calls=(evidence,),

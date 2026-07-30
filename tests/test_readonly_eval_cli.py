@@ -179,8 +179,6 @@ def test_paid_eval_rejects_unpriced_endpoint_or_sampling_drift(
     [
         "https://api.deepseek.com",
         "https://api.deepseek.com/",
-        "https://api.deepseek.com/v1",
-        "https://api.deepseek.com/v1/",
     ],
 )
 def test_paid_eval_accepts_only_official_deepseek_compatible_urls(
@@ -192,6 +190,25 @@ def test_paid_eval_accepts_only_official_deepseek_compatible_urls(
             deepseek_temperature=0,
         )
     )
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "https://api.deepseek.com/v1",
+        "https://api.deepseek.com/v1/",
+    ],
+)
+def test_paid_eval_rejects_v1_path_like_calibration_runtime(
+    base_url: str,
+) -> None:
+    with pytest.raises(ValueError, match="official DeepSeek"):
+        run_readonly_agent_evals.validate_paid_eval_settings(
+            Settings(
+                deepseek_base_url=base_url,
+                deepseek_temperature=0,
+            )
+        )
 
 
 @pytest.mark.parametrize(

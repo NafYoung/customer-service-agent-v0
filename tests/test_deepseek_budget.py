@@ -296,6 +296,7 @@ def test_cost_over_reservation_commits_observed_cost_and_blocks_next_attempt(
         "known_cost_cny": "0.8",
         "error_code": "COST_EXCEEDS_RESERVATION",
         "completed_at": bucket["completed_at"],
+        "response_content_sha256": None,
         "count": 1,
     }
     assert datetime.fromisoformat(bucket["completed_at"]).tzinfo is not None

@@ -464,6 +464,7 @@ def test_response_crossing_price_window_is_uncertain_and_not_retried(
         "known_cost_cny": "0.0012",
         "error_code": "MODEL_PRICE_EXPIRED",
         "completed_at": bucket["completed_at"],
+        "response_content_sha256": None,
         "count": 1,
     }
     assert len(bucket["logical_call_sha256"]) == 64
@@ -540,6 +541,7 @@ def test_retryable_http_error_crossing_price_window_is_not_retried(
         "known_cost_cny": None,
         "error_code": "MODEL_PRICE_EXPIRED",
         "completed_at": bucket["completed_at"],
+        "response_content_sha256": None,
         "count": 1,
     }
 

@@ -6,7 +6,8 @@ Provider request IDs may remain in transient in-memory diagnostics, but they
 must not enter an Eval case record, semantic calibration report, integrity
 bundle, Git artifact, or public build. The anonymous
 `logical_call_sha256` is the only provider-attempt correlation identifier
-exported by these evidence paths.
+exported by these evidence paths. Provider `response_id` values are redacted
+the same way as `provider_request_id`.
 
 ## RED
 

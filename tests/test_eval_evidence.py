@@ -177,6 +177,32 @@ def test_public_model_call_schema_rejects_provider_request_identity() -> None:
         ModelCallRecord.model_validate(payload)
 
 
+def test_public_model_call_schema_rejects_provider_response_identity() -> None:
+    payload = asdict(
+        ModelCallEvidence(
+            sequence=1,
+            status="success",
+            started_at="2026-08-01T12:00:00+00:00",
+            latency_ms=1,
+            message_count=2,
+            tool_contract_count=0,
+            finish_reason="stop",
+            response_id="private-provider-response-id",
+            observed_model="deepseek-v4-flash",
+            usage={
+                "prompt_tokens": 1,
+                "completion_tokens": 1,
+                "total_tokens": 2,
+            },
+            provider_attempts=1,
+        )
+    )
+    payload["provider_request_id"] = None
+
+    with pytest.raises(ValidationError, match="response_id"):
+        ModelCallRecord.model_validate(payload)
+
+
 def test_business_state_snapshot_ignores_runtime_records_and_detects_inventory_change():
     settings = Settings(database_url="sqlite:///:memory:")
     database = Database(settings.database_url)

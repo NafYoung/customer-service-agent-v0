@@ -47,6 +47,7 @@ _SENSITIVE_KEYS = {
 }
 _NULL_ONLY_EVIDENCE_KEYS = {
     "provider_request_id",
+    "response_id",
 }
 _RUNTIME_TABLES = {"auth_sessions", "tool_events"}
 _EMAIL_PATTERN = re.compile(
@@ -87,6 +88,7 @@ class ModelCallEvidence:
     provider_attempts: int | None = None
     logical_call_sha256: str | None = None
     error_stage: str | None = None
+    response_content_sha256: str | None = None
 
 
 def model_call_evidence_record(
@@ -96,6 +98,7 @@ def model_call_evidence_record(
 
     payload = asdict(call)
     payload["provider_request_id"] = None
+    payload["response_id"] = None
     return payload
 
 

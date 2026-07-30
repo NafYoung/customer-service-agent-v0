@@ -55,6 +55,7 @@ from evals.semantic_calibration import (
     CalibrationResult,
     CalibrationSummary,
     ExpectedRelation,
+    load_calibration_fixtures,
     parse_calibration_fixtures_snapshot,
     summarize_calibration,
     validate_calibration_coverage,
@@ -64,6 +65,7 @@ from evals.semantic_judge import (
     SemanticJudgeError,
     SemanticJudgeVerdict,
     score_semantic_verdict,
+    semantic_verdict_content_sha256,
     validate_semantic_verdict_grounding,
 )
 
@@ -346,6 +348,7 @@ def _usage_cost_units(
 @dataclass(frozen=True)
 class _ValidatedCalibrationCall:
     logical_call_sha256: str
+    response_content_sha256: str
     started_at: datetime
     provider_attempts: int
     usage_cost_units: int
@@ -510,9 +513,20 @@ def _validate_result(
         or isinstance(call.provider_attempts, bool)
         or call.provider_attempts != 1
         or call.logical_call_sha256 is None
+        or call.response_content_sha256 is None
+        or call.response_id is not None
+        or call.provider_request_id is not None
     ):
         raise CalibrationAttestationError(
             "A calibration model call has invalid model or protocol evidence."
+        )
+    expected_response_digest = semantic_verdict_content_sha256(
+        record.verdict
+    )
+    if call.response_content_sha256 != expected_response_digest:
+        raise CalibrationAttestationError(
+            "A calibration model call response digest does not match the "
+            "bound verdict content."
         )
     if (
         call.started_at.tzinfo is None
@@ -541,6 +555,7 @@ def _validate_result(
     )
     return _ValidatedCalibrationCall(
         logical_call_sha256=call.logical_call_sha256,
+        response_content_sha256=call.response_content_sha256,
         started_at=call.started_at,
         provider_attempts=call.provider_attempts,
         usage_cost_units=usage_cost_units,
@@ -573,6 +588,7 @@ def _attempt_bucket_identity(
             if bucket.completed_at is not None
             else None
         ),
+        bucket.response_content_sha256,
         bucket.count,
     )
 
@@ -647,6 +663,9 @@ def _require_trusted_ledger_matches_report(
             or bucket.known_cost_cny is None
             or cny_to_units(Decimal(bucket.known_cost_cny))
             != call.usage_cost_units
+            or bucket.response_content_sha256 is None
+            or bucket.response_content_sha256
+            != call.response_content_sha256
             or bucket.error_code is not None
             or bucket.completed_at is None
             or bucket.completed_at < call.started_at
@@ -972,11 +991,78 @@ def validate_calibration_attestation(
     )
 
 
+def _replay_reviewed_calibration_item(
+    *,
+    item: CalibrationReviewItem,
+    record: CalibrationResultRecord,
+    fixture: CalibrationFixture,
+    case: ReadonlyEvalCase,
+) -> None:
+    """Machine-replay one review sample against fixtures and report verdicts."""
+
+    contract = case.expected.semantic_contract
+    if contract is None or record.verdict is None:
+        raise CalibrationAttestationError(
+            "A calibration review sample is missing its semantic verdict."
+        )
+    if (
+        record.fixture_id != fixture.fixture_id
+        or record.case_id != fixture.case_id
+        or record.kind != fixture.kind
+        or item.fixture_id != fixture.fixture_id
+    ):
+        raise CalibrationAttestationError(
+            "A calibration review sample does not match its fixture identity."
+        )
+    observed_relations = {
+        claim.id: claim.relation
+        for claim in record.verdict.claims
+    }
+    if observed_relations != fixture.effective_expected_relations:
+        raise CalibrationAttestationError(
+            "A calibration review sample relations do not match the fixture."
+        )
+    if (
+        record.verdict.material_self_contradiction
+        is not fixture.expected_material_self_contradiction
+    ):
+        raise CalibrationAttestationError(
+            "A calibration review sample contradiction label does not match "
+            "the fixture."
+        )
+    try:
+        validate_semantic_verdict_grounding(
+            verdict=record.verdict,
+            contract=contract,
+            assistant_answer=fixture.assistant_answer,
+        )
+        validate_calibration_verdict_grounding(
+            fixture=fixture,
+            verdict=record.verdict,
+        )
+    except SemanticJudgeError as exc:
+        raise CalibrationAttestationError(
+            "A calibration review sample failed grounding replay."
+        ) from exc
+    score = score_semantic_verdict(
+        contract=contract,
+        verdict=record.verdict,
+    )
+    if score.passed is not fixture.expected_gate_pass:
+        raise CalibrationAttestationError(
+            "A calibration review sample gate outcome does not match the "
+            "fixture."
+        )
+
+
 def validate_calibration_review(
     *,
     review_path: Path,
     attestation: ValidatedCalibrationAttestation,
+    report_path: Path,
     now: datetime | None = None,
+    fixture_path: Path = CANONICAL_FIXTURE_PATH,
+    case_dir: Path = CANONICAL_CASE_DIR,
 ) -> ValidatedCalibrationReview:
     """Bind an independent sample review to one immutable calibration report."""
 
@@ -1000,6 +1086,46 @@ def validate_calibration_review(
         raise CalibrationAttestationError(
             "The review does not reference the validated calibration report."
         )
+    try:
+        require_private_regular_file(
+            report_path,
+            label="calibration report",
+        )
+        report_payload, report_sha256 = read_json_object_snapshot(
+            report_path,
+            label="calibration report",
+        )
+        report = CalibrationReport.model_validate(report_payload)
+    except (FileSnapshotError, ValidationError) as exc:
+        raise CalibrationAttestationError(
+            "The calibration review could not reopen its bound report."
+        ) from exc
+    if report_sha256 != attestation.report_sha256:
+        raise CalibrationAttestationError(
+            "The review report path does not match the validated report hash."
+        )
+    if (
+        fixture_path.resolve() != CANONICAL_FIXTURE_PATH.resolve()
+        or case_dir.resolve() != CANONICAL_CASE_DIR.resolve()
+    ):
+        raise CalibrationAttestationError(
+            "The trusted calibration review requires canonical paths."
+        )
+    try:
+        fixtures = load_calibration_fixtures(CANONICAL_FIXTURE_PATH)
+        cases = load_cases(CANONICAL_CASE_DIR)
+        validate_calibration_coverage(fixtures=fixtures, cases=cases)
+    except (OSError, ValueError) as exc:
+        raise CalibrationAttestationError(
+            "The canonical calibration corpus failed review replay."
+        ) from exc
+    fixture_by_id = {
+        fixture.fixture_id: fixture for fixture in fixtures
+    }
+    case_by_id = {case.case_id: case for case in cases}
+    result_by_id = {
+        record.fixture_id: record for record in report.results
+    }
     checked_at = now or datetime.now(UTC)
     if (
         checked_at.tzinfo is None
@@ -1028,6 +1154,24 @@ def validate_calibration_review(
         raise CalibrationAttestationError(
             "The independent calibration review missed its "
             "deterministic stratified sample."
+        )
+    for item in review.items:
+        record = result_by_id.get(item.fixture_id)
+        fixture = fixture_by_id.get(item.fixture_id)
+        if record is None or fixture is None:
+            raise CalibrationAttestationError(
+                "A calibration review sample is missing from the bound report."
+            )
+        case = case_by_id.get(record.case_id)
+        if case is None:
+            raise CalibrationAttestationError(
+                "A calibration review sample references an unknown case."
+            )
+        _replay_reviewed_calibration_item(
+            item=item,
+            record=record,
+            fixture=fixture,
+            case=case,
         )
     return ValidatedCalibrationReview(
         review_sha256=review_sha256,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import os
 import platform
 import subprocess
 import uuid
@@ -144,13 +145,32 @@ def _source_fingerprints() -> dict[str, str]:
         source_root = ROOT / root_name
         if not source_root.exists():
             continue
-        paths.update(
-            path
-            for path in source_root.rglob("*")
-            if path.is_file()
-            and path.suffix in _SOURCE_SUFFIXES
-            and "__pycache__" not in path.parts
-        )
+        # followlinks=False so intermediate directory symlinks cannot pull
+        # external bytes into the source-tree digest under an in-repo path.
+        for dirpath, dirnames, filenames in os.walk(
+            source_root,
+            followlinks=False,
+        ):
+            current_dir = Path(dirpath)
+            if "__pycache__" in current_dir.parts:
+                dirnames[:] = []
+                continue
+            dirnames[:] = [
+                name
+                for name in dirnames
+                if name != "__pycache__"
+                and not (current_dir / name).is_symlink()
+            ]
+            for filename in filenames:
+                path = current_dir / filename
+                if path.is_symlink():
+                    continue
+                if (
+                    path.is_file()
+                    and path.suffix in _SOURCE_SUFFIXES
+                    and "__pycache__" not in path.parts
+                ):
+                    paths.add(path)
     paths.update(path for name in _TOP_LEVEL_SOURCES if (path := ROOT / name).is_file())
     return {
         path.relative_to(ROOT).as_posix(): _file_sha256(path) for path in sorted(paths)
@@ -784,6 +804,18 @@ def _require_completed_paid_evidence(
         or cny_to_units(Decimal(run_budget.settled_cny)) != recomputed_cost_units
     ):
         raise ValueError(f"{label} budget attempts or usage costs differ from records")
+    from evals.paid_ledger_binding import (
+        PaidLedgerBindingError,
+        require_persistent_budget_matches_trusted_ledger,
+    )
+
+    try:
+        require_persistent_budget_matches_trusted_ledger(
+            budget=validated_budget,
+            label=label,
+        )
+    except PaidLedgerBindingError as exc:
+        raise ValueError(str(exc)) from exc
 
 
 def readonly_harness_snapshot(

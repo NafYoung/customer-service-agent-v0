@@ -536,6 +536,7 @@ def test_malformed_success_crossing_price_window_reports_expiry_first(
         "known_cost_cny": None,
         "error_code": "MODEL_PRICE_EXPIRED",
         "completed_at": bucket["completed_at"],
+        "response_content_sha256": None,
         "count": 1,
     }
 

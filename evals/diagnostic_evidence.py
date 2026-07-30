@@ -411,6 +411,18 @@ def _require_paid_diagnostic(
         or cny_to_units(Decimal(run["settled_cny"])) != settled_units
     ):
         raise ValueError(f"{label} attempt buckets or usage costs differ from records")
+    from evals.paid_ledger_binding import (
+        PaidLedgerBindingError,
+        require_persistent_budget_matches_trusted_ledger,
+    )
+
+    try:
+        require_persistent_budget_matches_trusted_ledger(
+            budget=budget,
+            label=label,
+        )
+    except PaidLedgerBindingError as exc:
+        raise ValueError(str(exc)) from exc
 
 
 def require_completed_diagnostic_evidence(

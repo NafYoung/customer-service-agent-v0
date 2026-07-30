@@ -225,6 +225,39 @@ def main(argv: Sequence[str] | None = None) -> int:
         "budget": budget_report,
         "results": [asdict(result) for result in results],
     }
+    for result in results:
+        status = "PASS" if result.passed else "FAIL"
+        print(f"{result.fixture_id}: {status}")
+    print(
+        f"{summary.passed}/{summary.total} calibration fixtures matched; "
+        f"adversarial={summary.adversarial_rate:.3f}, "
+        f"positive={summary.positive_rate:.3f}."
+    )
+    if not summary.gate_passed:
+        untrusted_path = args.output_root / f"{run_id}.untrusted.json"
+        untrusted_report = {
+            "schema_version": "2.0-untrusted",
+            "attestation_kind": "semantic_judge_calibration_failed",
+            "run_id": run_id,
+            "source_git_commit": source_git_commit,
+            "started_at": started_at.isoformat(),
+            "completed_at": completed_at.isoformat(),
+            "fixture_sha256": fixture_sha256,
+            "contract_set_sha256": contract_set_sha256,
+            "harness": harness,
+            "summary": asdict(summary),
+            "budget": budget_report,
+            "results_omitted": True,
+            "failed_fixture_ids": [
+                result.fixture_id
+                for result in results
+                if not result.passed
+            ],
+        }
+        _write_private_report(untrusted_path, untrusted_report)
+        print(f"Untrusted calibration diagnostic: {untrusted_path}")
+        return 1
+
     _write_private_report(report_path, report)
     try:
         validate_calibration_attestation(
@@ -234,19 +267,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             harness_fingerprints=harness,
         )
     except CalibrationAttestationError as exc:
+        try:
+            report_path.unlink()
+        except OSError:
+            pass
         print(f"CALIBRATION ATTESTATION ERROR: {exc}")
         return 3
 
-    for result in results:
-        status = "PASS" if result.passed else "FAIL"
-        print(f"{result.fixture_id}: {status}")
-    print(
-        f"{summary.passed}/{summary.total} calibration fixtures matched; "
-        f"adversarial={summary.adversarial_rate:.3f}, "
-        f"positive={summary.positive_rate:.3f}."
-    )
     print(f"Private calibration report: {report_path}")
-    return 0 if summary.gate_passed else 1
+    return 0
 
 
 if __name__ == "__main__":

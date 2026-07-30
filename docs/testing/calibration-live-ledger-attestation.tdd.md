@@ -76,4 +76,9 @@ coverage, Ruff, 53-file Mypy, fresh contracts, and Reference Eval 8/8.
 - Tests use temporary ledgers or a monkeypatched trusted loader only.
 - No real provider call, `.env`, fixed private ledger, or holdout corpus is
   accessed.
-- No SQLite schema migration or response-content hash is in scope.
+- No SQLite schema migration is in scope for unrelated tables; calibration and
+  paid ledgers may store nullable `response_content_sha256` on settled attempts.
+- Calibration attestation binds each model call's `response_content_sha256` to
+  the canonical JSON digest of the report verdict **and** to the digest sealed
+  into the trusted ledger attempt. Rewriting both `results[].verdict` and the
+  report-side digests still fails when the ledger retains the original digest.

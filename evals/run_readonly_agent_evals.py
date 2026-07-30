@@ -15,6 +15,8 @@ from urllib.parse import urlparse
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+import httpx
+
 from app.agent.deepseek_budget import (
     BudgetError,
     DeepSeekBudgetGuard,
@@ -178,6 +180,9 @@ class ValidatedFormalExecutionCapability:
     budget_report_provider: Callable[[], dict]
     frozen_harness: FrozenReadonlyHarness
     frozen_harness_entity_sha256: str
+    sealed_httpx_client_id: int
+    sealed_budget_ledger_id: int
+    sealed_budget_price_snapshot_id: int
     _sentinel: object
 
 
@@ -232,10 +237,48 @@ def _require_bound_formal_runtime_objects(
     semantic_judge_model: object,
     budget_guard: object,
     budget_report_provider: object,
-) -> None:
+    sealed_httpx_client_id: int | None = None,
+    sealed_budget_ledger_id: int | None = None,
+    sealed_budget_price_snapshot_id: int | None = None,
+) -> tuple[int, int, int]:
     if (
         type(model) is not OpenAICompatibleChatClient
         or type(budget_guard) is not DeepSeekBudgetGuard
+    ):
+        raise ValueError(
+            "holdout_formal requires a validated formal execution capability"
+        )
+    live_client = getattr(model, "_client", None)
+    live_transport_mode = OpenAICompatibleChatClient.transport_mode_for_client(
+        live_client
+    )
+    live_ledger = getattr(budget_guard, "_ledger", None)
+    live_price_snapshot = getattr(budget_guard, "_price_snapshot", None)
+    if (
+        type(live_client) is not httpx.Client
+        or live_transport_mode != "default"
+        or live_ledger is None
+        or live_price_snapshot is None
+    ):
+        raise ValueError(
+            "holdout_formal requires a validated formal execution capability"
+        )
+    client_id = id(live_client)
+    ledger_id = id(live_ledger)
+    price_snapshot_id = id(live_price_snapshot)
+    if (
+        (
+            sealed_httpx_client_id is not None
+            and client_id != sealed_httpx_client_id
+        )
+        or (
+            sealed_budget_ledger_id is not None
+            and ledger_id != sealed_budget_ledger_id
+        )
+        or (
+            sealed_budget_price_snapshot_id is not None
+            and price_snapshot_id != sealed_budget_price_snapshot_id
+        )
     ):
         raise ValueError(
             "holdout_formal requires a validated formal execution capability"
@@ -268,6 +311,10 @@ def _require_bound_formal_runtime_objects(
         is not DeepSeekBudgetGuard.snapshot
         or OpenAICompatibleChatClient.public_runtime_config(model)
         != deepseek_public_runtime_config(settings)
+        or OpenAICompatibleChatClient.public_runtime_config(model).get(
+            "transport_mode"
+        )
+        != "default"
         or not OpenAICompatibleChatClient.uses_budget_guard(
             model,
             budget_guard,
@@ -276,6 +323,7 @@ def _require_bound_formal_runtime_objects(
         raise ValueError(
             "holdout_formal requires a validated formal execution capability"
         )
+    return client_id, ledger_id, price_snapshot_id
 
 
 def _formal_case_set_sha256(
@@ -411,7 +459,11 @@ def _create_validated_formal_execution_capability(
     try:
         validate_paid_eval_settings(settings)
         require_canonical_calibration_runtime(settings)
-        _require_bound_formal_runtime_objects(
+        (
+            sealed_httpx_client_id,
+            sealed_budget_ledger_id,
+            sealed_budget_price_snapshot_id,
+        ) = _require_bound_formal_runtime_objects(
             settings=settings,
             model=model,
             semantic_judge_model=semantic_judge_model,
@@ -458,6 +510,9 @@ def _create_validated_formal_execution_capability(
         budget_report_provider=budget_report_provider,
         frozen_harness=frozen_harness,
         frozen_harness_entity_sha256=harness_entity_sha256,
+        sealed_httpx_client_id=sealed_httpx_client_id,
+        sealed_budget_ledger_id=sealed_budget_ledger_id,
+        sealed_budget_price_snapshot_id=sealed_budget_price_snapshot_id,
         _sentinel=_FORMAL_EXECUTION_CAPABILITY_SENTINEL,
     )
     _ISSUED_FORMAL_EXECUTION_CAPABILITIES[id(capability)] = capability
@@ -507,6 +562,11 @@ def _consume_validated_formal_execution_capability(
             semantic_judge_model=semantic_judge_model,
             budget_guard=capability.budget_guard,
             budget_report_provider=budget_report_provider,
+            sealed_httpx_client_id=capability.sealed_httpx_client_id,
+            sealed_budget_ledger_id=capability.sealed_budget_ledger_id,
+            sealed_budget_price_snapshot_id=(
+                capability.sealed_budget_price_snapshot_id
+            ),
         )
         if (
             _frozen_harness_entity_sha256(capability.frozen_harness)
@@ -742,7 +802,7 @@ def validate_paid_eval_settings(settings: Settings) -> None:
         or endpoint.password is not None
         or endpoint.query
         or endpoint.fragment
-        or endpoint.path.rstrip("/") not in {"", "/v1"}
+        or endpoint.path.rstrip("/") not in {""}
     ):
         raise ValueError("Paid Eval requires the official DeepSeek HTTPS endpoint.")
     if settings.deepseek_temperature != 0:
@@ -1269,6 +1329,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             calibration_review = validate_calibration_review(
                 review_path=args.calibration_review,
                 attestation=calibration_attestation,
+                report_path=args.calibration_report,
             )
             regression_gate = validate_regression_gate(
                 bundle_path=args.regression_bundle,

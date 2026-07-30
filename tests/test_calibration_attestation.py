@@ -5,7 +5,7 @@ import json
 import math
 from copy import deepcopy
 from dataclasses import asdict
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
@@ -33,6 +33,10 @@ from evals.semantic_calibration import (
     load_calibration_fixtures,
     summarize_calibration,
     validate_calibration_coverage,
+)
+from evals.semantic_judge import (
+    SemanticJudgeVerdict,
+    semantic_verdict_content_sha256,
 )
 
 FIXTURE_PATH = Path("evals/semantic_judge_calibration_cases.jsonl")
@@ -71,6 +75,7 @@ def _trusted_test_budget_loader(
             "test_calibration_attestation_rejects_synthetic_report_without_live_ledger",
             "test_calibration_attestation_rejects_untrusted_ledger",
             "test_calibration_attestation_accepts_matching_temporary_ledger",
+            "test_independent_review_rejects_go_when_report_verdicts_mismatch_fixtures",
         )
     ):
         return
@@ -150,6 +155,7 @@ def _model_call(
     model_name: str,
     *,
     logical_call_hash: str,
+    response_content_sha256: str,
 ) -> dict[str, object]:
     return {
         "sequence": 1,
@@ -161,7 +167,7 @@ def _model_call(
         "phase": "semantic_judge",
         "tool_calls": [],
         "finish_reason": "stop",
-        "response_id": "calibration-response",
+        "response_id": None,
         "observed_model": model_name,
         "usage": {
             "prompt_tokens": 10,
@@ -173,6 +179,7 @@ def _model_call(
         "provider_request_id": None,
         "provider_attempts": 1,
         "logical_call_sha256": logical_call_hash,
+        "response_content_sha256": response_content_sha256,
     }
 
 
@@ -193,7 +200,11 @@ def _canonical_price_summary() -> dict[str, object]:
     }
 
 
-def _settled_budget(attempt_count: int) -> dict[str, object]:
+def _settled_budget(
+    attempt_count: int,
+    *,
+    response_digests: list[str] | None = None,
+) -> dict[str, object]:
     settled = Decimal(attempt_count) * Decimal("0.00002")
     settled_cny = format(settled, "f")
     snapshot = {
@@ -221,6 +232,11 @@ def _settled_budget(attempt_count: int) -> dict[str, object]:
             "known_cost_cny": "0.00002",
             "error_code": None,
             "completed_at": "2026-08-01T12:04:59+00:00",
+            "response_content_sha256": (
+                response_digests[index]
+                if response_digests is not None
+                else None
+            ),
             "count": 1,
         }
         for index in range(attempt_count)
@@ -259,32 +275,40 @@ def _valid_report() -> dict[str, object]:
         deepseek_model="deepseek-v4-flash",
         deepseek_temperature=0,
     )
-    results = [
-        CalibrationResult(
-            fixture_id=fixture.fixture_id,
-            case_id=fixture.case_id,
-            kind=fixture.kind,
-            expected_gate_pass=fixture.expected_gate_pass,
-            observed_gate_pass=fixture.expected_gate_pass,
-            exact_relations_match=True,
-            contradiction_match=True,
-            passed=True,
-            error_code=None,
-            observed_relations=dict(
-                fixture.effective_expected_relations
-            ),
-            verdict=_verdict_for_fixture(fixture),
-            model_calls=(
-                _model_call(
-                    settings.deepseek_model,
-                    logical_call_hash=(
-                        _synthetic_logical_call_sha256(index)
+    results: list[CalibrationResult] = []
+    digests: list[str] = []
+    for index, fixture in enumerate(fixtures):
+        verdict = _verdict_for_fixture(fixture)
+        digest = semantic_verdict_content_sha256(
+            SemanticJudgeVerdict.model_validate(verdict)
+        )
+        digests.append(digest)
+        results.append(
+            CalibrationResult(
+                fixture_id=fixture.fixture_id,
+                case_id=fixture.case_id,
+                kind=fixture.kind,
+                expected_gate_pass=fixture.expected_gate_pass,
+                observed_gate_pass=fixture.expected_gate_pass,
+                exact_relations_match=True,
+                contradiction_match=True,
+                passed=True,
+                error_code=None,
+                observed_relations=dict(
+                    fixture.effective_expected_relations
+                ),
+                verdict=verdict,
+                model_calls=(
+                    _model_call(
+                        settings.deepseek_model,
+                        logical_call_hash=(
+                            _synthetic_logical_call_sha256(index)
+                        ),
+                        response_content_sha256=digest,
                     ),
                 ),
-            ),
+            )
         )
-        for index, fixture in enumerate(fixtures)
-    ]
     return {
         "schema_version": "2.0",
         "attestation_kind": "semantic_judge_holdout_eligibility",
@@ -296,7 +320,7 @@ def _valid_report() -> dict[str, object]:
         "contract_set_sha256": canonical_contract_set_sha256(cases),
         "harness": current_readonly_harness_fingerprints(settings),
         "summary": asdict(summarize_calibration(results)),
-        "budget": _settled_budget(len(fixtures)),
+        "budget": _settled_budget(len(fixtures), response_digests=digests),
         "results": [asdict(result) for result in results],
     }
 
@@ -314,6 +338,7 @@ def _matching_temporary_calibration_ledger(
     *,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    report_digests: list[str] | None = None,
 ) -> tuple[Path, dict[str, object], datetime]:
     fixed_now = datetime(2026, 8, 1, 12, tzinfo=UTC)
 
@@ -353,6 +378,7 @@ def _matching_temporary_calibration_ledger(
             ),
             attempt_number=1,
         )
+        digest = report_digests[index] if report_digests else None
         guard.settle_attempt(
             reservation=reservation,
             usage={
@@ -361,6 +387,7 @@ def _matching_temporary_calibration_ledger(
                 "total_tokens": 15,
             },
             provider_request_id=None,
+            response_content_sha256=digest,
         )
     guard.close()
     return ledger_path, guard.snapshot(), fixed_now
@@ -371,10 +398,20 @@ def _report_with_matching_temporary_ledger(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> tuple[Path, Path, datetime]:
+    fixtures = load_calibration_fixtures(FIXTURE_PATH)
+    digests = [
+        semantic_verdict_content_sha256(
+            SemanticJudgeVerdict.model_validate(
+                _verdict_for_fixture(fixture)
+            )
+        )
+        for fixture in fixtures
+    ]
     ledger_path, budget, fixed_now = (
         _matching_temporary_calibration_ledger(
             tmp_path=tmp_path,
             monkeypatch=monkeypatch,
+            report_digests=digests,
         )
     )
     report = _valid_report()
@@ -1214,6 +1251,7 @@ def test_independent_review_is_bound_and_samples_ten_percent(
     validated_review = validate_calibration_review(
         review_path=review_path,
         attestation=attestation,
+        report_path=report_path,
         now=datetime(2026, 8, 1, 13, tzinfo=UTC),
     )
 
@@ -1229,6 +1267,7 @@ def test_independent_review_is_bound_and_samples_ten_percent(
         validate_calibration_review(
             review_path=_write_json(tmp_path / "too-small.json", too_small),
             attestation=attestation,
+            report_path=report_path,
             now=datetime(2026, 8, 1, 13, tzinfo=UTC),
         )
 
@@ -1244,6 +1283,7 @@ def test_independent_review_is_bound_and_samples_ten_percent(
                 wrong_report,
             ),
             attestation=attestation,
+            report_path=report_path,
             now=datetime(2026, 8, 1, 13, tzinfo=UTC),
         )
 
@@ -1256,7 +1296,273 @@ def test_independent_review_is_bound_and_samples_ten_percent(
                 before_report,
             ),
             attestation=attestation,
+            report_path=report_path,
             now=datetime(2026, 8, 1, 13, tzinfo=UTC),
+        )
+
+
+def _apply_fixture_valid_digest_divergent_rewrite(
+    report: dict[str, object],
+) -> dict[str, object]:
+    """Mutate one result to another fixture-valid verdict with a new digest."""
+
+    from evals.semantic_calibration import (
+        validate_calibration_verdict_grounding,
+    )
+    from evals.semantic_judge import validate_semantic_verdict_grounding
+
+    fixtures = load_calibration_fixtures(FIXTURE_PATH)
+    cases = {case.case_id: case for case in load_cases(CASE_DIR)}
+    results = report["results"]
+    assert isinstance(results, list)
+    for index, fixture in enumerate(fixtures):
+        case = cases[fixture.case_id]
+        contract = case.expected.semantic_contract
+        assert contract is not None
+        base = _verdict_for_fixture(fixture)
+        for claim in base["claims"]:
+            regions = fixture.acceptable_evidence_regions.get(
+                claim["id"],
+                [],
+            )
+            if (
+                claim["relation"] in {"not_mentioned"}
+                or len(regions) < 2
+            ):
+                continue
+            rewritten = {
+                "claims": [dict(item) for item in base["claims"]],
+                "material_self_contradiction": base[
+                    "material_self_contradiction"
+                ],
+                "contradiction_evidence": list(
+                    base["contradiction_evidence"]
+                ),
+            }
+            for item in rewritten["claims"]:
+                if item["id"] == claim["id"]:
+                    item["evidence_spans"] = [regions[1]]
+                    break
+            try:
+                verdict = SemanticJudgeVerdict.model_validate(rewritten)
+                validate_semantic_verdict_grounding(
+                    verdict=verdict,
+                    contract=contract,
+                    assistant_answer=fixture.assistant_answer,
+                )
+                validate_calibration_verdict_grounding(
+                    fixture=fixture,
+                    verdict=verdict,
+                )
+            except Exception:
+                continue
+            result = results[index]
+            assert isinstance(result, dict)
+            result["verdict"] = rewritten
+            result["observed_relations"] = {
+                item["id"]: item["relation"]
+                for item in rewritten["claims"]
+            }
+            return result
+    pytest.skip("no fixture with an alternate grounded evidence region")
+
+
+def test_calibration_attestation_rejects_rewritten_verdict_keeping_stale_response_digest(
+    tmp_path: Path,
+) -> None:
+    """P1-1: real call digests cannot be reused after verdict rewrite."""
+
+    report = _valid_report()
+    result = _apply_fixture_valid_digest_divergent_rewrite(report)
+    original_digest = result["model_calls"][0]["response_content_sha256"]
+    assert isinstance(result["verdict"], dict)
+    assert (
+        semantic_verdict_content_sha256(
+            SemanticJudgeVerdict.model_validate(result["verdict"])
+        )
+        != original_digest
+    )
+
+    with pytest.raises(
+        CalibrationAttestationError,
+        match="response digest|verdict content|protocol",
+    ):
+        validate_calibration_attestation(
+            report_path=_write_json(
+                tmp_path / "rewritten-verdict.json",
+                report,
+            ),
+            settings=Settings(
+                deepseek_model="deepseek-v4-flash",
+                deepseek_temperature=0,
+            ),
+            now=datetime(2026, 8, 1, 13, tzinfo=UTC),
+        )
+
+
+def test_calibration_attestation_rejects_dual_rewrite_of_verdict_and_digest(
+    tmp_path: Path,
+) -> None:
+    """P1-1: rewriting BOTH verdict and report digest still fails vs ledger."""
+
+    report = _valid_report()
+    result = _apply_fixture_valid_digest_divergent_rewrite(report)
+    assert isinstance(result["verdict"], dict)
+    new_digest = semantic_verdict_content_sha256(
+        SemanticJudgeVerdict.model_validate(result["verdict"])
+    )
+    result["model_calls"][0]["response_content_sha256"] = new_digest
+    call_hash = result["model_calls"][0]["logical_call_sha256"]
+    budget = report["budget"]
+    assert isinstance(budget, dict)
+    for scope in ("run", "cumulative"):
+        for bucket in budget["attempt_evidence"][scope]:
+            if bucket["logical_call_sha256"] == call_hash:
+                bucket["response_content_sha256"] = new_digest
+
+    with pytest.raises(
+        CalibrationAttestationError,
+        match="ledger|response|digest|attempt",
+    ):
+        validate_calibration_attestation(
+            report_path=_write_json(
+                tmp_path / "dual-rewritten.json",
+                report,
+            ),
+            settings=Settings(
+                deepseek_model="deepseek-v4-flash",
+                deepseek_temperature=0,
+            ),
+            now=datetime(2026, 8, 1, 13, tzinfo=UTC),
+        )
+
+
+def test_calibration_attestation_rejects_missing_response_content_digest(
+    tmp_path: Path,
+) -> None:
+    report = _valid_report()
+    report["results"][0]["model_calls"][0].pop("response_content_sha256")
+
+    with pytest.raises(
+        CalibrationAttestationError,
+        match="response|protocol|model call",
+    ):
+        validate_calibration_attestation(
+            report_path=_write_json(
+                tmp_path / "missing-response-digest.json",
+                report,
+            ),
+            settings=Settings(
+                deepseek_model="deepseek-v4-flash",
+                deepseek_temperature=0,
+            ),
+            now=datetime(2026, 8, 1, 13, tzinfo=UTC),
+        )
+
+
+def test_independent_review_rejects_go_when_report_verdicts_mismatch_fixtures(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """P1-2: Literal[True] review checkboxes cannot paper over bad verdicts."""
+
+    settings = Settings(
+        deepseek_model="deepseek-v4-flash",
+        deepseek_temperature=0,
+    )
+    ledger_path, good_report_path, fixed_now = (
+        _report_with_matching_temporary_ledger(
+            tmp_path=tmp_path,
+            monkeypatch=monkeypatch,
+        )
+    )
+    monkeypatch.setattr(
+        calibration_attestation_module,
+        "DEFAULT_BUDGET_LEDGER",
+        ledger_path,
+        raising=False,
+    )
+    attestation = validate_calibration_attestation(
+        report_path=good_report_path,
+        settings=settings,
+        now=fixed_now + timedelta(hours=1),
+    )
+    tampered = json.loads(good_report_path.read_text(encoding="utf-8"))
+    target = tampered["results"][0]
+    target_id = target["fixture_id"]
+    claim = target["verdict"]["claims"][0]
+    original_relation = claim["relation"]
+    claim["relation"] = (
+        "not_mentioned"
+        if original_relation != "not_mentioned"
+        else "entailed"
+    )
+    if claim["relation"] == "not_mentioned":
+        claim["evidence_spans"] = []
+    else:
+        fixture = next(
+            item
+            for item in load_calibration_fixtures(FIXTURE_PATH)
+            if item.fixture_id == target_id
+        )
+        regions = fixture.acceptable_evidence_regions[claim["id"]]
+        claim["evidence_spans"] = [regions[0]]
+    target["observed_relations"] = {
+        item["id"]: item["relation"]
+        for item in target["verdict"]["claims"]
+    }
+    target["model_calls"][0]["response_content_sha256"] = (
+        semantic_verdict_content_sha256(
+            SemanticJudgeVerdict.model_validate(target["verdict"])
+        )
+    )
+    tampered_path = _write_json(tmp_path / "tampered-report.json", tampered)
+    forged_attestation = type(attestation)(
+        report_sha256=_file_sha256(tampered_path),
+        run_id=attestation.run_id,
+        source_git_commit=attestation.source_git_commit,
+        fixture_sha256=attestation.fixture_sha256,
+        contract_set_sha256=attestation.contract_set_sha256,
+        harness_sha256=attestation.harness_sha256,
+        result_count=attestation.result_count,
+        fixture_ids=attestation.fixture_ids,
+        fixture_kinds=attestation.fixture_kinds,
+        completed_at=attestation.completed_at,
+    )
+    required_ids = list(required_review_fixture_ids(forged_attestation))
+    review_ids = list(dict.fromkeys([*required_ids, target_id]))
+    review = {
+        "schema_version": "1.0",
+        "calibration_report_sha256": forged_attestation.report_sha256,
+        "reviewer_id": "independent-semantic-reviewer-v1",
+        "reviewed_at": "2026-08-01T12:30:00+00:00",
+        "conclusion": "GO",
+        "implementation_independence_declared": True,
+        "items": [
+            {
+                "fixture_id": fixture_id,
+                "relations_match": True,
+                "grounding_valid": True,
+                "contradiction_label_matches": True,
+                "notes": "Independently checked against the public fixture.",
+            }
+            for fixture_id in review_ids
+        ],
+        "notes": "Grounding and expected relations independently checked.",
+    }
+
+    with pytest.raises(
+        CalibrationAttestationError,
+        match="relations|contradiction|grounding|fixture|replay",
+    ):
+        validate_calibration_review(
+            review_path=_write_json(
+                tmp_path / "forged-go-review.json",
+                review,
+            ),
+            attestation=forged_attestation,
+            report_path=tampered_path,
+            now=fixed_now + timedelta(hours=1),
         )
 
 

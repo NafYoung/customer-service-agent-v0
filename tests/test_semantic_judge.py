@@ -10,6 +10,7 @@ from evals.semantic_judge import (
     SemanticContract,
     SemanticJudgeError,
     evaluate_semantic_contract,
+    semantic_verdict_content_sha256,
 )
 
 
@@ -137,6 +138,11 @@ def test_semantic_judge_requires_exact_grounded_atomic_claims():
     assert evaluation.verdict.material_self_contradiction is False
     assert len(evaluation.model_calls) == 1
     assert evaluation.model_calls[0].phase == "semantic_judge"
+    assert evaluation.model_calls[0].response_id is None
+    assert (
+        evaluation.model_calls[0].response_content_sha256
+        == semantic_verdict_content_sha256(evaluation.verdict)
+    )
     serialized_judge_request = json.dumps(
         judge.calls,
         ensure_ascii=False,
@@ -200,7 +206,7 @@ def test_non_string_judge_content_fails_closed_with_evidence(
     ]
     judge_call = result.model_calls[-1]
     assert judge_call.status == "success"
-    assert judge_call.response_id == "judge-response"
+    assert judge_call.response_id is None
     assert judge_call.usage == {"total_tokens": 3}
 
 

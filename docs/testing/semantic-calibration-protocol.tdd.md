@@ -125,3 +125,43 @@ make verify PYTHON=.venv/bin/python
 460 passed; total branch coverage 82.86%; contracts fresh;
 Ruff and Mypy passed; pip-audit reported no known vulnerabilities.
 ```
+
+## Follow-up: response-content binding and review replay
+
+Independent Phase 2 re-audit (`docs/testing/phase2-fresh-reaudit-semantic-evidence-a10facb.md`)
+found two P1 gaps: attestation did not bind judge response content, and
+independent review accepted `Literal[True]` checkboxes without replaying
+fixtures.
+
+### RED
+
+Focused attacks (before production changes):
+
+- Rewrite fixture-matching verdicts while keeping original model-call digests
+  and live-ledger attempt hashes → attestation still passed.
+- Issue a GO review with the deterministic stratified sample ids while the
+  bound report verdicts no longer match fixtures → review still passed.
+
+### GREEN
+
+- `evaluate_semantic_contract` records `response_content_sha256` as the
+  canonical digest of the parsed verdict and seals it into the settled budget
+  ledger attempt when a budget guard is attached.
+- `validate_calibration_attestation` recomputes that digest from the report
+  verdict, requires equality with the bound model-call digest, and requires the
+  trusted ledger attempt to carry the same digest.
+- `validate_calibration_review` reopens the bound report and machine-replays
+  each sampled fixture for relations, grounding/evidence regions, and
+  contradiction labels.
+- Failed calibration runs write only a stripped `*.untrusted.json` diagnostic;
+  attestation failure deletes the attestable schema-v2 report.
+
+Focused offline checks:
+
+```text
+.venv/bin/python -m pytest -q \
+  tests/test_calibration_attestation.py \
+  tests/test_semantic_calibration_cli.py \
+  tests/test_semantic_judge.py::test_semantic_judge_requires_exact_grounded_atomic_claims \
+  --tb=short
+```
