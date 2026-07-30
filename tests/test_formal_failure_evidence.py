@@ -62,8 +62,8 @@ def _context(*, run_id: str = "formal-failed-20260729-a1") -> FormalFailureConte
     return FormalFailureContext.model_validate(
         {
             "run_id": run_id,
-            "created_at": "2026-07-29T16:00:00+00:00",
-            "failed_at": "2026-07-29T16:00:03+00:00",
+            "created_at": "2026-08-01T16:00:00+00:00",
+            "failed_at": "2026-08-01T16:00:03+00:00",
             "failure_stage": "suite_execution",
             "failure_code": "MODEL_HTTP_ERROR",
             "max_output_tokens": 1024,
@@ -103,7 +103,7 @@ def _case_record(
     status: str = "passed",
 ) -> dict[str, object]:
     scores = {category: status == "passed" for category in SCORE_CATEGORIES}
-    completed_at = datetime(2026, 7, 29, 16, 0, trial, tzinfo=UTC)
+    completed_at = datetime(2026, 8, 1, 16, 0, trial, tzinfo=UTC)
     return {
         "schema_version": "1.0",
         "case_id": case_id,
@@ -169,7 +169,7 @@ def _persistent_budget_report(
                     "reserved_cny": format(reservation, "f"),
                     "known_cost_cny": None,
                     "error_code": "MODEL_HTTP_ERROR",
-                    "completed_at": "2026-07-29T16:00:01+00:00",
+                    "completed_at": "2026-08-01T16:00:01+00:00",
                     "count": attempt_count,
                 }
             )
@@ -186,7 +186,7 @@ def _persistent_budget_report(
                         "reserved_cny": format(reservation, "f"),
                         "known_cost_cny": None,
                         "error_code": "MODEL_HTTP_ERROR",
-                        "completed_at": "2026-07-29T16:00:01+00:00",
+                        "completed_at": "2026-08-01T16:00:01+00:00",
                         "count": attempt_count - 1,
                     }
                 )
@@ -203,7 +203,7 @@ def _persistent_budget_report(
                         "f",
                     ),
                     "error_code": "MODEL_HTTP_ERROR",
-                    "completed_at": "2026-07-29T16:00:01+00:00",
+                    "completed_at": "2026-08-01T16:00:01+00:00",
                     "count": 1,
                 }
             )
@@ -233,8 +233,8 @@ def _persistent_budget_report(
             "model": price["model"],
             "price_sha256": price["snapshot_sha256"],
             "status": "completed",
-            "started_at": "2026-07-29T15:59:00+00:00",
-            "completed_at": "2026-07-29T16:00:02+00:00",
+            "started_at": "2026-08-01T15:59:00+00:00",
+            "completed_at": "2026-08-01T16:00:02+00:00",
         },
         "price": price,
         "reservation_cny_per_attempt": "1.002048",
@@ -267,13 +267,13 @@ def _budget_report_with_attempt_buckets(
             bucket.setdefault("error_code", "MODEL_HTTP_ERROR")
             bucket.setdefault(
                 "completed_at",
-                "2026-07-29T16:00:01+00:00",
+                "2026-08-01T16:00:01+00:00",
             )
         else:
             bucket.setdefault("error_code", None)
             bucket.setdefault(
                 "completed_at",
-                "2026-07-29T16:00:01+00:00",
+                "2026-08-01T16:00:01+00:00",
             )
         normalized_buckets.append(bucket)
     committed = Decimal("0")
@@ -370,7 +370,7 @@ def _model_error_with_attempts(
     return {
         "sequence": 1,
         "status": "error",
-        "started_at": "2026-07-29T15:59:59+00:00",
+        "started_at": "2026-08-01T15:59:59+00:00",
         "latency_ms": 20,
         "message_count": 2,
         "tool_contract_count": 6,
@@ -397,7 +397,7 @@ def _successful_model_call_with_usage(
     return {
         "sequence": 1,
         "status": "success",
-        "started_at": "2026-07-29T15:59:59+00:00",
+        "started_at": "2026-08-01T15:59:59+00:00",
         "latency_ms": 20,
         "message_count": 2,
         "tool_contract_count": 6,
@@ -723,7 +723,7 @@ def test_failed_attempt_accepts_canonical_usage_matched_to_ledger_bucket(
                 "reserved_cny": "1.002048",
                 "known_cost_cny": "0.000001",
                 "error_code": None,
-                "completed_at": "2026-07-29T16:00:01+00:00",
+                "completed_at": "2026-08-01T16:00:01+00:00",
                 "count": 1,
             }
         ],
@@ -735,7 +735,7 @@ def test_failed_attempt_accepts_canonical_usage_matched_to_ledger_bucket(
                 "reserved_cny": "1.002048",
                 "known_cost_cny": "0.000001",
                 "error_code": None,
-                "completed_at": "2026-07-29T16:00:01+00:00",
+                "completed_at": "2026-08-01T16:00:01+00:00",
                 "count": 1,
             }
         ],

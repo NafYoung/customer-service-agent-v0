@@ -40,7 +40,7 @@ from evals.readonly_reporting import (
 
 RUN_ID = "eval-20260729-diagnostic-evidence"
 REQUESTED_MODEL = "deepseek-v4-flash"
-STARTED = datetime(2026, 7, 29, 12, tzinfo=UTC)
+STARTED = datetime(2026, 8, 1, 12, tzinfo=UTC)
 COMPLETED = STARTED + timedelta(minutes=5)
 USAGE = {
     "prompt_tokens": 8,
@@ -85,7 +85,7 @@ def _success_call(
     return ModelCallEvidence(
         sequence=sequence,
         status="success",
-        started_at="2026-07-29T12:00:00+00:00",
+        started_at="2026-08-01T12:00:00+00:00",
         latency_ms=1,
         message_count=2,
         tool_contract_count=6,
@@ -108,7 +108,7 @@ def _error_call(
     return ModelCallEvidence(
         sequence=sequence,
         status="error",
-        started_at="2026-07-29T12:00:00+00:00",
+        started_at="2026-08-01T12:00:00+00:00",
         latency_ms=1,
         message_count=2,
         tool_contract_count=6,
@@ -149,8 +149,8 @@ def _result(
         case_run_id=case_run_id,
         input_sha256="0" * 64,
         passed=not failed,
-        started_at="2026-07-29T12:00:00+00:00",
-        completed_at="2026-07-29T12:00:01+00:00",
+        started_at="2026-08-01T12:00:00+00:00",
+        completed_at="2026-08-01T12:00:01+00:00",
         duration_ms=1,
         checks=[check.message for check in checks if check.passed],
         failures=[check.message for check in checks if not check.passed],
@@ -317,12 +317,12 @@ def test_paid_budget_identity_cannot_start_before_price_window() -> None:
     ("identity_started_at", "identity_completed_at"),
     [
         (
-            "2026-07-29T09:00:00+00:00",
-            "2026-07-29T11:59:59+00:00",
+            "2026-08-01T09:00:00+00:00",
+            "2026-08-01T11:59:59+00:00",
         ),
         (
-            "2026-07-29T12:00:00+00:00",
-            "2026-07-29T12:05:01+00:00",
+            "2026-08-01T12:00:00+00:00",
+            "2026-08-01T12:05:01+00:00",
         ),
     ],
 )
@@ -351,7 +351,10 @@ def test_budget_summary_preserves_cross_window_failure_timeline() -> None:
         error_code="MODEL_TRANSPORT_ERROR",
     )
     budget = _paid_budget(results)
-    budget["run_identity"]["completed_at"] = "2026-07-30T08:58:59+00:00"
+    price = load_canonical_price_snapshot()
+    budget["run_identity"]["completed_at"] = (
+        price.valid_until + timedelta(seconds=1)
+    ).isoformat()
 
     validated = BudgetSummary.model_validate(budget)
 
@@ -682,7 +685,7 @@ def _attack_success_without_settled(
         "reserved_cny": reservation,
         "known_cost_cny": None,
         "error_code": "MODEL_TRANSPORT_ERROR",
-        "completed_at": "2026-07-29T12:00:01+00:00",
+        "completed_at": "2026-08-01T12:00:01+00:00",
         "count": count,
     }
     for scope in ("run", "cumulative"):
@@ -733,7 +736,7 @@ def _attack_extra_uncertain(
         "reserved_cny": reservation,
         "known_cost_cny": None,
         "error_code": "MODEL_TRANSPORT_ERROR",
-        "completed_at": "2026-07-29T12:00:01+00:00",
+        "completed_at": "2026-08-01T12:00:01+00:00",
         "count": 1,
     }
     for scope in ("run", "cumulative"):

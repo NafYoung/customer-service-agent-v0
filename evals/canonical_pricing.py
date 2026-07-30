@@ -22,10 +22,10 @@ from evals.file_snapshot import (
 
 ROOT = Path(__file__).resolve().parents[1]
 CANONICAL_PRICE_SNAPSHOT_PATH = (
-    ROOT / "pricing" / "deepseek-v4-flash-2026-07-29.json"
+    ROOT / "pricing" / "deepseek-v4-flash-2026-07-30.json"
 )
 EXPECTED_CANONICAL_PRICE_FILE_SHA256 = (
-    "d65a5a7c107632afa9f48b2dbc77cacc6dc819e34a0343d2bc62bb5f5443fa35"
+    "7b444ce011321d9025c1285640e3668fbdeeaff2ab9814f1ca91665cf18ed1ca"
 )
 FORMAL_HARD_LIMIT_CNY = Decimal("20")
 FORMAL_EXECUTION_LIMIT_CNY = Decimal("18")

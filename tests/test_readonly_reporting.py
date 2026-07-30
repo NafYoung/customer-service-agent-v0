@@ -38,7 +38,7 @@ from evals.readonly_reporting import (
 )
 
 PRICE_SNAPSHOT_PATH = (
-    readonly_reporting.ROOT / "pricing" / "deepseek-v4-flash-2026-07-29.json"
+    readonly_reporting.ROOT / "pricing" / "deepseek-v4-flash-2026-07-30.json"
 )
 
 
@@ -96,12 +96,12 @@ def _budget_report(
     identity_started_at = (
         started_at - timedelta(seconds=1)
         if started_at is not None
-        else datetime(2026, 7, 29, 12, tzinfo=UTC)
+        else datetime(2026, 8, 1, 12, tzinfo=UTC)
     )
     identity_completed_at = (
         started_at + (completed_at - started_at) / 2
         if started_at is not None and completed_at is not None
-        else datetime(2026, 7, 29, 12, 5, tzinfo=UTC)
+        else datetime(2026, 8, 1, 12, 5, tzinfo=UTC)
     )
     settled = Decimal(attempt_count) * Decimal("0.000012")
     settled_cny = format(settled, "f")
@@ -181,7 +181,7 @@ def _attestation() -> ValidatedCalibrationAttestation:
             )
             for index in range(49)
         ),
-        completed_at=datetime(2026, 7, 29, 12, tzinfo=UTC),
+        completed_at=datetime(2026, 8, 1, 12, tzinfo=UTC),
     )
 
 
@@ -217,8 +217,8 @@ def _result(
         case_run_id=f"eval-run-t{trial}-{case_id}",
         input_sha256="0" * 64,
         passed=passed,
-        started_at="2026-07-29T10:00:00+00:00",
-        completed_at="2026-07-29T10:00:01+00:00",
+        started_at="2026-08-01T10:00:00+00:00",
+        completed_at="2026-08-01T10:00:01+00:00",
         duration_ms=1000 + trial,
         checks=[check.message for check in score_checks if check.passed],
         failures=[check.message for check in score_checks if not check.passed],
@@ -228,7 +228,7 @@ def _result(
             ModelCallEvidence(
                 sequence=1,
                 status="success",
-                started_at="2026-07-29T10:00:00+00:00",
+                started_at="2026-08-01T10:00:00+00:00",
                 latency_ms=100,
                 message_count=2,
                 tool_contract_count=6,
@@ -249,7 +249,7 @@ def _result(
             ModelCallEvidence(
                 sequence=1,
                 status="success",
-                started_at="2026-07-29T10:00:00+00:00",
+                started_at="2026-08-01T10:00:00+00:00",
                 latency_ms=100,
                 message_count=2,
                 tool_contract_count=0,
@@ -779,7 +779,7 @@ def test_formal_manifest_binds_calls_to_each_completed_trial(
             agent,
             replace(
                 judge,
-                started_at="2026-07-29T10:00:02+00:00",
+                started_at="2026-08-01T10:00:02+00:00",
             ),
         )
     run_id = "eval-20260729-formal-call-binding"

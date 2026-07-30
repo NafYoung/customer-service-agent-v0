@@ -1,13 +1,10 @@
 # 项目现役状态
 
-最后核对：2026-07-30 01:09 UTC
+最后核对：2026-07-30 19:48 UTC
 
 本地分支：`main`
 
-最近已提交检查点：`17f098a`（本轮 P1 修复前基线）
-
-当前候选检查点：本文件所在的下一次干净 Git 提交；提交后以审查报告记录的
-完整 `git rev-parse HEAD` 为准。
+最近已提交检查点：与本文件同 Git 提交（DeepSeek 价格快照刷新与预算时钟绑定）
 
 Preparation Agent 检查点：`1b034cd`
 
@@ -34,31 +31,34 @@ Preparation Agent 检查点：`1b034cd`
 
 ## 最近验证
 
-2026-07-30 对本文件所在候选工作树执行完整离线门：
+2026-07-30 对本文件所在提交执行完整离线门与 Reference Eval：
 
 ```text
 ruff: passed
 mypy: 53 source files passed
 schema freshness: passed
 pytest: 586 passed
-branch coverage: 83.37%
+branch coverage: 83.39%
+pip-audit: no known vulnerabilities
 Reference Eval: 8/8
 ```
 
-本轮未联网，因此执行了 lint、mypy、Schema freshness、完整 pytest/branch
-coverage 和 Reference Eval；依赖声明未变化，最近一次 `pip-audit` 仍为无已知
-运行时漏洞，但尚未在当前候选提交上联网刷新。测试仍有一条非阻断
-警告：FastAPI/Starlette 的旧
-`TestClient` 兼容入口提示未来迁移到 `httpx2`；当前测试行为未受影响。
-本轮未调用 DeepSeek，新增费用为 0。
+定价快照已按 DeepSeek 官方文档重新核对并刷新（费率未变：缓存命中 ¥0.02/M、
+输入 ¥1/M、输出 ¥2/M）；canonical 文件为
+`pricing/deepseek-v4-flash-2026-07-30.json`，`valid_until`
+为 `2026-08-06T17:20:00Z`。预算账本与 budget guard 共用注入时钟，使
+`run identity` 的 `started_at` 在离线付费证据测试中保持一致。
+
+本轮未调用 DeepSeek，新增费用为 0。测试仍有一条非阻断警告：FastAPI/Starlette
+的旧 `TestClient` 兼容入口提示未来迁移到 `httpx2`；当前测试行为未受影响。
 
 ## 当前唯一执行顺序
 
-1. 把当前候选落为干净提交，然后对同一个完整 SHA 完成三路全新
+1. 对本提交同一完整 SHA 完成三路全新
    `phase2_fresh_adversarial_reaudit`：预算/结果/隐私、runtime/capability/
    source/harness、语义校准/原始证据重算。
 2. 修复复审发现的所有 P0/P1 和影响交付合同的 P2，再运行完整离线门。
-3. 当前 canonical 价格快照有效至 `2026-07-30T08:58:58Z`。仅在执行时仍
+3. 当前 canonical 价格快照有效至 `2026-08-06T17:20:00Z`。仅在执行时仍
    有效、预算账本无未知预留且三路审查全部 Gate GO 后，才安全加载
    `.env` 并运行公开语义校准。不得打印环境变量。
    若价格快照已过期，必须先从当前官方来源刷新并形成新的干净提交，再重做
@@ -82,17 +82,16 @@ coverage 和 Reference Eval；依赖声明未变化，最近一次 `pip-audit` �
 
 ## 当前工作区说明
 
-Preparation Agent 已保存为本地检查点。本轮在 `17f098a` 之上补齐了四组
-P1：真实账本校准证明、正式 runtime capability 对象绑定、原始证据确定性
-重评分，以及逐调用 attempt/错误阶段/预算结果闭环；并把 provider request
-ID 从所有持久化和公开 artifact 中清除。完整离线门通过，但这些改动尚未在
-一个干净提交上取得三路全新同提交审查 GO，因此不能视为 Phase 2 验收完成。
+本提交是 Phase 2 恢复在 `17f098a` 之上补齐 P1 与价格刷新后的干净候选，
+可直接作为三路全新 `phase2_fresh_adversarial_reaudit` 的审查基线。改动包括：
+真实账本校准证明、正式 runtime capability 对象绑定、原始证据确定性重评分、
+逐调用 attempt/错误阶段/预算结果闭环、清除持久化与公开 artifact 中的 provider
+request ID，以及 DeepSeek 价格快照续期与 guard/ledger 共享时钟。完整离线门与
+Reference Eval 已通过，但尚未取得同提交三路审查 GO，不能视为 Phase 2 验收完成。
 
-此前 `40289d9` 关闭了 formal context 与 28/28 回归前置门；
-`18d31bb` 关闭固定输出根 symlink、严格回执、私有目录链和公开校验器问题，
-独立聚焦复审为 GO；`0c55845` 又把批准的 Eval profile 固定为
-`30 / 1024 / 2 / 4 / 12`，扩展运行依赖身份，并要求 source-tree 三次快照
-一致；`aee4a3d` 进一步约束价格时间线，并使正式完成/失败路径都独立重算
-完整 runtime identity。此前聚焦复核不计入本轮 fresh Gate。下一步必须由
-未参与实现的三路全新审查者在本文件所在同一干净提交上重新签发 Gate。
-复核现场保留，未删除缓存、数据库或私有 artifact。
+此前 `40289d9` 关闭了 formal context 与 28/28 回归前置门；`18d31bb` 关闭固定
+输出根 symlink、严格回执、私有目录链和公开校验器问题，独立聚焦复审为 GO；
+`0c55845` 又把批准的 Eval profile 固定为 `30 / 1024 / 2 / 4 / 12`，扩展运行
+依赖身份，并要求 source-tree 三次快照一致；`aee4a3d` 进一步约束价格时间线，
+并使正式完成/失败路径都独立重算完整 runtime identity。此前聚焦复核不计入本轮
+fresh Gate。复核现场保留，未删除缓存、数据库或私有 artifact。

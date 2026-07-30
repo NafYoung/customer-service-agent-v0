@@ -24,7 +24,7 @@ from app.tools.contracts import get_read_only_tool_contracts
 
 ROOT = Path(__file__).resolve().parents[1]
 PRICE_SNAPSHOT_PATH = (
-    ROOT / "pricing" / "deepseek-v4-flash-2026-07-29.json"
+    ROOT / "pricing" / "deepseek-v4-flash-2026-07-30.json"
 )
 
 
@@ -46,7 +46,7 @@ def _budget_guard(
         price_snapshot=snapshot,
         model="deepseek-v4-flash",
         max_output_tokens=1024,
-        now=datetime(2026, 7, 29, 12, tzinfo=UTC),
+        now=datetime(2026, 8, 1, 12, tzinfo=UTC),
     )
 
 

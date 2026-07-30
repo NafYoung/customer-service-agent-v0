@@ -397,16 +397,23 @@ class SQLiteBudgetLedger:
         path: Path,
         hard_limit_cny: Decimal,
         execution_limit_cny: Decimal,
+        now_provider: Callable[[], datetime] | None = None,
     ):
         self.path = path
         self.hard_limit_units = cny_to_units(hard_limit_cny)
         self.execution_limit_units = cny_to_units(execution_limit_cny)
+        self._now_provider = now_provider or (lambda: datetime.now(UTC))
         if self.execution_limit_units > self.hard_limit_units:
             raise BudgetInvariantError(
                 "Execution limit cannot exceed the hard budget limit."
             )
         self._prepare_private_path()
         self._initialize()
+
+    def bind_now_provider(self, now_provider: Callable[[], datetime]) -> None:
+        """Share the guard's clock so run identity timestamps stay coherent."""
+
+        self._now_provider = now_provider
 
     def _prepare_private_path(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -523,7 +530,7 @@ class SQLiteBudgetLedger:
                     canonical_purpose,
                     price_snapshot.model,
                     price_snapshot.sha256,
-                    datetime.now(UTC).isoformat(),
+                    self._now_provider().isoformat(),
                 ),
             )
             connection.execute("COMMIT")
@@ -632,7 +639,7 @@ class SQLiteBudgetLedger:
                     "Paid model request blocked by the local CNY budget limit."
                 )
             attempt_id = f"budget-attempt-{uuid.uuid4().hex}"
-            created_at = datetime.now(UTC).isoformat()
+            created_at = self._now_provider().isoformat()
             connection.execute(
                 """
                 INSERT INTO budget_attempts(
@@ -729,7 +736,7 @@ class SQLiteBudgetLedger:
                         cost.mode,
                         json.dumps(safe_usage, sort_keys=True),
                         provider_request_id,
-                        datetime.now(UTC).isoformat(),
+                        self._now_provider().isoformat(),
                         reservation.attempt_id,
                     ),
                 )
@@ -759,7 +766,7 @@ class SQLiteBudgetLedger:
                     cost.mode,
                     json.dumps(safe_usage, sort_keys=True),
                     provider_request_id,
-                    datetime.now(UTC).isoformat(),
+                    self._now_provider().isoformat(),
                     reservation.attempt_id,
                 ),
             )
@@ -831,7 +838,7 @@ class SQLiteBudgetLedger:
                         ),
                         provider_request_id,
                         error_code,
-                        datetime.now(UTC).isoformat(),
+                        self._now_provider().isoformat(),
                         reservation.attempt_id,
                     ),
                 )
@@ -853,7 +860,7 @@ class SQLiteBudgetLedger:
                 SET status = 'completed', completed_at = ?
                 WHERE run_id = ? AND status = 'active'
                 """,
-                (datetime.now(UTC).isoformat(), run_id),
+                (self._now_provider().isoformat(), run_id),
             )
             if updated.rowcount != 1:
                 raise BudgetInvariantError("Budget run is missing or not active.")
@@ -1302,16 +1309,23 @@ class DeepSeekBudgetGuard:
         minimum_price_validity_seconds: float = 0,
     ):
         canonical_purpose = require_paid_purpose(purpose)
-        self._now_provider = now_provider or (lambda: datetime.now(UTC))
+        if now_provider is not None:
+            self._now_provider = now_provider
+        elif now is not None:
+            frozen_now = now
+            self._now_provider = lambda: frozen_now
+        else:
+            self._now_provider = lambda: datetime.now(UTC)
         self._minimum_price_validity_seconds = _require_nonnegative_seconds(
             minimum_price_validity_seconds,
             field_name="Minimum pricing validity window",
         )
         price_snapshot.require_current(
             expected_model=model,
-            now=now or self._now_provider(),
+            now=self._now_provider(),
         )
         self._ledger = ledger
+        self._ledger.bind_now_provider(self._now_provider)
         self._run_id = run_id
         self._price_snapshot = price_snapshot
         self._model = model

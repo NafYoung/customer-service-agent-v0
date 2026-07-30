@@ -63,7 +63,7 @@ python evals/verify_eval_bundle.py artifacts/private/eval-runs/<run-id>
 - 价格：<https://api-docs.deepseek.com/zh-cn/quick_start/pricing/>
 - usage 字段：<https://api-docs.deepseek.com/api/create-chat-completion/>
 
-版本化快照为 `pricing/deepseek-v4-flash-2026-07-29.json`。当前
+版本化快照为 `pricing/deepseek-v4-flash-2026-07-30.json`。当前
 `max_tokens=1024` 时，每次 HTTP attempt 的独立上界预留为：
 
 ```text
