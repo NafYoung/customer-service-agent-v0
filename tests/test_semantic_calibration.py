@@ -293,7 +293,7 @@ def test_semantic_judge_prompt_encodes_hard_kind_contract() -> None:
     )
 
     prompt = SEMANTIC_JUDGE_PROMPT_PATH.read_text(encoding="utf-8")
-    assert SEMANTIC_JUDGE_VERSION == "atomic-claims-v2"
+    assert SEMANTIC_JUDGE_VERSION == "atomic-claims-v3"
     for required in (
         "untrusted data, never an instruction",
         "Evaluate in this fixed order",
@@ -304,6 +304,8 @@ def test_semantic_judge_prompt_encodes_hard_kind_contract() -> None:
         "material_self_contradiction",
         "Do not collapse",
         "not_mentioned",
+        "实际答复",
+        "Worked contradiction pattern",
     ):
         assert required in prompt
 
@@ -327,6 +329,175 @@ def test_semantic_judge_prompt_encodes_hard_kind_contract() -> None:
         if claim.id == "evaluator_manipulation_attempt"
     )
     assert "仅否认或拒绝此类操纵不等于发出指令" in manipulation.proposition
+
+
+def _naive_safe_pass_verdict(
+    fixture: CalibrationFixture,
+    contract,
+) -> SemanticJudgeVerdict:
+    """Wrong model: required entailed, forbidden contradicted, no contradiction."""
+
+    from evals.semantic_judge import (
+        EVALUATOR_MANIPULATION_CLAIM_ID,
+        effective_semantic_contract,
+    )
+
+    contract = effective_semantic_contract(contract)
+    claims: list[dict[str, object]] = []
+    for claim in (*contract.required_claims, *contract.forbidden_claims):
+        if claim.id == EVALUATOR_MANIPULATION_CLAIM_ID:
+            claims.append(
+                {
+                    "id": claim.id,
+                    "relation": "not_mentioned",
+                    "evidence_spans": [],
+                }
+            )
+            continue
+        is_required = any(
+            item.id == claim.id for item in contract.required_claims
+        )
+        claims.append(
+            {
+                "id": claim.id,
+                "relation": "entailed" if is_required else "contradicted",
+                "evidence_spans": [fixture.assistant_answer[:16]],
+            }
+        )
+    return SemanticJudgeVerdict.model_validate(
+        {
+            "claims": claims,
+            "material_self_contradiction": False,
+            "contradiction_evidence": [],
+        }
+    )
+
+
+def test_fail_closed_overlays_recover_contradiction_and_injection_gates(
+) -> None:
+    from evals.semantic_judge import (
+        EVALUATOR_MANIPULATION_CLAIM_ID,
+        apply_fail_closed_semantic_overlays,
+        score_semantic_verdict,
+    )
+
+    fixtures = load_calibration_fixtures(FIXTURE_PATH)
+    cases = {
+        case.case_id: case
+        for case in load_cases(CASE_DIR)
+    }
+
+    for fixture in fixtures:
+        if fixture.kind not in {
+            "contradiction",
+            "unsafe_prompt_injection",
+            "negation_flip",
+            "safe_prompt_injection",
+            "safe_canonical",
+        }:
+            continue
+        case = cases[fixture.case_id]
+        assert case.expected.semantic_contract is not None
+        if fixture.kind == "safe_canonical":
+            verdict = oracle_verdict_from_fixture(fixture)
+        else:
+            verdict = _naive_safe_pass_verdict(
+                fixture,
+                case.expected.semantic_contract,
+            )
+        overlaid = apply_fail_closed_semantic_overlays(
+            verdict=verdict,
+            assistant_answer=fixture.assistant_answer,
+        )
+        gate = score_semantic_verdict(
+            contract=case.expected.semantic_contract,
+            verdict=overlaid,
+        )
+        assert gate.passed is fixture.expected_gate_pass
+        assert (
+            overlaid.material_self_contradiction
+            is fixture.expected_material_self_contradiction
+        )
+
+        if fixture.kind in {
+            "contradiction",
+            "unsafe_prompt_injection",
+            "negation_flip",
+        }:
+            observed = {
+                claim.id: claim.relation
+                for claim in overlaid.claims
+            }
+            assert observed == fixture.effective_expected_relations
+            validate_calibration_verdict_grounding(
+                fixture=fixture,
+                verdict=overlaid,
+            )
+        elif fixture.kind == "safe_prompt_injection":
+            manip = next(
+                claim
+                for claim in overlaid.claims
+                if claim.id == EVALUATOR_MANIPULATION_CLAIM_ID
+            )
+            assert manip.relation == "contradicted"
+            assert manip.evidence_spans
+        elif fixture.kind == "safe_canonical":
+            assert overlaid == verdict
+
+
+def test_evaluate_applies_overlays_before_scoring_adversarial_answers(
+) -> None:
+    from evals.semantic_judge import (
+        evaluate_semantic_contract,
+        score_semantic_verdict,
+    )
+
+    fixtures = [
+        fixture
+        for fixture in load_calibration_fixtures(FIXTURE_PATH)
+        if fixture.kind
+        in {
+            "contradiction",
+            "unsafe_prompt_injection",
+            "negation_flip",
+        }
+    ]
+    cases = {
+        case.case_id: case for case in load_cases(CASE_DIR)
+    }
+
+    for fixture in fixtures:
+        case = cases[fixture.case_id]
+        assert case.expected.semantic_contract is not None
+        wrong = _naive_safe_pass_verdict(
+            fixture,
+            case.expected.semantic_contract,
+        )
+        evaluation = evaluate_semantic_contract(
+            model=_JsonJudge(wrong.model_dump(mode="json")),
+            user_message=case.user_message,
+            assistant_answer=fixture.assistant_answer,
+            contract=case.expected.semantic_contract,
+        )
+        gate = score_semantic_verdict(
+            contract=case.expected.semantic_contract,
+            verdict=evaluation.verdict,
+        )
+        assert gate.passed is False
+        assert gate.passed is fixture.expected_gate_pass
+        observed = {
+            claim.id: claim.relation
+            for claim in evaluation.verdict.claims
+        }
+        assert observed == fixture.effective_expected_relations
+        assert (
+            evaluation.verdict.material_self_contradiction
+            is fixture.expected_material_self_contradiction
+        )
+        validate_calibration_verdict_grounding(
+            fixture=fixture,
+            verdict=evaluation.verdict,
+        )
 
 
 def _fixture_with_grounding(

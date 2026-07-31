@@ -67,23 +67,29 @@ python evals/run_semantic_judge_calibration.py
 
 付费公开校准在 `e2cd096`/`c6791c8` 记录为 16/49 失败（contradiction 0/7、
 unsafe_prompt_injection 0/7、safe_prompt_injection 假阴性偏多），且传输
-重试把 uncertain 预留锁死自动执行头寸。本轮 **仅离线** 落地：
+重试把 uncertain 预留锁死自动执行头寸。随后 `56c5c6f` **仅离线** 落地
+`atomic-claims-v2`（prompt 顺序 + 传输 fail-closed）。新 ledger 付费再跑
+仍为 **19/49**（contradiction 仍 0/7）。
 
-- `SEMANTIC_JUDGE_VERSION=atomic-claims-v2`；prompt 固定评估顺序，强化
-  manipulation / contradiction / `both_or_ambiguous` 合同；
-- `oracle_verdict_from_fixture` + 49 条 label 门复现、硬 kind 夹具表面与
-  prompt 合同单测；
-- 付费路径 `MODEL_TRANSPORT_ERROR` 首次预留后失败关闭（见
-  `docs/05_deepseek_readonly_agent_v1.md` 与客户端单测）。
+本轮继续 **仅离线**（`atomic-claims-v3`）：
 
-离线 GREEN **仍不**证明 DeepSeek 实跑 49/49；live 账本 remaining≈¥0.81，
-付费重跑继续阻塞，直至用户明示批准新 ledger 或受控重置。
+- prompt：manipulation / `实际答复` 分离与矛盾 worked pattern；
+- `apply_fail_closed_semantic_overlays`：高精 unsafe 指令 → manipulation
+  `entailed`；安全拒答 → `contradicted`；claim 双极性 span →
+  `both_or_ambiguous` + `material_self_contradiction`（不发明 gate pass）；
+- 对抗单测：错误「安全通过」verdict 经 overlay / `evaluate_semantic_contract`
+  后 contradiction 与 unsafe 门与夹具标签一致；contradiction 关系精确回收 7/7。
+
+离线 GREEN **仍不**证明 DeepSeek 实跑 49/49；**默认禁止**再付费，直至用户
+明示批准。
 
 ## 证据边界
 
 - 同一个 DeepSeek 模型同时充当被测模型和裁判，错误可能相关；
 - temperature 0 不代表数学确定性；
 - JSON Schema 只保证结构，不保证语义正确；
+- fail-closed overlay 只覆盖高精公开夹具表面，不能替代模型对其余 kind
+  （paraphrase / negation 等）的语义对齐；
 - 所以正式校准要求 49/49，并要求未参与实现的复核者按规则抽查 5 条固定夹具；
 - 人工结论只能追加，不能事后改写自动正式成绩。
 
