@@ -37,6 +37,19 @@ claiming a matching budget:
 | Success retries and error attempts require enough reserved or uncertain ledger buckets | `test_failed_attempt_matches_retries_to_uncertain_attempt_buckets` | Integration |
 | Current-run reservations are bound to canonical price and `max_output_tokens` | `test_failed_attempt_rejects_coordinated_underreservation` | Adversarial |
 | A known cost above its reservation remains visible as an uncertain bucket | `test_cost_over_reservation_commits_observed_cost_and_blocks_next_attempt` | Ledger integration |
+
+## Offline follow-up — transport × budget (post failed calibration)
+
+Paid path (`budget_guard` present): `httpx.RequestError` marks the first
+reservation `uncertain` with `MODEL_TRANSPORT_ERROR` and fails closed without
+further retries. This keeps evidence schema attempt buckets 1:1 with the
+single provider attempt while avoiding N× worst-case permanent locks under
+`max_retries=2`. Unpaid clients still retry transport errors. HTTP 429/5xx
+retry-under-budget behavior is unchanged.
+
+Evidence: `tests/test_openai_compatible_client.py`
+(`test_budget_guard_fails_closed_on_first_transport_error`,
+`test_unpaid_client_retries_transport_errors_within_limit`).
 | Run and cumulative totals, counts, remaining budget, and breach are recomputed from same-transaction anonymous buckets | failed-attempt bundle validation and ledger snapshot tests | Integration |
 
 ## Verification

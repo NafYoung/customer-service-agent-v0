@@ -385,7 +385,13 @@ class OpenAICompatibleChatClient:
                     attempts=attempt_count,
                     logical_call_hash=logical_call_hash,
                 )
-                if attempt_index < self._max_retries:
+                # Under a budget guard, transport failures fail closed after the
+                # first reservation. Retrying would permanently lock another
+                # full worst-case reservation while known_cost stays empty.
+                if (
+                    self._budget_guard is None
+                    and attempt_index < self._max_retries
+                ):
                     self._retry_delay(attempt_index)
                     continue
                 raise ModelAPIError(

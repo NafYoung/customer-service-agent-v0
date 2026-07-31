@@ -293,6 +293,88 @@ def test_client_retries_transient_statuses_with_a_fixed_limit():
     assert turn.provider_attempts == 3
 
 
+def test_unpaid_client_retries_transport_errors_within_limit():
+    call_count = 0
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        if call_count < 3:
+            raise httpx.ConnectError("connection refused")
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "finish_reason": "stop",
+                        "message": {"role": "assistant", "content": "ok"},
+                    }
+                ]
+            },
+        )
+
+    client = OpenAICompatibleChatClient(
+        api_key="test-key",
+        base_url="https://api.deepseek.com",
+        model="deepseek-test-model",
+        max_retries=2,
+        retry_backoff_seconds=0,
+        transport=httpx.MockTransport(handler),
+    )
+    try:
+        turn = client.complete(
+            messages=[{"role": "user", "content": "hello"}],
+            tools=[],
+        )
+    finally:
+        client.close()
+
+    assert turn.content == "ok"
+    assert call_count == 3
+    assert turn.provider_attempts == 3
+
+
+def test_budget_guard_fails_closed_on_first_transport_error(tmp_path):
+    call_count = 0
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        raise httpx.ConnectError("connection refused")
+
+    guard = _budget_guard(
+        tmp_path,
+        run_id="eval-budget-transport-fail-closed",
+    )
+    client = OpenAICompatibleChatClient(
+        api_key="fixture-key",
+        base_url="https://api.deepseek.com",
+        model="deepseek-v4-flash",
+        max_tokens=1024,
+        max_retries=2,
+        retry_backoff_seconds=0,
+        budget_guard=guard,
+        transport=httpx.MockTransport(handler),
+    )
+    try:
+        with pytest.raises(ModelAPIError) as caught:
+            client.complete(
+                messages=[{"role": "user", "content": "hello"}],
+                tools=[],
+            )
+    finally:
+        client.close()
+
+    report = guard.snapshot()["run"]
+    assert caught.value.code == "MODEL_TRANSPORT_ERROR"
+    assert caught.value.attempts == 1
+    assert call_count == 1
+    assert report["attempt_count"] == 1
+    assert report["uncertain_count"] == 1
+    assert report["committed_cny"] == "1.002048"
+    assert report["settled_cny"] == "0"
+
+
 def test_budget_guard_reserves_every_retry_and_settles_success(tmp_path):
     call_count = 0
 

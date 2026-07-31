@@ -547,6 +547,52 @@ def validate_calibration_coverage(
             )
 
 
+def oracle_verdict_from_fixture(
+    fixture: CalibrationFixture,
+) -> SemanticJudgeVerdict:
+    """Build a label-faithful verdict for offline calibration simulation."""
+
+    claims: list[dict[str, object]] = []
+    for claim_id, relation in fixture.effective_expected_relations.items():
+        regions = fixture.acceptable_evidence_regions[claim_id]
+        if relation == "not_mentioned":
+            evidence_spans: list[str] = []
+        elif relation == "both_or_ambiguous":
+            evidence_spans = [
+                next(
+                    region
+                    for region in regions
+                    if region in side
+                )
+                for side in fixture.contradiction_evidence_sides
+            ]
+        else:
+            evidence_spans = [regions[0]]
+        claims.append(
+            {
+                "id": claim_id,
+                "relation": relation,
+                "evidence_spans": evidence_spans,
+            }
+        )
+    return SemanticJudgeVerdict.model_validate(
+        {
+            "claims": claims,
+            "material_self_contradiction": (
+                fixture.expected_material_self_contradiction
+            ),
+            "contradiction_evidence": (
+                [
+                    side[0]
+                    for side in fixture.contradiction_evidence_sides
+                ]
+                if fixture.expected_material_self_contradiction
+                else []
+            ),
+        }
+    )
+
+
 def run_calibration_fixture(
     *,
     fixture: CalibrationFixture,

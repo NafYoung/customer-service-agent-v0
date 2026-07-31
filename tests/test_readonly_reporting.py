@@ -549,7 +549,7 @@ def test_manifest_fingerprints_harness_and_never_serializes_secret_or_holdout_id
     assert manifest["model"]["observed_models"] == ["deepseek-v4-flash"]
     assert manifest["model"]["generation_config"]["temperature"] == 0.0
     assert manifest["model"]["semantic_judge"] == {
-        "version": "atomic-claims-v1",
+        "version": "atomic-claims-v2",
         "response_format": "json_object",
         "tools_enabled": False,
         "temperature": 0.0,
