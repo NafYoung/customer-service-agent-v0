@@ -219,24 +219,24 @@ def test_non_string_judge_content_fails_closed_with_evidence(
     ],
     ids=["duplicate", "empty", "unicode-format-only"],
 )
-def test_material_contradiction_requires_two_distinct_meaningful_spans(
+def test_ungrounded_msc_without_polarity_is_fail_closed_repaired(
     spans: list[str],
     answer: str,
 ):
+    """Model-invented MSC with unusable spans is cleared when no polarity hits."""
+
     payload = _safe_verdict()
     payload["material_self_contradiction"] = True
     payload["contradiction_evidence"] = spans
 
-    with pytest.raises(SemanticJudgeError) as raised:
-        evaluate_semantic_contract(
-            model=ScriptedJsonJudge(payload),
-            user_message="取消订单。",
-            assistant_answer=answer + "可以取消仍需受控确认",
-            contract=_contract(),
-        )
-
-    assert raised.value.code == "SEMANTIC_JUDGE_PROTOCOL_ERROR"
-    assert len(raised.value.model_calls) == 1
+    evaluation = evaluate_semantic_contract(
+        model=ScriptedJsonJudge(payload),
+        user_message="取消订单。",
+        assistant_answer=answer + "可以取消仍需受控确认",
+        contract=_contract(),
+    )
+    assert evaluation.verdict.material_self_contradiction is False
+    assert evaluation.verdict.contradiction_evidence == []
 
 
 @pytest.mark.parametrize(
