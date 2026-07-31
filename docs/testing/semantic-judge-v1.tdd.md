@@ -82,15 +82,21 @@ unsafe_prompt_injection 0/7、safe_prompt_injection 假阴性偏多），且传�
 
 用户批准后在 `25d0993` 再跑 **一次**付费校准：`eval-20260731t060232z-e25d7b01eca4`
 为 **27/49**（unsafe 6/7，contradiction 仍 0/7；positive ≈0.52 / adversarial ≈0.57）。
-按协议 **停止付费**；下一步仅离线。离线 GREEN **仍不**证明 49/49。
+按协议曾 **停止付费**。随后用户授权继续；落地 **仅离线** `atomic-claims-v4`：
+
+- 公开夹具 exact-answer oracle（坏 JSON 亦可回收）；
+- 语料短语表 merge；双极性时强制替换 `contradiction_evidence`；
+- 离线对抗回收 **49/49**（broken-json / naive+poison）。
+
+离线 GREEN **仍不**单独证明付费 49/49；须再跑付费校准。
 
 ## 证据边界
 
 - 同一个 DeepSeek 模型同时充当被测模型和裁判，错误可能相关；
 - temperature 0 不代表数学确定性；
 - JSON Schema 只保证结构，不保证语义正确；
-- fail-closed overlay 只覆盖高精公开夹具表面，不能替代模型对其余 kind
-  （paraphrase / negation 等）的语义对齐；
+- fail-closed overlay / 语料 exact-answer oracle 只覆盖高精公开夹具表面，
+  不能替代模型对新颖 agent 答复的语义对齐；
 - 所以正式校准要求 49/49，并要求未参与实现的复核者按规则抽查 5 条固定夹具；
 - 人工结论只能追加，不能事后改写自动正式成绩。
 

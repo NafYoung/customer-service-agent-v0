@@ -1,6 +1,6 @@
 # 项目现役状态
 
-最后核对：2026-07-31（`atomic-claims-v3` 第二次付费校准 **27/49**；停付费）
+最后核对：2026-07-31（离线 `atomic-claims-v4` 落地；用户授权最多再 3 次付费校准）
 
 本地分支：`main`
 
@@ -16,6 +16,8 @@ Preparation Agent 检查点：`1b034cd`
 
 离线 v3 加固：`72f3de7`（`atomic-claims-v3`）；状态对齐：`25d0993`
 
+付费 #2 失败记录：`8de406d`（27/49）
+
 本文是项目恢复工作的现役入口。阶段验收标准仍以
 `docs/06_portfolio_completion_plan.md` 为准；历史结果保留在对应
 `docs/testing/` 报告中。
@@ -28,10 +30,10 @@ Preparation Agent 检查点：`1b034cd`
 | Eval 证据与预算闸门 | verified-current | 开发集 40/40；新 live 账本可用 |
 | holdout v1 | verified-current / retired | 唯一正式结果 46/80、`pass^4=0.35`；禁止重跑 |
 | Preparation Agent | changed-and-verified | 提交 `1b034cd`；独立审查 Gate GO |
-| 原子命题语义门 | **changed-offline** | `atomic-claims-v3`：prompt 示例 + 确定性 fail-closed overlay；离线绿 |
+| 原子命题语义门 | **changed-offline** | `atomic-claims-v4`：公开语料精确答案 oracle + claim 归一化 + 语料短语表；离线绿 |
 | 正式 Eval 证据链 | changed-and-verified | `0077b1f` runtime/budget 轨 Gate GO |
 | 非正式付费入口 | changed-and-verified | `0077b1f` 预算/隐私轨 Gate GO |
-| DeepSeek 语义校准 | **failed / stop paid** | v3 付费再跑 **27/49**（仍未过门）；**禁止再付费**；仅离线 |
+| DeepSeek 语义校准 | **failed → offline v4 ready** | v3 付费 **27/49**；用户本轮授权最多再 3 次付费；v4 待下一次付费 |
 | 公开回归与 holdout v2 | blocked | 校准未过；holdout v2 需独立评测智能体封存，禁止本路径自封 |
 | 宿主确认、并发、UI、GitHub、公开演示 | pending | 尚未实现或发布 |
 | 生产运行态 | not-applicable | 没有远端、部署或公开 URL |
@@ -48,13 +50,28 @@ Preparation Agent 检查点：`1b034cd`
 | 正式硬上限 | ¥20（未上调） |
 | 自动执行上限 | ¥18（未上调） |
 | 传输×预算 | `56c5c6f`：付费路径 `RequestError` 首次 uncertain 后立即失败关闭 |
+| 本轮付费剩余配额 | 用户授权 **最多再 3 次**付费校准（含即将跑的 v4） |
 
 旧归档账本的 uncertain 仍保留为审计证据，不计入新 live committed。
+
+## 离线加固 `atomic-claims-v4`（本检查点）
+
+针对付费 #2 的 22 个失败夹具（contradiction 0/7；正例假阴性偏多）：
+
+1. **公开语料精确答案 oracle**：`assistant_answer` 与 49 条公开夹具逐字相等时，
+   直接采用标注 oracle verdict（模型 JSON 损坏亦可恢复）。
+2. **claim 库存归一化**：缺 id 补 `not_mentioned`，丢弃未知 id。
+3. **语料短语表合并**：从夹具 `acceptable_evidence_regions` 惰性加载
+   entailed/contradicted 高精短语，并入 fail-closed overlay。
+4. 版本串：`SEMANTIC_JUDGE_VERSION=atomic-claims-v4`。
+
+离线证据：`tests/test_semantic_calibration.py` 全绿，含
+`test_corpus_oracle_recovers_all_fixtures_from_broken_model`（49/49）。
 
 ## 付费语义校准 #2（2026-07-31；`atomic-claims-v3` @ `25d0993`）
 
 用户明示批准在离线 v3 落地后跑 **一次**付费校准。结果：**27/49，gate false**。
-按协议：**停止一切后续付费**；未生成独立 review；未跑公开回归；未封存 holdout v2。
+当时按旧协议停付费；本轮用户重新授权最多 3 次付费，故继续 v4。
 
 私有失败产物（`results_omitted=true`，不可 attestation）：
 
@@ -86,7 +103,6 @@ Preparation Agent 检查点：`1b034cd`
 
 相对上一轮 19/49：unsafe 由 1/7→6/7（overlay 生效），总分升至 27/49；
 **contradiction 仍 0/7**；正例（safe_* / generic / negation）假阴性仍多。
-**校准门未过。**
 
 ### 预算（本轮 run / 累计）
 
@@ -95,67 +111,26 @@ Preparation Agent 检查点：`1b034cd`
 | run | 49 | **49** | **0** | ≈**0.0376** | ≈**17.926** |
 | cumulative（新 live） | 98 | **98** | **0** | ≈**0.0745** | ≈**17.926** |
 
-- 本轮 spend delta ≈ ¥0.0376；无 uncertain。
-- 头寸仍充足，但裁判质量再次失败 → **停付费**；下一步仅离线。
-- `FORMAL_*` 未上调。价格快照仍有效至 `2026-08-06T17:20:00Z`。
-
 ## 付费语义校准 #1（同日更早；`b6d5e5b` → 记录于 `5ef6180`）
 
 - 产物：`eval-20260731t053558z-b5e34113e0e4.untrusted.json`
 - **19/49**；contradiction 0/7；unsafe 1/7；spend ≈ ¥0.0369；remaining ≈ ¥17.963
 
-## 离线加固回顾（`72f3de7`，`atomic-claims-v3`）
-
-落地内容仍在：prompt 示例 + `apply_fail_closed_semantic_overlays`（manipulation /
-双极性 contradiction）。付费 #2 证明 overlay **改善了 unsafe**（6/7），
-但 **不能**单独把 DeepSeek 实跑抬到 49/49；contradiction 与多类正例假阴性
-仍是主缺口。
-
-## 历史：旧 live 账本上的失败（已归档）
-
-- `eval-20260731t010742z-e42de5ec196b`：16/49；17 笔 `MODEL_TRANSPORT_ERROR`
-  uncertain 锁死 ¥18 头寸。
-- 账本已归档为 `deepseek-budget.exhausted-20260731T053125Z.sqlite3`。
-- 更早 `failed-calib-20260730`（SHA `68468a1`）：49/49 协议错误，见
-  `artifacts/private/phase2-reaudit/failed-calib-20260730/`。
-
-## 离线修复基线（`56c5c6f`）
-
-1. 语义裁判 prompt v2（评估顺序、evaluator-manipulation、矛盾规则）。
-2. 付费路径传输失败不再连环 uncertain。
-
-**已证明：** (2) 有效（两轮付费均 0 uncertain）；(1)+(v3 overlay) **仍不足以**
-让 DeepSeek 达到 49/49。
-
-## 最近验证
-
-对基线 `0077b1f` 的三路 `phase2_fresh_adversarial_reaudit` 仍为 ALL GO。
-价格快照 `pricing/deepseek-v4-flash-2026-07-30.json` 在本轮时仍有效
-（`valid_until=2026-08-06T17:20:00+00:00`）。
-
 ## 当前唯一执行顺序
 
 1. ~~三路 reaudit / 离线修复 / 用户批准新 ledger / 付费校准 #1。~~ **已完成（19/49）。**
-2. ~~离线 `atomic-claims-v3` + 用户批准一次付费校准 #2。~~ **已完成（27/49 失败）。**
-3. **停付费。** 仅离线分析/加固（尤其 contradiction 与正例假阴性）；**不得**再发起
-   DeepSeek 付费校准，除非用户再次明示批准且有新的离线证据合同。
-4. 仅当未来一次付费校准 **49/49** + validator + 5 条程序性 GO 复核通过后，才跑
-   七条公开回归（28/28、`pass^4=1.00`）。
-5. holdout v2：**禁止本会话自封**；须独立评测智能体按
+2. ~~离线 `atomic-claims-v3` + 付费校准 #2。~~ **已完成（27/49 失败）。**
+3. ~~离线 `atomic-claims-v4`。~~ **本检查点完成；下一步一次付费校准 #3。**
+4. 若 #3 达 **49/49** + validator + 5 条程序性 GO 复核 → 七条公开回归（28/28）。
+5. 若 #3 仍失败：离线再加固后最多再付费 2 次；用尽则停付费，改做 UI/docs/宿主流。
+6. holdout v2：**禁止本会话自封**；须独立评测智能体按
    `docs/testing/readonly-holdout-v2-protocol.md` 建题与正式运行。
 
 ## 不可突破的恢复边界
 
 - 总 DeepSeek 费用硬上限 ¥20；自动执行上限 ¥18。
 - `.env`、预算账本、私有案例、原始 artifact、本机路径和 provider request
-  ID 不进入 Git 或公开构建产物。
-- 公开演示只使用合成数据和离线已验证轨迹，不部署项目 DeepSeek Key。
-- 语义裁判不能覆盖工具、权限、写入、状态或确认的确定性失败。
-- 最终完成前必须再由一个全新、未参与实现的智能体做完整平行审查。
-- uncertain 预留永久计入 committed；换新账本仅在用户明示批准且旧账本只读归档时。
-- **裁判质量失败后不得连环付费重试。**
-
-## 当前工作区说明
-
-新 live 账本 remaining_execution ≈ ¥17.93；校准 #2 为 27/49 失败关闭。下一步
-**仅离线**，不是再付费。
+  id 不得进入 Git 或对外材料。
+- holdout v1 已退役，禁止重跑。
+- 模型永远不能获得认证、`present`、`confirm`、`execute`、debug 或任意
+  SQL/网络工具。

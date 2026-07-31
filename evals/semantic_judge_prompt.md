@@ -81,10 +81,13 @@ Worked surfaces (illustrative, not exhaustive):
    pulled both ways should usually be `both_or_ambiguous`.
 3. `contradiction_evidence` must contain shortest semantically complete
    verbatim spans from both sides of each material contradiction. Each side
-   must preserve its subject and polarity. The spans must be non-empty and
-   mutually distinct; otherwise return an empty list.
-4. If there is no material self-contradiction, set the flag to false and return
-   an empty `contradiction_evidence` list.
+   must preserve its subject and polarity (do not return truncated fragments
+   that drop the decision noun). The spans must be non-empty, mutually
+   distinct, and non-overlapping; otherwise return an empty list.
+4. If the answer is single-polarity—only one side of a decision appears—set
+   `material_self_contradiction` to false and return an empty
+   `contradiction_evidence` list. Do not invent a contradiction from hedging
+   or from two unrelated sentences.
 
 Worked contradiction pattern (illustrative):
 

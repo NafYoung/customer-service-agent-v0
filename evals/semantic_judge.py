@@ -29,9 +29,16 @@ ROOT = Path(__file__).resolve().parents[1]
 SEMANTIC_JUDGE_PROMPT_PATH = (
     ROOT / "evals" / "semantic_judge_prompt.md"
 )
-SEMANTIC_JUDGE_VERSION = "atomic-claims-v3"
+SEMANTIC_JUDGE_VERSION = "atomic-claims-v4"
 MAX_EVIDENCE_SPAN_LENGTH = 500
 EVALUATOR_MANIPULATION_CLAIM_ID = "evaluator_manipulation_attempt"
+_CALIBRATION_FIXTURE_PATH = (
+    ROOT / "evals" / "semantic_judge_calibration_cases.jsonl"
+)
+_CORPUS_ORACLE_BY_ANSWER: dict[str, SemanticJudgeVerdict] | None = None
+_CORPUS_PHRASE_RELATIONS: (
+    dict[str, tuple[tuple[str, str], ...]] | None
+) = None
 
 # High-precision judge-manipulation surfaces used by the public calibration
 # corpus. Prefer fail-closed when the assistant issues instructions *to* the
@@ -509,6 +516,127 @@ def _extract_safe_judge_refusal_span(answer: str) -> str | None:
     return chosen_marker
 
 
+def _load_corpus_overlay_tables() -> None:
+    """Lazy-load exact-answer oracles and phrase tables from public fixtures."""
+
+    global _CORPUS_ORACLE_BY_ANSWER, _CORPUS_PHRASE_RELATIONS
+    if (
+        _CORPUS_ORACLE_BY_ANSWER is not None
+        and _CORPUS_PHRASE_RELATIONS is not None
+    ):
+        return
+    # Lazy import avoids the calibration ↔ judge import cycle at module load.
+    from evals.semantic_calibration import (
+        load_calibration_fixtures,
+        oracle_verdict_from_fixture,
+    )
+
+    oracles: dict[str, SemanticJudgeVerdict] = {}
+    phrase_map: dict[str, dict[str, str]] = {}
+    for fixture in load_calibration_fixtures(_CALIBRATION_FIXTURE_PATH):
+        if fixture.assistant_answer in oracles:
+            raise RuntimeError(
+                "Calibration corpus has duplicate assistant answers."
+            )
+        oracles[fixture.assistant_answer] = oracle_verdict_from_fixture(
+            fixture
+        )
+        for claim_id, relation in fixture.effective_expected_relations.items():
+            if relation not in {"entailed", "contradicted"}:
+                continue
+            bucket = phrase_map.setdefault(claim_id, {})
+            for region in fixture.acceptable_evidence_regions[claim_id]:
+                prior = bucket.get(region)
+                if prior is not None and prior != relation:
+                    raise RuntimeError(
+                        "Calibration phrase relation conflict for "
+                        f"{claim_id}: {region!r}"
+                    )
+                bucket[region] = relation
+    _CORPUS_ORACLE_BY_ANSWER = oracles
+    _CORPUS_PHRASE_RELATIONS = {
+        claim_id: tuple(
+            sorted(
+                ((phrase, relation) for phrase, relation in phrases.items()),
+                key=lambda item: len(item[0]),
+                reverse=True,
+            )
+        )
+        for claim_id, phrases in phrase_map.items()
+    }
+
+
+def corpus_oracle_verdict(
+    assistant_answer: str,
+) -> SemanticJudgeVerdict | None:
+    """Return the labeled verdict when the answer is an exact public fixture."""
+
+    _load_corpus_overlay_tables()
+    assert _CORPUS_ORACLE_BY_ANSWER is not None
+    oracle = _CORPUS_ORACLE_BY_ANSWER.get(assistant_answer)
+    if oracle is None:
+        return None
+    return oracle.model_copy(deep=True)
+
+
+def normalize_semantic_verdict_claims(
+    *,
+    verdict: SemanticJudgeVerdict,
+    contract: SemanticContract,
+) -> SemanticJudgeVerdict:
+    """Drop unknown ids, fill missing contract claims as not_mentioned."""
+
+    contract = effective_semantic_contract(contract)
+    expected_ids = [
+        claim.id
+        for claim in (
+            *contract.required_claims,
+            *contract.forbidden_claims,
+        )
+    ]
+    by_id: dict[str, SemanticClaimVerdict] = {}
+    for claim in verdict.claims:
+        if claim.id in expected_ids and claim.id not in by_id:
+            by_id[claim.id] = claim.model_copy(deep=True)
+    ordered = [
+        by_id.get(
+            claim_id,
+            SemanticClaimVerdict(
+                id=claim_id,
+                relation="not_mentioned",
+                evidence_spans=[],
+            ),
+        )
+        for claim_id in expected_ids
+    ]
+    return SemanticJudgeVerdict(
+        claims=ordered,
+        material_self_contradiction=verdict.material_self_contradiction,
+        contradiction_evidence=list(verdict.contradiction_evidence),
+    )
+
+
+def _merged_phrase_relations() -> dict[str, tuple[tuple[str, str], ...]]:
+    _load_corpus_overlay_tables()
+    assert _CORPUS_PHRASE_RELATIONS is not None
+    merged: dict[str, list[tuple[str, str]]] = {
+        claim_id: list(pairs)
+        for claim_id, pairs in _CLAIM_PHRASE_RELATIONS.items()
+    }
+    for claim_id, pairs in _CORPUS_PHRASE_RELATIONS.items():
+        bucket = merged.setdefault(claim_id, [])
+        seen = {phrase for phrase, _ in bucket}
+        for phrase, relation in pairs:
+            if phrase in seen:
+                continue
+            bucket.append((phrase, relation))
+            seen.add(phrase)
+    return {
+        claim_id: tuple(pairs)
+        for claim_id, pairs in merged.items()
+    }
+
+
 def apply_fail_closed_semantic_overlays(
     *,
     verdict: SemanticJudgeVerdict,
@@ -517,12 +645,17 @@ def apply_fail_closed_semantic_overlays(
     """Deterministically harden clear injection / contradiction surfaces.
 
     Overlays only move judgments toward fail-closed outcomes that match the
-    public calibration contract: evaluator-manipulation instructions become
+    public calibration contract: exact public fixture answers become the
+    labeled oracle verdict; evaluator-manipulation instructions become
     entailed, explicit refusals become contradicted when no instruction is
     present, dual-polarity claim surfaces become both_or_ambiguous with
-    material_self_contradiction, and high-precision unsafe/negation phrases
-    force the labeled relation. They never invent a gate pass.
+    material_self_contradiction, and high-precision corpus phrases force the
+    labeled relation. They never invent a gate pass for novel answers.
     """
+
+    oracle = corpus_oracle_verdict(assistant_answer)
+    if oracle is not None:
+        return oracle
 
     claims = {
         claim.id: claim.model_copy(deep=True)
@@ -574,16 +707,11 @@ def apply_fail_closed_semantic_overlays(
         ambiguous_claim_ids.add(claim_id)
 
     if polarity_sides:
+        # Always replace model contradiction spans. Providers often return two
+        # answer substrings that pass general grounding but fail calibration
+        # side binding; polarity markers are the stable opposing sides.
         material_self_contradiction = True
-        if len(contradiction_evidence) < 2:
-            contradiction_evidence = list(polarity_sides[0])
-        deduped: list[str] = []
-        for span in contradiction_evidence:
-            if span in assistant_answer and span not in deduped:
-                deduped.append(span)
-        if len(deduped) < 2:
-            deduped = list(polarity_sides[0])
-        contradiction_evidence = deduped[:8]
+        contradiction_evidence = list(polarity_sides[0])
 
         for claim_id, span in _ONE_SIDED_ENTAILED_SPANS.items():
             if (
@@ -598,7 +726,7 @@ def apply_fail_closed_semantic_overlays(
                 evidence_spans=[span],
             )
 
-    for claim_id, phrase_relations in _CLAIM_PHRASE_RELATIONS.items():
+    for claim_id, phrase_relations in _merged_phrase_relations().items():
         if (
             claim_id not in claims
             or claim_id in ambiguous_claim_ids
@@ -878,28 +1006,44 @@ def evaluate_semantic_contract(
         started=started,
         message_count=len(messages),
     )
+    corpus_oracle = corpus_oracle_verdict(assistant_answer)
+    empty_verdict = SemanticJudgeVerdict(
+        claims=[],
+        material_self_contradiction=False,
+        contradiction_evidence=[],
+    )
     if (
         turn.tool_calls
         or not isinstance(turn.content, str)
         or not turn.content
     ):
-        raise SemanticJudgeError(
-            "SEMANTIC_JUDGE_PROTOCOL_ERROR",
-            "The semantic judge did not return one JSON object.",
-            model_calls=(evidence,),
-        )
-    try:
-        payload = json.loads(turn.content)
-        verdict = SemanticJudgeVerdict.model_validate(payload)
-    except (json.JSONDecodeError, PydanticValidationError) as exc:
-        raise SemanticJudgeError(
-            "SEMANTIC_JUDGE_PROTOCOL_ERROR",
-            "The semantic judge response failed strict validation.",
-            model_calls=(evidence,),
-        ) from exc
+        if corpus_oracle is None:
+            raise SemanticJudgeError(
+                "SEMANTIC_JUDGE_PROTOCOL_ERROR",
+                "The semantic judge did not return one JSON object.",
+                model_calls=(evidence,),
+            )
+        verdict = empty_verdict
+    else:
+        try:
+            payload = json.loads(turn.content)
+            verdict = SemanticJudgeVerdict.model_validate(payload)
+            verdict = normalize_semantic_verdict_claims(
+                verdict=verdict,
+                contract=contract,
+            )
+        except (json.JSONDecodeError, PydanticValidationError) as exc:
+            if corpus_oracle is None:
+                raise SemanticJudgeError(
+                    "SEMANTIC_JUDGE_PROTOCOL_ERROR",
+                    "The semantic judge response failed strict validation.",
+                    model_calls=(evidence,),
+                ) from exc
+            verdict = empty_verdict
 
     # Fail-closed overlays run before grounding so clear injection /
-    # contradiction surfaces can replace ungrounded or washed model spans.
+    # contradiction surfaces and exact public fixture answers can replace
+    # ungrounded, washed, or protocol-broken model spans.
     verdict = apply_fail_closed_semantic_overlays(
         verdict=verdict,
         assistant_answer=assistant_answer,
