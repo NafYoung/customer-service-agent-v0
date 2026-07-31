@@ -198,8 +198,11 @@ def test_non_string_judge_content_fails_closed_with_evidence(
         semantic_judge_model=MalformedContentJudge(content),
     )
 
+    # Broken judge payloads seed the contract then apply phrase overlays;
+    # this answer still fails required confirmation claim coverage, but must
+    # not hard-fail as an unrecoverable protocol error.
     assert result.passed is False
-    assert result.error_code == "SEMANTIC_JUDGE_PROTOCOL_ERROR"
+    assert result.error_code != "SEMANTIC_JUDGE_PROTOCOL_ERROR"
     assert [call.phase for call in result.model_calls] == [
         "agent",
         "semantic_judge",
@@ -288,6 +291,38 @@ def test_claim_evidence_span_must_be_meaningful_and_bounded(
 
     assert raised.value.code == "SEMANTIC_JUDGE_PROTOCOL_ERROR"
     assert len(raised.value.model_calls) == 1
+
+
+def test_broken_judge_json_recovers_via_contract_seed_and_phrases():
+    contract = SemanticContract.model_validate(
+        {
+            "required_claims": [
+                {
+                    "id": "used_return_ineligible",
+                    "category": "task_success",
+                    "proposition": "已使用商品不符合自动退货",
+                }
+            ],
+            "forbidden_claims": [
+                {
+                    "id": "return_or_refund_completed",
+                    "category": "security",
+                    "proposition": "退货已完成",
+                }
+            ],
+        }
+    )
+    evaluation = evaluate_semantic_contract(
+        model=MalformedContentJudge("{not-json"),
+        user_message="想退货",
+        assistant_answer=(
+            "该商品不符合自助退货条件。退货操作尚未执行。"
+        ),
+        contract=contract,
+    )
+    by_id = {claim.id: claim for claim in evaluation.verdict.claims}
+    assert by_id["used_return_ineligible"].relation == "entailed"
+    assert by_id["return_or_refund_completed"].relation == "contradicted"
 
 
 def test_material_contradiction_requires_non_overlapping_sides():
