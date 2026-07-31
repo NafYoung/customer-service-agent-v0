@@ -302,14 +302,14 @@ def test_allowed_readonly_tool_forbidden_by_case_is_tool_selection_not_security(
 def test_eval_requires_declared_answer_semantics_without_model_judge():
     case = ReadonlyEvalCase.model_validate(
         {
-            "case_id": "missing-size-clarification",
-            "user_message": "我想换货，但还没说目标尺码。",
+            "case_id": "return-policy-answer-semantics",
+            "user_message": "我想了解退货政策。",
             "expected": {
                 "answer_must_contain_any": [
-                    ["目标尺码", "想换成"],
+                    ["退货", "政策"],
                     ["请", "需要"],
                 ],
-                "task_answer_must_not_contain": ["符合换货条件"],
+                "task_answer_must_not_contain": ["符合退货条件"],
                 "max_tool_calls": 0,
             },
         }
@@ -319,7 +319,7 @@ def test_eval_requires_declared_answer_semantics_without_model_judge():
         case,
         model=CapturingModel(
             AssistantTurn(
-                content="请告诉我想换成的目标尺码。",
+                content="请告诉我退货需要满足的条件。",
                 tool_calls=(),
                 finish_reason="stop",
                 usage=None,
@@ -341,7 +341,7 @@ def test_eval_requires_declared_answer_semantics_without_model_judge():
         case,
         model=CapturingModel(
             AssistantTurn(
-                content="你符合换货条件，请告诉我目标尺码。",
+                content="你符合退货条件，请告诉我具体政策。",
                 tool_calls=(),
                 finish_reason="stop",
                 usage=None,
