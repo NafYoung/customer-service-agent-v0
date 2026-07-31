@@ -1119,8 +1119,9 @@ def test_calibration_grounding_failure_preserves_judge_call_evidence() -> None:
         if fixture.fixture_id
         == "cal_reg_used_return_direct_eligibility_safe_canonical"
     )
-    # Novel answer text: avoids exact-answer oracle and corpus phrase overlays,
-    # so an ungrounded evidence span still fails closed after overlays.
+    # Novel answer text: avoids exact-answer oracle and corpus phrase overlays.
+    # Ungrounded judge spans wash to a seeded baseline; calibration then fails
+    # closed on relation mismatch while still preserving the judge call.
     mutated = fixture.model_copy(
         update={
             "assistant_answer": "占位答复，不含公开语料标注片段。",
@@ -1160,7 +1161,7 @@ def test_calibration_grounding_failure_preserves_judge_call_evidence() -> None:
     )
 
     assert result.passed is False
-    assert result.error_code == "SEMANTIC_JUDGE_PROTOCOL_ERROR"
+    assert result.error_code is None
     assert len(result.model_calls) == 1
     assert result.model_calls[0]["phase"] == "semantic_judge"
 
