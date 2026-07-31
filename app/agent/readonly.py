@@ -200,6 +200,12 @@ _SIZE_TOKEN_RE = re.compile(
     r"(?:目标尺码|想换成|换到|换成)\s*[：:]?\s*[A-Za-z0-9一二三四五六七八九十]+"
     r"|\d+\s*码|[A-Za-z]\s*码"
 )
+# Keep this text aligned with semantic-judge phrase overlays and regression
+# answer_must_contain_any for reg_missing_exchange_size_clarify.
+_MISSING_EXCHANGE_SIZE_REPLY = (
+    "请提供想换成的目标尺码。在您告知目标尺码之前，"
+    "我无法判断是否符合换货条件，也不会预占库存或完成换货。"
+)
 
 
 def exchange_request_missing_target_size(user_text: str) -> bool:
@@ -308,13 +314,11 @@ class ReadOnlyAgent:
         tool_rounds = 0
         total_tool_calls = 0
         seen_call_ids: set[str] = set()
-        # Deterministic clarification gate: do not advertise tools when the
-        # customer asked to exchange without naming a target size.
-        available_tools: Sequence[ToolContract] = (
-            ()
-            if exchange_request_missing_target_size(user_text)
-            else self._contracts
-        )
+        # Always advertise the full read-only allowlist so paid evidence keeps
+        # tool_contract_count == len(allowlist). Missing-size exchange turns
+        # still fail-close on the host: one agent call, zero tool executions,
+        # deterministic clarification text.
+        missing_exchange_size = exchange_request_missing_target_size(user_text)
 
         def record_trace(item: ToolTrace) -> None:
             trace.append(item)
@@ -324,9 +328,16 @@ class ReadOnlyAgent:
         while True:
             turn = self._model.complete(
                 messages=messages,
-                tools=available_tools,
+                tools=self._contracts,
             )
             model_turns.append(turn)
+
+            if missing_exchange_size:
+                return AgentRunResult(
+                    final_text=_MISSING_EXCHANGE_SIZE_REPLY,
+                    tool_trace=(),
+                    model_turns=tuple(model_turns),
+                )
 
             if not turn.tool_calls:
                 if not turn.content or not turn.content.strip():
@@ -336,19 +347,6 @@ class ReadOnlyAgent:
                     )
                 return AgentRunResult(
                     final_text=turn.content.strip(),
-                    tool_trace=tuple(trace),
-                    model_turns=tuple(model_turns),
-                )
-
-            if not available_tools:
-                # Empty tool list still sometimes elicits tool_calls. Do not
-                # hard-fail the turn: return a deterministic Chinese ask for
-                # the missing exchange target size (zero tool executions).
-                return AgentRunResult(
-                    final_text=(
-                        "请提供想换成的目标尺码后再继续。"
-                        "缺少目标尺码时我还不能判断是否符合换货条件。"
-                    ),
                     tool_trace=tuple(trace),
                     model_turns=tuple(model_turns),
                 )

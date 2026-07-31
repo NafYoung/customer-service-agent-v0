@@ -542,5 +542,6 @@ def test_exchange_without_target_size_returns_chinese_clarify_without_tools():
     assert "目标尺码" in result.final_text
     assert "请" in result.final_text
     assert len(model.calls) == 1
-    assert list(model.calls[0]["tools"]) == []
+    assert len(model.calls[0]["tools"]) == len(get_read_only_tool_contracts())
+    assert result.model_turns[0].tool_calls
     database.engine.dispose()
