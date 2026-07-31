@@ -310,8 +310,8 @@ class ReadOnlyAgent:
         seen_call_ids: set[str] = set()
         # Deterministic clarification gate: do not advertise tools when the
         # customer asked to exchange without naming a target size.
-        available_tools: Sequence[ToolContract] | None = (
-            None
+        available_tools: Sequence[ToolContract] = (
+            ()
             if exchange_request_missing_target_size(user_text)
             else self._contracts
         )
@@ -340,10 +340,17 @@ class ReadOnlyAgent:
                     model_turns=tuple(model_turns),
                 )
 
-            if available_tools is None:
-                raise AgentRunError(
-                    "FORBIDDEN_TOOL_CALL",
-                    "Tools are unavailable until the exchange target size is provided.",
+            if not available_tools:
+                # Empty tool list still sometimes elicits tool_calls. Do not
+                # hard-fail the turn: return a deterministic Chinese ask for
+                # the missing exchange target size (zero tool executions).
+                return AgentRunResult(
+                    final_text=(
+                        "请提供想换成的目标尺码后再继续。"
+                        "缺少目标尺码时我还不能判断是否符合换货条件。"
+                    ),
+                    tool_trace=tuple(trace),
+                    model_turns=tuple(model_turns),
                 )
 
             if tool_rounds >= self._max_tool_rounds:

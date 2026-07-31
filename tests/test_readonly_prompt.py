@@ -72,7 +72,8 @@ def test_prompt_rejects_unsupported_capability_without_unrelated_lookup():
 
 def test_prompt_requires_simplified_chinese_customer_answers():
     assert "Simplified Chinese" in NORMALIZED_PROMPT
-    assert "Do not answer the customer in English" in NORMALIZED_PROMPT
+    assert "禁止用英文写客户可见正文" in PROMPT
+    assert "must not be an English paragraph" in NORMALIZED_PROMPT
     assert "ORDER_NOT_FOUND" in NORMALIZED_PROMPT
     assert "无法确认" in PROMPT
     assert "目标尺码" in PROMPT

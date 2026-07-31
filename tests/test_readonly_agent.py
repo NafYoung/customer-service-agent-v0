@@ -517,3 +517,30 @@ def test_agent_rejects_entire_batch_when_one_call_has_invalid_schema():
     with database.session() as session:
         assert session.scalar(select(func.count()).select_from(ToolEvent)) == 0
     database.engine.dispose()
+
+
+def test_exchange_without_target_size_returns_chinese_clarify_without_tools():
+    database, tools, context, _ = build_runtime()
+    model = ScriptedModel(
+        tool_turn(
+            "check_action_eligibility",
+            '{"action_type":"EXCHANGE_ITEM","order_id":"ORD-1003",'
+            '"order_item_id":"ITEM-1003-A","declared_condition":"NEW_UNWORN",'
+            '"issue_type":"SIZE_MISMATCH","target_size":"43"}',
+        )
+    )
+    agent = ReadOnlyAgent(model=model, tools=tools)
+
+    with database.session() as session:
+        result = agent.run(
+            session,
+            user_text="ORD-1003 的 ITEM-1003-A 尺码不合适，想换货。",
+            context=context,
+        )
+
+    assert result.tool_trace == ()
+    assert "目标尺码" in result.final_text
+    assert "请" in result.final_text
+    assert len(model.calls) == 1
+    assert list(model.calls[0]["tools"]) == []
+    database.engine.dispose()
