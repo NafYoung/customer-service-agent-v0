@@ -15,7 +15,7 @@
 | 本地 `public_demo` 离线切片 | 可跑 |
 | Docker `public_demo` profile（无 DeepSeek Key） | 可跑 |
 | 发布卫生脚本 | `scripts/check_public_demo_secrets.sh` + `scripts/check_publish_preflight.sh` |
-| 公开 GitHub URL | **未创建**（需作者授权 push） |
+| 公开 GitHub URL | **已创建**：[NafYoung/customer-service-agent-v0](https://github.com/NafYoung/customer-service-agent-v0) |
 | 托管演示 URL | **未部署** |
 | README 指标与 holdout 叙事 | 已与 `docs/09` 对齐 |
 

@@ -24,7 +24,7 @@
 
 尚未完成 / 明确不做：
 
-- 公开 GitHub 仓库与托管演示 URL（Phase 6；清单见
+- 公开 GitHub 仓库与托管演示 URL（仓库已公开；托管仍见
   `docs/12_phase6_publish_checklist.md`）；
 - PostgreSQL 高并发库存、完整故障注入与生产身份 / 审计系统；
 - 向量检索、真实电商 / ERP / 物流 / 支付接口；

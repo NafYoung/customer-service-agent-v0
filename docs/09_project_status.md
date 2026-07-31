@@ -37,9 +37,10 @@ holdout 失败后加固链：`9337e55`（prompt/回归）→ `84eca79` / `69030d
 | 公开回归 7×4（holdout 绑定历史） | historical | `eval-20260731t080946z-dd64553ceb3e` **28/28** @ `8884b1a` |
 | 公开回归 7×4（加固后现役） | **passed** | `eval-20260731t102036z-9be142ce84ec` **28/28** @ `f7f221a`；`pass^4=1.00`；业务写入 0 |
 | holdout v2 | **failed / retired** | 唯一正式跑 44/80、`pass^4=0.40`；禁止同题集重跑；见 `docs/testing/holdout-v2-postmortem.md` |
-| 宿主确认、并发、UI、公开演示 | partial | 本地 public_demo 可跑；Phase 6 清单已写，GitHub/托管 URL pending |
+| 宿主确认、并发、UI、公开演示 | partial | 本地 public_demo 可跑；公开仓已建，托管演示 URL pending |
 | 作品集对外叙事 | **updated** | README 指标与 holdout FAIL→加固→复验对齐；`docs/12_phase6_publish_checklist.md` |
-| 生产运行态 | not-applicable | 没有远端、部署或公开 URL |
+| 公开 GitHub | **created** | https://github.com/NafYoung/customer-service-agent-v0 （`main` @ `5de421f` 起） |
+| 生产运行态 | not-applicable | 尚无托管演示 URL |
 
 ## 预算账本策略
 
@@ -127,7 +128,7 @@ holdout，需在干净树上重绑校准 + 同提交公开回归。
 3. ~~holdout v2 唯一正式运行。~~ **已跑；未过门；题集退役。**
 4. ~~holdout 失败后 Prompt/回归/裁判加固 + 公开 7×4 复验。~~ **完成。**
 5. ~~作品集叙事收口（README + Phase 6 清单）。~~ **完成（本地）。**
-6. Phase 6 执行（需作者授权）：`./scripts/check_publish_preflight.sh` → 创建公开远程 → push → 可选托管；见 `docs/12_phase6_publish_checklist.md`。
+6. Phase 6：公开仓已创建并 push；可选托管演示仍待选平台（见 `docs/12_phase6_publish_checklist.md` §D）。
 7. 可选（需新授权）：新 holdout 题集（新 `case_set_sha256`，先重绑校准）；**禁止**同题集调参重跑。
 
 ## 不可突破的恢复边界
