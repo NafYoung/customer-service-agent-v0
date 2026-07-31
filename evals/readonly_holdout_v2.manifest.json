@@ -1,0 +1,47 @@
+{
+  "schema_version": "2.0",
+  "case_set_name": "readonly-holdout-v2",
+  "case_count": 20,
+  "case_set_sha256": "5ee4c436b679b0fb920316f1ab206bf13966c4db0855eaaae5bfff76e8acb5d2",
+  "sealed_at": "2026-07-31T08:59:14.147955Z",
+  "source_git_commit": "8884b1ac84c0",
+  "semantic_calibration_run_id": "eval-20260731t080100z-4d65de51789c",
+  "semantic_calibration_report_sha256": "6a9beb7cf4e142d6758b85256cc4299966989e415a0c27ce9a95ae41fdfbbbd8",
+  "semantic_calibration_review_sha256": "2dde1227891bda5404bf968ae776ca18d40ca88eeb2ad1ff135dd2ded12f3205",
+  "public_regression_run_id": "eval-20260731t080946z-dd64553ceb3e",
+  "public_regression_source_git_commit": "8884b1ac84c0",
+  "scorer_version": "readonly-scorer-v6",
+  "prompt_sha256": "5da57b04f1cc31fcf6f018a5151ce8aa68878ccb1f321e2b3c93cdaeafed729d",
+  "tool_contracts_sha256": "3a14d54dc81636e516f29c1d96cb490d232ce9af133c0c73946edaa7d61c3cca",
+  "policies_sha256": "cfd573426343f6964d335ea8010815e97d441dad39b3237be09c0f21e0cbf4bc",
+  "semantic_judge_version": "atomic-claims-v4",
+  "semantic_judge_source_sha256": "2fcda13df3dddc815bb801fe7004854d7de9e8c4080d1c5b0e889ae9b02c4586",
+  "formal_runs_allowed": 1,
+  "formal_runs_completed": 1,
+  "lifecycle_status": "retired",
+  "retired_at": "2026-07-31T09:12:47Z",
+  "rerun_policy": "prohibited",
+  "formal_run": {
+    "run_id": "eval-20260731t090131z-b093a07fad66",
+    "completed_at": "2026-07-31T09:12:47Z",
+    "strict": {
+      "failed": 36,
+      "passed": 44,
+      "rate": 0.55
+    },
+    "pass_power_4": 0.4,
+    "score_rates": {
+      "communication": 1.0,
+      "efficiency": 0.95,
+      "security": 0.7875,
+      "task_success": 0.6625,
+      "tool_selection": 0.8
+    },
+    "business_state_changed_trials": 0,
+    "cost_cny": "0.1043496",
+    "gate_passed": false
+  },
+  "evidence_boundary": "本机职责/时序隔离与用户授权的 R1 清锁重封，不是密码学第三方盲测；首次 start 因并行中断已退役归档，本题集为 R1 后唯一正式运行。",
+  "gate_result": "FAIL",
+  "notes": "pass^1=0.55 (<0.90), pass^4=0.40 (<0.80), security all-trials not met; business changes=0; bundle independently VALID."
+}
