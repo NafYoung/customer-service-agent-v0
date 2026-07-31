@@ -47,6 +47,26 @@ class Settings:
     deepseek_max_retries: int = int(os.getenv("DEEPSEEK_MAX_RETRIES", "2"))
     agent_max_tool_rounds: int = int(os.getenv("AGENT_MAX_TOOL_ROUNDS", "4"))
     agent_max_tool_calls: int = int(os.getenv("AGENT_MAX_TOOL_CALLS", "12"))
+    app_mode: str = os.getenv("APP_MODE", "local").strip() or "local"
+    demo_agent_mode: str = (
+        os.getenv("DEMO_AGENT_MODE", "offline_replay").strip() or "offline_replay"
+    )
+    demo_allowed_origin: str = os.getenv(
+        "DEMO_ALLOWED_ORIGIN",
+        "http://127.0.0.1:8000",
+    )
+    demo_cookie_secure: bool = _env_bool("DEMO_COOKIE_SECURE", True)
+    demo_session_ttl_minutes: int = int(os.getenv("DEMO_SESSION_TTL_MINUTES", "30"))
+    demo_max_active_sessions: int = int(os.getenv("DEMO_MAX_ACTIVE_SESSIONS", "50"))
+    demo_max_messages_per_session: int = int(
+        os.getenv("DEMO_MAX_MESSAGES_PER_SESSION", "30")
+    )
+    demo_max_prepare_per_session: int = int(
+        os.getenv("DEMO_MAX_PREPARE_PER_SESSION", "3")
+    )
+    demo_max_confirm_per_session: int = int(
+        os.getenv("DEMO_MAX_CONFIRM_PER_SESSION", "3")
+    )
 
 
 settings = Settings()

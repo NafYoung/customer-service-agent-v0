@@ -55,11 +55,27 @@
 - DeepSeek 语义裁判的付费校准、七类公开回归 4-trial 复验和全新
   holdout v2 唯一正式运行；
 - 向量或混合检索；
-- Web 聊天界面；
-- Preparation Agent 与规范化确认卡之间的宿主控制流；
+- 公开演示的 Phase 5 并发证明与 GitHub/托管发布门（本地 public_demo
+  切片见下方 WIP）；
 - PostgreSQL 高并发库存控制；
 - 完整安全审计与生产身份系统；
 - 真实电商、ERP、物流和支付接口。
+
+## Public demo (WIP)
+
+本地可跑通同域离线演示（不携带 DeepSeek Key，不注册公开 `/v1` 写路由）：
+
+```bash
+APP_MODE=public_demo \
+DEMO_AGENT_MODE=offline_replay \
+DEMO_ALLOWED_ORIGIN=http://127.0.0.1:8000 \
+DEMO_COOKIE_SECURE=false \
+.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+
+打开 `http://127.0.0.1:8000/`。进度与验收缺口见
+`docs/10_public_demo_status.md`；安全设计见
+`docs/08_host_confirmation_public_demo.md`。
 
 ## 架构
 

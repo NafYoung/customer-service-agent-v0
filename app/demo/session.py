@@ -1,0 +1,194 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, replace
+from datetime import datetime, timedelta
+from pathlib import Path
+from threading import Lock
+
+from app.config import Settings
+from app.database import Database
+from app.demo.security import random_token, token_hash
+from app.errors import ConflictError, ServiceError, ValidationError
+from app.seed import seed_demo_data
+from app.tools.facade import CustomerServiceTools, ToolCallContext
+from app.tools.factory import build_tools
+from app.utils import utcnow
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+POLICY_DIR = PROJECT_ROOT / "policies"
+DEMO_CUSTOMER_EMAIL = "linfan@example.com"
+DEMO_CUSTOMER_DISPLAY_NAME = "林帆"
+
+
+@dataclass
+class DemoSession:
+    cookie_token_hash: str
+    csrf_token: str
+    csrf_token_hash: str
+    customer_id: str
+    customer_display_name: str
+    auth_token: str
+    conversation_id: str
+    server_run_id: str
+    pending_approval_id: str | None
+    pending_preview_hash: str | None
+    pending_ui_event_id: str | None
+    message_count: int
+    prepare_count: int
+    confirm_count: int
+    expires_at: datetime
+    database: Database
+    tools: CustomerServiceTools
+    settings: Settings
+
+    def is_expired(self, now: datetime | None = None) -> bool:
+        return (now or utcnow()) >= self.expires_at
+
+
+class DemoSessionManager:
+    """In-process ephemeral demo sessions with isolated SQLite runtimes."""
+
+    def __init__(self, base_settings: Settings):
+        self._base_settings = base_settings
+        self._sessions: dict[str, DemoSession] = {}
+        self._lock = Lock()
+        self.provider_http_calls = 0
+
+    @property
+    def active_count(self) -> int:
+        with self._lock:
+            self._purge_locked(utcnow())
+            return len(self._sessions)
+
+    def create(self) -> tuple[str, DemoSession]:
+        with self._lock:
+            now = utcnow()
+            self._purge_locked(now)
+            if len(self._sessions) >= self._base_settings.demo_max_active_sessions:
+                raise ConflictError(
+                    "DEMO_SESSION_LIMIT",
+                    "公开演示活动会话已达上限，请稍后重试。",
+                    status_code=429,
+                )
+            cookie_token = random_token(32)
+            session = self._build_session(cookie_token=cookie_token, now=now)
+            self._sessions[session.cookie_token_hash] = session
+            return cookie_token, session
+
+    def get(self, cookie_token: str) -> DemoSession:
+        with self._lock:
+            now = utcnow()
+            self._purge_locked(now)
+            session = self._sessions.get(token_hash(cookie_token))
+            if session is None or session.is_expired(now):
+                if session is not None:
+                    self._dispose_locked(session.cookie_token_hash)
+                raise ValidationError(
+                    "DEMO_SESSION_EXPIRED",
+                    "演示会话已过期，请重新开始。",
+                    status_code=401,
+                )
+            return session
+
+    def reset(self, cookie_token: str) -> tuple[str, DemoSession]:
+        with self._lock:
+            now = utcnow()
+            self._purge_locked(now)
+            old_hash = token_hash(cookie_token)
+            if old_hash in self._sessions:
+                self._dispose_locked(old_hash)
+            cookie_token_new = random_token(32)
+            session = self._build_session(cookie_token=cookie_token_new, now=now)
+            self._sessions[session.cookie_token_hash] = session
+            return cookie_token_new, session
+
+    def dispose_all(self) -> None:
+        with self._lock:
+            for key in list(self._sessions):
+                self._dispose_locked(key)
+
+    def _build_session(self, *, cookie_token: str, now: datetime) -> DemoSession:
+        csrf_token = random_token(32)
+        host_token = (
+            self._base_settings.host_confirmation_token
+            or f"demo-host-{random_token(16)}"
+        )
+        session_settings = replace(
+            self._base_settings,
+            database_url="sqlite:///:memory:",
+            host_confirmation_token=host_token,
+            enable_debug_routes=False,
+            debug_admin_token=None,
+            deepseek_api_key=None,
+        )
+        database = Database(session_settings.database_url)
+        database.create_all()
+        seed_demo_data(database, session_settings)
+        tools = build_tools(session_settings, policy_dir=POLICY_DIR)
+        with database.session() as db_session:
+            auth = tools.auth_service.authenticate(
+                db_session,
+                email=DEMO_CUSTOMER_EMAIL,
+                verification_code=session_settings.demo_verification_code,
+            )
+        return DemoSession(
+            cookie_token_hash=token_hash(cookie_token),
+            csrf_token=csrf_token,
+            csrf_token_hash=token_hash(csrf_token),
+            customer_id=auth.customer_id,
+            customer_display_name=DEMO_CUSTOMER_DISPLAY_NAME,
+            auth_token=auth.access_token,
+            conversation_id=f"demo-conv-{random_token(8)}",
+            server_run_id=f"demo-run-{random_token(8)}",
+            pending_approval_id=None,
+            pending_preview_hash=None,
+            pending_ui_event_id=None,
+            message_count=0,
+            prepare_count=0,
+            confirm_count=0,
+            expires_at=now
+            + timedelta(minutes=session_settings.demo_session_ttl_minutes),
+            database=database,
+            tools=tools,
+            settings=session_settings,
+        )
+
+    def _purge_locked(self, now: datetime) -> None:
+        expired = [
+            key for key, session in self._sessions.items() if session.is_expired(now)
+        ]
+        for key in expired:
+            self._dispose_locked(key)
+
+    def _dispose_locked(self, cookie_token_hash: str) -> None:
+        session = self._sessions.pop(cookie_token_hash, None)
+        if session is not None:
+            session.database.engine.dispose()
+
+
+def bump_or_limit(
+    session: DemoSession,
+    *,
+    counter: str,
+    limit: int,
+    code: str,
+    message: str,
+) -> None:
+    current = getattr(session, counter)
+    if current >= limit:
+        raise ServiceError(code, message, status_code=429)
+    setattr(session, counter, current + 1)
+
+
+def tool_context(
+    session: DemoSession,
+    *,
+    tool_call_id: str | None = None,
+) -> ToolCallContext:
+    return ToolCallContext(
+        run_id=session.server_run_id,
+        server_run_id=session.server_run_id,
+        origin_tool_call_id=tool_call_id,
+        auth_token=session.auth_token,
+        conversation_id=session.conversation_id,
+    )
