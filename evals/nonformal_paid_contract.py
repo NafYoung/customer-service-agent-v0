@@ -50,7 +50,7 @@ DEV_REPEAT_CASE_CONTRACT = NonformalPaidCaseContract(
     case_set_name="readonly-regression-v1",
     case_count=7,
     case_set_sha256=(
-        "6340394c8edd5d95c2756f3f4753d4e224682b7f84a445c76b3abb675bad2edb"
+        "047efbb77af8eea82291baa05d791ba46da1f196a6dbaddb8a67d4a63ac0b3a6"
     ),
     case_ids=(
         "reg_used_return_direct_eligibility",

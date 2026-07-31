@@ -2469,7 +2469,7 @@ def test_dev_repeat_manifest_accepts_only_canonical_7_by_4_case_set() -> None:
     assert manifest["eval"]["case_count"] == 7
     assert (
         manifest["eval"]["case_set_sha256"]
-        == "6340394c8edd5d95c2756f3f4753d4e224682b7f84a445c76b3abb675bad2edb"
+        == "047efbb77af8eea82291baa05d791ba46da1f196a6dbaddb8a67d4a63ac0b3a6"
     )
 
 

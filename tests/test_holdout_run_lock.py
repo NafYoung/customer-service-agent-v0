@@ -100,7 +100,7 @@ def _regression_gate(**overrides: object) -> SimpleNamespace:
         "source_git_commit": "2" * 40,
         "case_set_name": "readonly-regression-v1",
         "case_set_sha256": (
-            "6340394c8edd5d95c2756f3f4753d4e224682b7f84a445c76b3abb675bad2edb"
+            "047efbb77af8eea82291baa05d791ba46da1f196a6dbaddb8a67d4a63ac0b3a6"
         ),
         "harness_sha256": harness_sha256,
         "source_tree_sha256": source_snapshot["source_tree_sha256"],
