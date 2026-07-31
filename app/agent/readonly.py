@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -194,6 +195,22 @@ def _assistant_message(turn: AssistantTurn) -> Message:
     return message
 
 
+_EXCHANGE_INTENT_MARKERS = ("换货", "换成", "换到", "调换")
+_SIZE_TOKEN_RE = re.compile(
+    r"(?:目标尺码|想换成|换到|换成)\s*[：:]?\s*[A-Za-z0-9一二三四五六七八九十]+"
+    r"|\d+\s*码|[A-Za-z]\s*码"
+)
+
+
+def exchange_request_missing_target_size(user_text: str) -> bool:
+    """Host-side gate: exchange intent without an explicit target size."""
+
+    text = user_text.strip()
+    if not any(marker in text for marker in _EXCHANGE_INTENT_MARKERS):
+        return False
+    return _SIZE_TOKEN_RE.search(text) is None
+
+
 def _tool_error(code: str, message: str) -> str:
     return json.dumps(
         {
@@ -291,6 +308,13 @@ class ReadOnlyAgent:
         tool_rounds = 0
         total_tool_calls = 0
         seen_call_ids: set[str] = set()
+        # Deterministic clarification gate: do not advertise tools when the
+        # customer asked to exchange without naming a target size.
+        available_tools: Sequence[ToolContract] | None = (
+            None
+            if exchange_request_missing_target_size(user_text)
+            else self._contracts
+        )
 
         def record_trace(item: ToolTrace) -> None:
             trace.append(item)
@@ -300,7 +324,7 @@ class ReadOnlyAgent:
         while True:
             turn = self._model.complete(
                 messages=messages,
-                tools=self._contracts,
+                tools=available_tools,
             )
             model_turns.append(turn)
 
@@ -314,6 +338,12 @@ class ReadOnlyAgent:
                     final_text=turn.content.strip(),
                     tool_trace=tuple(trace),
                     model_turns=tuple(model_turns),
+                )
+
+            if available_tools is None:
+                raise AgentRunError(
+                    "FORBIDDEN_TOOL_CALL",
+                    "Tools are unavailable until the exchange target size is provided.",
                 )
 
             if tool_rounds >= self._max_tool_rounds:
