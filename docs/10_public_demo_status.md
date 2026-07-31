@@ -19,6 +19,8 @@
 
 ## 如何运行
 
+### 本机（推荐，本地 trust / 调试）
+
 ```bash
 cd customer-service-agent-v0
 source .venv/bin/activate
@@ -31,7 +33,21 @@ DEMO_COOKIE_SECURE=false \
 .venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
-打开 `http://127.0.0.1:8000/`。
+打开 `http://127.0.0.1:8000/`。本地 trust / 付费 DeepSeek 仍用宿主 `.venv`，
+**不要**把项目 Key 写进 Compose 或镜像。
+
+### Docker（可选 public_demo profile）
+
+```bash
+# 发布卫生（只打印路径/模式名，不打印秘密值）
+./scripts/check_public_demo_secrets.sh
+
+docker compose --profile public_demo up --build public-demo
+```
+
+镜像以非 root `appuser` 运行；`.dockerignore` 排除 `.env` / `.venv` /
+`artifacts` / `*.db`；Compose 的 `public_demo` profile **不**注入
+`DEEPSEEK_API_KEY`。
 
 建议演示路径：
 
@@ -44,6 +60,12 @@ DEMO_COOKIE_SECURE=false \
 
 ```bash
 .venv/bin/python -m pytest tests/test_public_demo.py -q
+.venv/bin/python -m pytest \
+  tests/test_action_concurrency.py \
+  tests/test_public_demo.py \
+  tests/test_api_actions.py -q
+# 最近一次（2026-07-31）：23 passed
+#   concurrency 2 / public_demo 13 / api_actions 8
 ```
 
 ## 已交付
@@ -55,7 +77,10 @@ DEMO_COOKIE_SECURE=false \
 | 确认卡仅投影 DB canonical preview；按钮确认；宿主令牌服务端 | 完成 |
 | 每会话 ephemeral SQLite + seed；reset 轮换 Cookie | 完成 |
 | 同域静态 UI（RIVET 品牌） | 完成 |
-| `tests/test_public_demo.py` | 完成 |
+| `tests/test_public_demo.py`（13） | 完成 |
+| Docker 非 root + 精简 COPY + `.dockerignore` 密钥卫生 | 完成 |
+| `scripts/check_public_demo_secrets.sh` | 完成 |
+| Compose `public_demo` profile（无 DeepSeek Key） | 完成 |
 | 本运行说明 | 完成 |
 
 ## 尚未完成（留给后续）
@@ -63,12 +88,12 @@ DEMO_COOKIE_SECURE=false \
 ### Phase 5（并发 / 故障）
 
 - **骨架已落**：`docs/11_phase5_concurrency_plan.md` + `tests/test_action_concurrency.py`
-  （SQLite 可证：EXECUTING 认领、幂等重放、竞争 confirm 不双执行）
+  （SQLite 可证：幂等重放、竞争 confirm 不双执行；2/2 通过）
 - 仍待：PostgreSQL + Alembic、库存竞争、故障注入与完整回滚、跨连接丢响应重试
 
 ### Phase 6 发布门（GitHub / 公开站）
 
-- Docker 非 root、依赖锁、部署 CSP/密钥扫描
+- 依赖锁、部署 CSP、完整秘密扫描（Git 历史 / 镜像层）
 - 公开 GitHub 与托管演示链接
 - README 正式 3–5 分钟演示路径与指标汇总（本切片仅 WIP 注记）
 - 端到端浏览器网络抓包验收、活动会话/速率门的更完整压测
@@ -83,6 +108,8 @@ DEMO_COOKIE_SECURE=false \
 - `app/demo/` — BFF、会话、离线回放、确认投影
 - `app/static/demo/` — UI
 - `app/main.py` / `app/config.py` — 模式开关
+- `Dockerfile` / `docker-compose.yml` / `.dockerignore`
+- `scripts/check_public_demo_secrets.sh`
 - `tests/test_public_demo.py`
 - `tests/test_action_concurrency.py` — Phase 5 SQLite 并发骨架
 - `docs/08_host_confirmation_public_demo.md` — 权威安全设计

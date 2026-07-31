@@ -1,4 +1,7 @@
 services:
+  # Default profile: local/dev API (inject HOST_CONFIRMATION_TOKEN yourself).
+  # Does not enable public_demo; safe for local trust experiments on the host
+  # with .venv — keep DeepSeek keys out of Compose when publishing.
   api:
     build: .
     ports:
@@ -11,5 +14,25 @@ services:
       HOST_CONFIRMATION_TOKEN: "${HOST_CONFIRMATION_TOKEN:-}"
       ENABLE_DEBUG_ROUTES: "${ENABLE_DEBUG_ROUTES:-false}"
       DEBUG_ADMIN_TOKEN: "${DEBUG_ADMIN_TOKEN:-}"
+      APP_MODE: "${APP_MODE:-local}"
     volumes:
       - ./data:/app/data
+
+  # Optional public demo profile (no DeepSeek key, offline replay only):
+  #   docker compose --profile public_demo up public-demo
+  public-demo:
+    profiles: ["public_demo"]
+    build: .
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      APP_MODE: public_demo
+      DEMO_AGENT_MODE: offline_replay
+      DEMO_ALLOWED_ORIGIN: http://127.0.0.1:8000
+      DEMO_COOKIE_SECURE: "false"
+      # Host token stays server-side; never put DEEPSEEK_API_KEY here.
+      HOST_CONFIRMATION_TOKEN: "${HOST_CONFIRMATION_TOKEN:-public-demo-compose-host-token}"
+      ENABLE_DEBUG_ROUTES: "false"
+      AUTH_SESSION_MINUTES: "60"
+      APPROVAL_TTL_MINUTES: "10"
+      DEMO_VERIFICATION_CODE: "246810"

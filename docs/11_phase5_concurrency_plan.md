@@ -26,7 +26,7 @@
 | 幂等重放 | 顺序二次 `execute_confirmed_action` / API confirm 重放 → 同一 `execution_id` |
 | 认领后再写 | execute 路径在副作用前将状态置 `EXECUTING` 并 `flush` |
 | 竞争 confirm 不双执行 | 文件库 + 双线程；恰好 1 条 confirmation、1 条 execution、订单只变一次；败者 `ConflictError` |
-| 唯一约束兜底 | `confirmation_events.approval_id` / `action_executions.approval_id` UNIQUE |
+| 唯一约束兜底 | `confirmation_events.approval_id` / `action_executions.approval_id` UNIQUE；`IntegrityError` → `APPROVAL_ALREADY_CONFIRMED` |
 
 **不能**用 SQLite 单独声称：
 
@@ -48,7 +48,8 @@
 ## 现役代码锚点
 
 - `ActionService._owned_approval`：`with_for_update()`（PG 有效；SQLite 忽略）
-- `record_confirmation`：状态机 + `approval_id` / `ui_event_id` 唯一
+- `record_confirmation`：状态机 + `approval_id` / `ui_event_id` 唯一；flush 时
+  `IntegrityError` 映射为 `APPROVAL_ALREADY_CONFIRMED`
 - `execute_confirmed_action`：先查已有 execution → 幂等；认领 `EXECUTING` 并
   `flush` 后再改订单/库存；最后 `EXECUTED` + 唯一 `ActionExecution`
 
@@ -57,6 +58,28 @@
 ```bash
 .venv/bin/python -m pytest tests/test_action_concurrency.py -q
 ```
+
+`tests/test_action_concurrency.py` 使用 **文件库**（`tmp_path` sqlite 文件），
+不以 `:memory:` 跑双线程。复用 `tests/test_api_actions.py` 的
+prepare→present→confirm 助手。
+
+## 本骨架验证结果（2026-07-31）
+
+```text
+.venv/bin/python -m pytest \
+  tests/test_action_concurrency.py \
+  tests/test_public_demo.py \
+  tests/test_api_actions.py -q
+→ 23 passed
+  (concurrency 2 / public_demo 13 / api_actions 8)
+```
+
+锁定用例：
+
+1. 同 `ui_event_id` 再 confirm → 同一 `execution_id`，`idempotent_replay=True`，
+   库内 1 confirmation / 1 execution，订单 `CANCELLED` 一次。
+2. 双线程不同 `ui_event_id` 竞争 confirm → 恰好一胜（200）一负
+   （409 `APPROVAL_ALREADY_CONFIRMED`）；库内仍 1/1，订单 version 只 +1。
 
 ## 停止条件（本骨架）
 

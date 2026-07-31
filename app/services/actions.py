@@ -6,6 +6,7 @@ import uuid
 from datetime import datetime, timedelta
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.domain.rules import (
@@ -632,7 +633,16 @@ class ActionService:
         approval.status = ApprovalStatus.CONFIRMED.value
         approval.confirmed_at = now
         session.add(confirmation)
-        session.flush()
+        try:
+            session.flush()
+        except IntegrityError as exc:
+            # SQLite ignores FOR UPDATE; unique(approval_id/ui_event_id) is the
+            # last-resort guard when two writers race past the PRESENTED check.
+            raise ConflictError(
+                "APPROVAL_ALREADY_CONFIRMED",
+                "该操作已经由另一确认事件确认。",
+                status_code=409,
+            ) from exc
         return ConfirmationRecorded(
             confirmation_event_id=confirmation.id,
             approval_id=approval.id,
@@ -734,6 +744,7 @@ class ActionService:
             )
 
         approval.status = ApprovalStatus.EXECUTING.value
+        session.flush()
         action_type = ActionType(approval.action_type)
         result: dict[str, object]
 
