@@ -354,6 +354,57 @@ def test_uncertain_attempt_remains_committed_across_connections(tmp_path):
         )
 
 
+def test_voided_attempt_is_excluded_from_committed_and_evidence(tmp_path):
+    ledger_path = tmp_path / "private" / "budget.sqlite3"
+    ledger = SQLiteBudgetLedger(
+        path=ledger_path,
+        hard_limit_cny=Decimal("20"),
+        execution_limit_cny=Decimal("20"),
+    )
+    snapshot = _price_snapshot()
+    run_id = "eval-budget-voided-1"
+    ledger.start_run(
+        run_id=run_id,
+        purpose="diagnostic",
+        price_snapshot=snapshot,
+    )
+    reservation = ledger.reserve_attempt(
+        run_id=run_id,
+        logical_call_id="logical-call-voided-1",
+        attempt_number=1,
+        model=snapshot.model,
+        reserved_units=cny_to_units(Decimal("1.5")),
+    )
+    ledger.mark_uncertain(
+        reservation=reservation,
+        error_code="MODEL_HTTP_ERROR",
+    )
+
+    connection = sqlite3.connect(ledger_path)
+    connection.execute(
+        "UPDATE budget_attempts SET status = 'voided' WHERE attempt_id = ?",
+        (reservation.attempt_id,),
+    )
+    connection.commit()
+    connection.close()
+
+    reopened = SQLiteBudgetLedger(
+        path=ledger_path,
+        hard_limit_cny=Decimal("20"),
+        execution_limit_cny=Decimal("20"),
+    )
+    amounts = reopened.snapshot(run_id=run_id)
+    assert Decimal(amounts["committed_cny"]) == 0
+    assert Decimal(amounts["settled_cny"]) == 0
+    assert amounts["reserved_count"] == 0
+    assert amounts["uncertain_count"] == 0
+    assert amounts["attempt_count"] == 0
+
+    evidence = reopened.evidence_snapshot(run_id=run_id)["attempt_evidence"]
+    assert evidence["run"] == []
+    assert evidence["cumulative"] == []
+
+
 def test_attempt_evidence_exposes_anonymous_logical_call_outcome_and_completion(
     tmp_path: Path,
 ) -> None:

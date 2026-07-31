@@ -1012,10 +1012,12 @@ class SQLiteBudgetLedger:
                             'settled_upper_bound'
                         )
                         THEN settled_units
-                        ELSE MAX(
+                        WHEN status IN ('reserved', 'uncertain')
+                        THEN MAX(
                             reserved_units,
                             COALESCE(settled_units, reserved_units)
                         )
+                        ELSE 0
                     END
                 ), 0) AS committed,
                 COALESCE(SUM(
@@ -1032,7 +1034,8 @@ class SQLiteBudgetLedger:
                     AS reserved_count,
                 SUM(CASE WHEN status = 'uncertain' THEN 1 ELSE 0 END)
                     AS uncertain_count,
-                COUNT(*) AS attempt_count
+                SUM(CASE WHEN status <> 'voided' THEN 1 ELSE 0 END)
+                    AS attempt_count
             FROM budget_attempts
             {where}
             """,
@@ -1050,7 +1053,7 @@ class SQLiteBudgetLedger:
             "remaining_execution_cny": format_cny(
                 max(0, self.execution_limit_units - committed)
             ),
-            "attempt_count": int(row["attempt_count"]),
+            "attempt_count": int(row["attempt_count"] or 0),
             "reserved_count": int(row["reserved_count"] or 0),
             "uncertain_count": int(row["uncertain_count"] or 0),
         }
@@ -1066,6 +1069,11 @@ class SQLiteBudgetLedger:
         if run_id is not None:
             where = "WHERE run_id = ?"
             params = (run_id,)
+        where = (
+            f"{where} AND status <> 'voided'"
+            if where
+            else "WHERE status <> 'voided'"
+        )
         rows = connection.execute(
             f"""
             SELECT

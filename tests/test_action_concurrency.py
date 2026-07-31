@@ -10,7 +10,6 @@ from sqlalchemy import func, select
 from app.config import Settings
 from app.main import create_app
 from app.models import ActionExecution, ConfirmationEvent, Order
-
 from tests.test_api_actions import _confirm, _prepare, _present
 
 HOST_CONFIRMATION_TOKEN = "pytest-concurrency-host-token"
