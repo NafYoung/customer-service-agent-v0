@@ -68,3 +68,11 @@ def test_prompt_rejects_unsupported_capability_without_unrelated_lookup():
     )
     assert "do not call an unrelated lookup tool" in NORMALIZED_PROMPT
     assert "state that the capability is unavailable" in NORMALIZED_PROMPT
+
+
+def test_prompt_requires_simplified_chinese_customer_answers():
+    assert "Simplified Chinese" in NORMALIZED_PROMPT
+    assert "Do not answer the customer in English" in NORMALIZED_PROMPT
+    assert "ORDER_NOT_FOUND" in NORMALIZED_PROMPT
+    assert "无法确认" in PROMPT
+    assert "目标尺码" in PROMPT
