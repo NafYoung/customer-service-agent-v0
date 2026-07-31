@@ -1,6 +1,6 @@
 # 项目现役状态
 
-最后核对：2026-07-31（holdout v2 唯一正式跑 **FAIL** 44/80 @ `8884b1a`；校准 #4 + 同提交回归 GO）
+最后核对：2026-07-31（holdout v2 FAIL 后 Agent/裁判加固；公开回归再绿 **28/28** @ `f7f221a`）
 
 本地分支：`main`
 
@@ -18,6 +18,8 @@ Preparation Agent 检查点：`1b034cd`
 
 离线 v4 加固：`4f41a35`（`atomic-claims-v4`）
 
+holdout 失败后加固链：`9337e55`（prompt/回归）→ `84eca79` / `69030d2` / `f7f221a`（语义裁判恢复 + 短语）
+
 本文是项目恢复工作的现役入口。阶段验收标准仍以
 `docs/06_portfolio_completion_plan.md` 为准；历史结果保留在对应
 `docs/testing/` 报告中。
@@ -32,9 +34,9 @@ Preparation Agent 检查点：`1b034cd`
 | Preparation Agent | changed-and-verified | 提交 `1b034cd`；独立审查 Gate GO |
 | 原子命题语义门 | **verified-current** | `atomic-claims-v4`；校准 **#4** @ `8884b1a` 49/49 |
 | DeepSeek 语义校准 | **passed** | #4：`eval-20260731t080100z-4d65de51789c` **49/49**；review GO |
-| 公开回归 7×4（holdout 绑定） | **passed** | `eval-20260731t080946z-dd64553ceb3e` **28/28** @ `8884b1a` |
-| 公开回归 7×4（较早） | historical | `eval-20260731t074809z-84f9e3f06006` **28/28** @ `fc45c41`（提交漂移后不能绑 holdout） |
-| holdout v2 | **failed / retired** | 唯一正式跑 44/80、`pass^4=0.40`；禁止同题集重跑 |
+| 公开回归 7×4（holdout 绑定历史） | historical | `eval-20260731t080946z-dd64553ceb3e` **28/28** @ `8884b1a` |
+| 公开回归 7×4（加固后现役） | **passed** | `eval-20260731t102036z-9be142ce84ec` **28/28** @ `f7f221a`；`pass^4=1.00`；业务写入 0 |
+| holdout v2 | **failed / retired** | 唯一正式跑 44/80、`pass^4=0.40`；禁止同题集重跑；见 `docs/testing/holdout-v2-postmortem.md` |
 | 宿主确认、并发、UI、公开演示 | partial | Phase 4–5 骨架与 offline demo 已落地；托管/GitHub pending |
 | 生产运行态 | not-applicable | 没有远端、部署或公开 URL |
 
@@ -45,8 +47,8 @@ Preparation Agent 检查点：`1b034cd`
 | 规范 live 路径 | `artifacts/private/deepseek-budget.sqlite3` |
 | 正式硬上限 | ¥20（未上调） |
 | 自动执行上限 | ¥18（未上调） |
-| 当前 remaining_execution | ≈**¥17.597** |
-| reserved / uncertain | **0** / **0** |
+| 当前 remaining_execution | 以 live 账本为准（加固后多次公开回归后仍远高于执行闸） |
+| reserved / uncertain | 以 live 账本为准 |
 
 账本注记（owner-only）：
 
@@ -84,42 +86,51 @@ Preparation Agent 检查点：`1b034cd`
 密码学第三方盲测。首次 start（`…081633z…`）因并行中断已归档至
 `artifacts/private/holdout/r1-retired-20260731T082510Z/`，不算可重开的成功路径。
 
-## 付费语义校准 #4（2026-07-31；绑当前裁判 @ `8884b1a`）
+聚合失败聚类与 Prompt/回归/裁判加固见
+`docs/testing/holdout-v2-postmortem.md`。**v2 题集仍退役；新盲测需新
+case_set + 另授权。**
+
+## 付费语义校准 #4（2026-07-31；绑裁判 @ `8884b1a`）
 
 | 指标 | 值 |
 |---|---|
 | run id | `eval-20260731t080100z-4d65de51789c` |
 | total / passed / gate | 49 / **49** / **true** |
 | positive / adversarial | 1.00 / 1.00 |
-| `semantic_judge_source_sha256` | `2fcda13d…`（与 HEAD 一致） |
+| `semantic_judge_source_sha256` | `2fcda13d…`（#4 当时 HEAD） |
 | review | GO；`reviewer_id=rebind-calib-reviewer-20260731`；5 条分层样本 |
 
 私有报告/回执：`artifacts/private/semantic-judge-calibration/eval-20260731t080100z-4d65de51789c.{json,review.json}`。
 
-校准 #3（`4f41a35` / 裁判 `2debc90c…`）因后续裁判改动失效，**不得**再用于封存。
+说明：后续语义裁判恢复补丁（`84eca79` / `69030d2` / `f7f221a`）改变了
+`semantic_judge_source_sha256`；#4 仍是 holdout 封存当时的有效校准。若再开新
+holdout，需在干净树上重绑校准 + 同提交公开回归。
 
-## 公开回归（holdout 绑定；`8884b1a`）
+## 公开回归（加固后现役；`f7f221a`）
 
 | 指标 | 值 |
 |---|---|
-| run id | `eval-20260731t080946z-dd64553ceb3e` |
+| run id | `eval-20260731t102036z-9be142ce84ec` |
 | total / passed / `pass^4` | 28 / **28** / **1.00** |
 | business state changes | **0** |
-| source git commit | `8884b1a` |
+| source git commit | `f7f221a` |
+| purpose | `dev_repeat`；case-set `readonly-regression-v1` |
+
+较早同形状绿跑（holdout 绑定历史）：`eval-20260731t080946z-dd64553ceb3e` @
+`8884b1a`。中间加固过程中的 26/28、27/28 尝试仅作诊断，不算现役门。
 
 ## 当前唯一执行顺序
 
-1. ~~付费校准 49/49（裁判重绑）。~~ **#4 完成。**
-2. ~~同提交公开回归 28/28。~~ **完成。**
+1. ~~付费校准 49/49（裁判重绑）。~~ **#4 完成（holdout 当时）。**
+2. ~~同提交公开回归 28/28。~~ **holdout 当时完成；加固后再次 28/28。**
 3. ~~holdout v2 唯一正式运行。~~ **已跑；未过门；题集退役。**
-4. 可选后续（需新授权）：根因分析 / 新 holdout 题集（新 `case_set_sha256`）或作品集叙事收口；**禁止**同题集调参重跑。
-5. Phase 6：GitHub / 公开托管（与 holdout 结果解耦）。
+4. ~~holdout 失败后 Prompt/回归/裁判加固 + 公开 7×4 复验。~~ **完成。**
+5. 可选后续（需新授权）：新 holdout 题集（新 `case_set_sha256`，先重绑校准）或作品集叙事收口；**禁止**同题集调参重跑。
+6. Phase 6：GitHub / 公开托管（与 holdout 结果解耦）。
 
 ## 不可突破的恢复边界
 
 - 总 DeepSeek 费用硬上限 ¥20；自动执行上限 ¥18。
-- `.env`、预算账本、私有案例、原始 artifact、本机路径和 provider request
-  id 不得进入 Git 或对外材料。
-- holdout v1 / **holdout v2 本题集** 均已退役，禁止重跑。
-- 模型永远不能获得认证、`present`、`confirm`、`execute`、debug 或任意
-  SQL/网络工具。
+- 模型永远不能获得认证、`present`、`confirm`、`execute`、debug 或任意 SQL/网络工具。
+- holdout v1 / v2 均已退役，禁止同题重跑。
+- 不为展示引入多 Agent、LangGraph、MCP 或完整 Eval 框架。
