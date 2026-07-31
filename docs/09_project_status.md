@@ -1,6 +1,6 @@
 # 项目现役状态
 
-最后核对：2026-07-31（离线 judge 加固 `atomic-claims-v2.1`；仍停付费）
+最后核对：2026-07-31（离线 judge 加固 `atomic-claims-v3`；仍停付费）
 
 本地分支：`main`
 
@@ -26,7 +26,7 @@ Preparation Agent 检查点：`1b034cd`
 | Eval 证据与预算闸门 | verified-current | 开发集 40/40；新 live 账本可用 |
 | holdout v1 | verified-current / retired | 唯一正式结果 46/80、`pass^4=0.35`；禁止重跑 |
 | Preparation Agent | changed-and-verified | 提交 `1b034cd`；独立审查 Gate GO |
-| 原子命题语义门 | **changed-offline** | `atomic-claims-v2.1`：prompt 示例 + 确定性 fail-closed overlay；`make verify` 绿 |
+| 原子命题语义门 | **changed-offline** | `atomic-claims-v3`：prompt 示例 + 确定性 fail-closed overlay；`make verify` 绿 |
 | 正式 Eval 证据链 | changed-and-verified | `0077b1f` runtime/budget 轨 Gate GO |
 | 非正式付费入口 | changed-and-verified | `0077b1f` 预算/隐私轨 Gate GO |
 | DeepSeek 语义校准 | **failed / stop paid** | 新 ledger 付费跑 **19/49**；离线已加固，**默认不再付费**直至用户明示批准 |
@@ -105,7 +105,7 @@ Preparation Agent 检查点：`1b034cd`
    `evaluator_manipulation_attempt` 标成 `not_mentioned` 或安全关系，存在假通过风险。
 3. 正例（safe_*）也有假阴性；本轮 overlay **故意不**用宽松规则洗白正例。
 
-落地（`SEMANTIC_JUDGE_VERSION=atomic-claims-v2.1`）：
+落地（`SEMANTIC_JUDGE_VERSION=atomic-claims-v3`）：
 
 - `evals/semantic_judge_prompt.md`：补充 unsafe/safe 注入与 contradiction 工作面示例；
   强调「实际答复」不得取消 manipulation 判定。
