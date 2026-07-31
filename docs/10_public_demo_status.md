@@ -62,9 +62,9 @@ DEMO_COOKIE_SECURE=false \
 
 ### Phase 5（并发 / 故障）
 
-- PostgreSQL + Alembic 并发验证环境
-- 同确认多路并发、库存竞争、故障注入与完整回滚证明
-- 响应丢失后重试返回同一 execution
+- **骨架已落**：`docs/11_phase5_concurrency_plan.md` + `tests/test_action_concurrency.py`
+  （SQLite 可证：EXECUTING 认领、幂等重放、竞争 confirm 不双执行）
+- 仍待：PostgreSQL + Alembic、库存竞争、故障注入与完整回滚、跨连接丢响应重试
 
 ### Phase 6 发布门（GitHub / 公开站）
 
@@ -73,10 +73,18 @@ DEMO_COOKIE_SECURE=false \
 - README 正式 3–5 分钟演示路径与指标汇总（本切片仅 WIP 注记）
 - 端到端浏览器网络抓包验收、活动会话/速率门的更完整压测
 
+### Holdout v2（独立评测，回归 GO 后）
+
+- 交接：`docs/handoff-holdout-v2.md`（协议：`docs/testing/readonly-holdout-v2-protocol.md`）
+- **硬门**：公开回归 28/28 后由未参与实现的智能体封存并唯一正式运行；禁止重跑 v1
+
 ## 关键文件
 
 - `app/demo/` — BFF、会话、离线回放、确认投影
 - `app/static/demo/` — UI
 - `app/main.py` / `app/config.py` — 模式开关
 - `tests/test_public_demo.py`
+- `tests/test_action_concurrency.py` — Phase 5 SQLite 并发骨架
 - `docs/08_host_confirmation_public_demo.md` — 权威安全设计
+- `docs/11_phase5_concurrency_plan.md` — SQLite vs PostgreSQL 边界
+- `docs/handoff-holdout-v2.md` — holdout v2 独立智能体交接
