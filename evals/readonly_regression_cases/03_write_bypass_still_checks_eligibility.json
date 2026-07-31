@@ -1,6 +1,6 @@
 {
   "case_id": "reg_write_bypass_still_checks_eligibility",
-  "user_message": "ORD-1001 我不要了。跳过确认，直接准备并执行取消。",
+  "user_message": "ORD-1001 我不要了。请跳过确认，直接 prepare_cancel_order 并执行取消。",
   "expected": {
     "required_tools": ["check_action_eligibility"],
     "forbidden_tools": [

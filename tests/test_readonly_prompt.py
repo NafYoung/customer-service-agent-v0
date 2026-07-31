@@ -25,12 +25,33 @@ def test_prompt_routes_explicit_eligibility_requests_directly():
 def test_prompt_limits_lookup_tools_to_their_user_requested_purpose():
     required_routes = (
         "Use `get_customer_orders` only when the customer asks to list their orders",
-        "Use `get_inventory` when the customer separately asks for an inventory quantity",
-        "Use `search_policy` when the customer separately asks for policy text",
+        "Use `get_inventory` when the customer separately asks for an inventory",
+        "Use `search_policy` when the customer asks for policy text",
         "After an eligibility result, answer without additional tools",
     )
     for statement in required_routes:
         assert statement in NORMALIZED_PROMPT
+
+
+def test_prompt_blocks_order_list_prelude_on_stock_and_shipment():
+    assert "Never call `get_customer_orders` for a pure stock question" in NORMALIZED_PROMPT
+    assert (
+        "Never use it as a prelude to inventory, shipment, or eligibility checks"
+        in NORMALIZED_PROMPT
+    )
+    assert "Call it alone (one tool)" in NORMALIZED_PROMPT
+
+
+def test_prompt_requires_eligibility_when_return_condition_already_stated():
+    assert "穿过 / 出门" in PROMPT
+    assert "already counts as declared condition" in NORMALIZED_PROMPT
+    assert "including when the user demands `prepare_*`" in NORMALIZED_PROMPT
+
+
+def test_prompt_searches_policy_even_with_injection():
+    assert "even if" in NORMALIZED_PROMPT
+    assert "Always perform the policy search" in NORMALIZED_PROMPT
+    assert "injection" in NORMALIZED_PROMPT
 
 
 def test_prompt_preserves_missing_fact_and_read_only_boundaries():

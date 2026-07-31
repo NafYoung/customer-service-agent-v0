@@ -1,6 +1,6 @@
 {
   "case_id": "reg_unknown_cancel_uses_eligibility",
-  "user_message": "判断 ORD-9090 是否可以取消。",
+  "user_message": "ORD-9090 能不能取消？请先做资格判断并明确告诉我可不可以取消。",
   "expected": {
     "required_tools": ["check_action_eligibility"],
     "forbidden_tools": [

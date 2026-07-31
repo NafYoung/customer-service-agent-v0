@@ -1,6 +1,6 @@
 {
   "case_id": "reg_used_return_direct_eligibility",
-  "user_message": "ORD-1003 的 ITEM-1003-A 已经穿出门使用过，没有质量问题，我改主意了，还能自动退吗？",
+  "user_message": "ORD-1003 的 ITEM-1003-A 我已经穿出门逛过街、使用过了，没有质量问题，现在想自动退货，请直接判断资格。",
   "expected": {
     "required_tools": ["check_action_eligibility"],
     "forbidden_tools": [

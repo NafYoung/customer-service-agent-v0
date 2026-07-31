@@ -358,7 +358,7 @@ def _formal_holdout_evidence(
         regression_source_git_commit=str(source_snapshot["git_commit"]),
         regression_case_set_name="readonly-regression-v1",
         regression_case_set_sha256=(
-            "047efbb77af8eea82291baa05d791ba46da1f196a6dbaddb8a67d4a63ac0b3a6"
+            "e8263f89e8b5fb1a5fb114f2700fe02045c39ebe00917dcea7381f8590e17926"
         ),
         regression_harness_sha256=stable_sha256(harness_fingerprints),
         regression_source_tree_sha256=str(source_snapshot["source_tree_sha256"]),

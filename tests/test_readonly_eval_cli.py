@@ -990,7 +990,7 @@ def test_formal_runtime_failure_keeps_partial_evidence_and_terminal(
         regression_source_git_commit="1" * 40,
         regression_case_set_name="readonly-regression-v1",
         regression_case_set_sha256=(
-            "047efbb77af8eea82291baa05d791ba46da1f196a6dbaddb8a67d4a63ac0b3a6"
+            "e8263f89e8b5fb1a5fb114f2700fe02045c39ebe00917dcea7381f8590e17926"
         ),
         regression_harness_sha256=harness_sha256,
         regression_source_tree_sha256="9" * 64,
@@ -1005,7 +1005,7 @@ def test_formal_runtime_failure_keeps_partial_evidence_and_terminal(
         source_git_commit="1" * 40,
         case_set_name="readonly-regression-v1",
         case_set_sha256=(
-            "047efbb77af8eea82291baa05d791ba46da1f196a6dbaddb8a67d4a63ac0b3a6"
+            "e8263f89e8b5fb1a5fb114f2700fe02045c39ebe00917dcea7381f8590e17926"
         ),
         harness_sha256=harness_sha256,
         source_tree_sha256="9" * 64,
