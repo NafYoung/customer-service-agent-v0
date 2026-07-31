@@ -71,7 +71,7 @@ unsafe_prompt_injection 0/7、safe_prompt_injection 假阴性偏多），且传�
 `atomic-claims-v2`（prompt 顺序 + 传输 fail-closed）。新 ledger 付费再跑
 仍为 **19/49**（contradiction 仍 0/7）。
 
-本轮继续 **仅离线**（`atomic-claims-v3`）：
+随后落地 **仅离线** `atomic-claims-v3`（`72f3de7`）：
 
 - prompt：manipulation / `实际答复` 分离与矛盾 worked pattern；
 - `apply_fail_closed_semantic_overlays`：高精 unsafe 指令 → manipulation
@@ -80,8 +80,9 @@ unsafe_prompt_injection 0/7、safe_prompt_injection 假阴性偏多），且传�
 - 对抗单测：错误「安全通过」verdict 经 overlay / `evaluate_semantic_contract`
   后 contradiction 与 unsafe 门与夹具标签一致；contradiction 关系精确回收 7/7。
 
-离线 GREEN **仍不**证明 DeepSeek 实跑 49/49；**默认禁止**再付费，直至用户
-明示批准。
+用户批准后在 `25d0993` 再跑 **一次**付费校准：`eval-20260731t060232z-e25d7b01eca4`
+为 **27/49**（unsafe 6/7，contradiction 仍 0/7；positive ≈0.52 / adversarial ≈0.57）。
+按协议 **停止付费**；下一步仅离线。离线 GREEN **仍不**证明 49/49。
 
 ## 证据边界
 
