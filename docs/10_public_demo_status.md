@@ -93,16 +93,26 @@ docker compose --profile public_demo up --build public-demo
 
 ### Phase 6 发布门（GitHub / 公开站）
 
-- 依赖锁、部署 CSP、完整秘密扫描（Git 历史 / 镜像层）
-- 公开 GitHub 与托管演示链接
-- README 正式 3–5 分钟演示路径与指标汇总（本切片仅 WIP 注记）
-- 端到端浏览器网络抓包验收、活动会话/速率门的更完整压测
+清单：`docs/12_phase6_publish_checklist.md`。本地卫生脚本：
 
-### Holdout v2（独立评测，回归 GO 后）
+```bash
+./scripts/check_public_demo_secrets.sh
+./scripts/check_publish_preflight.sh
+```
 
-- 交接：`docs/handoff-holdout-v2.md`（协议：`docs/testing/readonly-holdout-v2-protocol.md`）
-- **硬门**：公开回归 28/28 后由未参与实现的智能体封存并唯一正式运行；禁止重跑 v1
+仍待作者授权后执行：
 
+- 公开 GitHub 与托管演示链接；
+- 托管环境 CSP / HTTPS Cookie；
+- 端到端浏览器网络抓包验收。
+
+README 已含正式 3–5 分钟演示路径与 holdout 诚实指标汇总。
+
+### Holdout（独立评测）
+
+- v1 / v2 均已唯一正式运行并**退役**；禁止同题重跑。
+- v2 聚合 FAIL 与加固：`docs/testing/holdout-v2-postmortem.md`。
+- 新盲测需新 `case_set` + 重绑校准 + 另授权。
 ## 关键文件
 
 - `app/demo/` — BFF、会话、离线回放、确认投影
@@ -110,8 +120,11 @@ docker compose --profile public_demo up --build public-demo
 - `app/main.py` / `app/config.py` — 模式开关
 - `Dockerfile` / `docker-compose.yml` / `.dockerignore`
 - `scripts/check_public_demo_secrets.sh`
+- `scripts/check_publish_preflight.sh`
 - `tests/test_public_demo.py`
 - `tests/test_action_concurrency.py` — Phase 5 SQLite 并发骨架
 - `docs/08_host_confirmation_public_demo.md` — 权威安全设计
 - `docs/11_phase5_concurrency_plan.md` — SQLite vs PostgreSQL 边界
-- `docs/handoff-holdout-v2.md` — holdout v2 独立智能体交接
+- `docs/12_phase6_publish_checklist.md` — 公开发布检查表
+- `docs/testing/holdout-v2-postmortem.md` — holdout v2 FAIL 归因
+- `docs/handoff-holdout-v2.md` — holdout v2 独立智能体交接（题集已退役）

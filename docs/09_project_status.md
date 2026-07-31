@@ -1,6 +1,6 @@
 # 项目现役状态
 
-最后核对：2026-07-31（holdout v2 FAIL 后 Agent/裁判加固；公开回归再绿 **28/28** @ `f7f221a`）
+最后核对：2026-07-31（作品集叙事收口 + Phase 6 发布清单；公开回归 **28/28** @ `f7f221a`）
 
 本地分支：`main`
 
@@ -37,7 +37,8 @@ holdout 失败后加固链：`9337e55`（prompt/回归）→ `84eca79` / `69030d
 | 公开回归 7×4（holdout 绑定历史） | historical | `eval-20260731t080946z-dd64553ceb3e` **28/28** @ `8884b1a` |
 | 公开回归 7×4（加固后现役） | **passed** | `eval-20260731t102036z-9be142ce84ec` **28/28** @ `f7f221a`；`pass^4=1.00`；业务写入 0 |
 | holdout v2 | **failed / retired** | 唯一正式跑 44/80、`pass^4=0.40`；禁止同题集重跑；见 `docs/testing/holdout-v2-postmortem.md` |
-| 宿主确认、并发、UI、公开演示 | partial | Phase 4–5 骨架与 offline demo 已落地；托管/GitHub pending |
+| 宿主确认、并发、UI、公开演示 | partial | 本地 public_demo 可跑；Phase 6 清单已写，GitHub/托管 URL pending |
+| 作品集对外叙事 | **updated** | README 指标与 holdout FAIL→加固→复验对齐；`docs/12_phase6_publish_checklist.md` |
 | 生产运行态 | not-applicable | 没有远端、部署或公开 URL |
 
 ## 预算账本策略
@@ -125,8 +126,9 @@ holdout，需在干净树上重绑校准 + 同提交公开回归。
 2. ~~同提交公开回归 28/28。~~ **holdout 当时完成；加固后再次 28/28。**
 3. ~~holdout v2 唯一正式运行。~~ **已跑；未过门；题集退役。**
 4. ~~holdout 失败后 Prompt/回归/裁判加固 + 公开 7×4 复验。~~ **完成。**
-5. 可选后续（需新授权）：新 holdout 题集（新 `case_set_sha256`，先重绑校准）或作品集叙事收口；**禁止**同题集调参重跑。
-6. Phase 6：GitHub / 公开托管（与 holdout 结果解耦）。
+5. ~~作品集叙事收口（README + Phase 6 清单）。~~ **完成（本地）。**
+6. Phase 6 执行（需作者授权）：`./scripts/check_publish_preflight.sh` → 创建公开远程 → push → 可选托管；见 `docs/12_phase6_publish_checklist.md`。
+7. 可选（需新授权）：新 holdout 题集（新 `case_set_sha256`，先重绑校准）；**禁止**同题集调参重跑。
 
 ## 不可突破的恢复边界
 

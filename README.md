@@ -10,60 +10,46 @@
 
 已完成：
 
-- FastAPI + SQLAlchemy + SQLite 后端；
-- 客户身份验证和跨客户数据隔离；
-- 订单、物流、库存和版本化政策查询；
-- 取消、退货、换货的确定性资格规则；
-- `prepare → 宿主展示 → 可信确认 → execute` 写操作状态机；
-- 审批与客户、会话、预览哈希、订单版本和确认事件绑定；
-- 以 `approval_id` 为服务端幂等边界，客户端和模型不生成幂等键；
-- 破损、瑕疵和错发强制转人工；
-- 工具调试轨迹、失败原因、耗时和敏感字段脱敏；
-- 8 个 Reference Eval 案例；
-- 10 个未来 Agent 工具的机器可读 Schema，以及独立的宿主 HTTP OpenAPI 文档；
-- provider-neutral Chat Completions 接口与 DeepSeek V4 Flash 配置；
-- 只向模型开放 6 个查询/资格工具的有界单 Agent 循环；
-- 独立 Preparation Agent 核心：精确 9 工具白名单，每次运行最多创建
-  1 个 Approval，来源绑定服务端运行与结构化 tool call；
-- prepare 成功后禁止继续调用工具；违规时整个 Agent 事务回滚；
-- 工具名白名单、参数二次校验、敏感上下文隔离，以及最多 4 轮/12 次工具调用；
-- 10 个不向模型泄露期望结果的只读自然语言 Agent Eval 案例；
-- 真实 Prompt A/B：本次同一 harness 的单次观察中，严格口径从 7/10 提升到 10/10，工具调用从 25 次降到 12 次；两组各 10 条案例均未新增审批、确认、执行或工单记录。
-- 可独立验证的 Eval bundle：运行/源码/Prompt/工具/政策/scorer 指纹、
-  脱敏逐 trial 轨迹、完整业务状态哈希、Token、延迟、费用和 SHA-256
-  完整性索引；
-- DeepSeek 每次 HTTP attempt 前的持久预算闸门：¥20 硬上限、¥18 自动执行
-  上限、异常请求保留最坏预留；
-- 开发集正式 `10 cases × 4 trials`：40/40，`pass^4=1.00`，安全断言
-  40/40，业务状态变化 0；
-- 只读 holdout v1 已按预声明协议唯一运行并如实退役：46/80，
-  `pass^4=0.35`；赛后审计确认 0 个真实安全关键违规，但暴露出评分语义、
-  缺参澄清和工具效率问题，不能把它改写成通过；
-- `readonly-scorer-v6` 原子命题语义门：被测回答冻结后才由隔离裁判逐项
-  判断蕴含、否定、遗漏和矛盾，工具、权限、写入和业务状态仍由代码硬判；
-- 49 条固定公开人工标注语义校准夹具：覆盖标准答案、同义改写、空洞回答、
-  否定翻转、前后矛盾，以及安全/不安全裁判提示注入；每个 claim 另有
-  可接受证据区域，矛盾样本要求正反两侧都被引用；
-- 严格校准报告与独立复核回执：完整 verdict、固定语料/合同/runtime
-  指纹、已结清预算证据，以及 report → review → holdout manifest → 唯一
-  运行锁 → 最终 Eval manifest 的哈希绑定；
-- `ruff`、`mypy`、分支覆盖率门、Schema freshness、`pip-audit` 和
-  Gitleaks Git 历史扫描的 CI 配置。
+- FastAPI + SQLAlchemy + SQLite 后端；身份验证与跨客户隔离；
+- 订单 / 物流 / 库存 / 版本化政策查询；取消、退货、换货的确定性资格规则；
+- `prepare → 宿主展示 → 可信确认 → execute` 写操作状态机与服务端幂等；
+- 有界只读 Agent（6 工具）与独立 Preparation Agent 核心（精确 9 工具）；
+- 可独立验证的 Eval bundle、¥20/¥18 持久预算闸门；
+- 开发集 `10×4`：40/40，`pass^4=1.00`；公开回归 `7×4`：28/28，
+  `pass^4=1.00`；业务写入 0；
+- `readonly-scorer-v6` 原子命题语义门 + 49/49 付费校准（#4）；
+- holdout v1 / v2 均按一次性协议唯一运行并如实退役（见下方指标）；
+- 本地 `public_demo` 离线演示：对话 → 确认卡 → 按钮确认 → 确定性执行；
+- CI：`ruff`、`mypy`、覆盖率门、Schema freshness、`pip-audit`、Gitleaks。
 
-尚未完成：
+尚未完成 / 明确不做：
 
-- DeepSeek 语义裁判的付费校准、七类公开回归 4-trial 复验和全新
-  holdout v2 唯一正式运行；
-- 向量或混合检索；
-- 公开演示的 Phase 5 并发证明与 GitHub/托管发布门（本地 public_demo
-  切片见下方 WIP）；
-- PostgreSQL 高并发库存控制；
-- 完整安全审计与生产身份系统；
-- 真实电商、ERP、物流和支付接口。
+- 公开 GitHub 仓库与托管演示 URL（Phase 6；清单见
+  `docs/12_phase6_publish_checklist.md`）；
+- PostgreSQL 高并发库存、完整故障注入与生产身份 / 审计系统；
+- 向量检索、真实电商 / ERP / 物流 / 支付接口；
+- **禁止**同题集重跑已退役的 holdout v1 / v2；新盲测需新题集与另授权。
 
-## Public demo (WIP)
+## 关键评测结果（面试可讲）
 
-本地可跑通同域离线演示（不携带 DeepSeek Key，不注册公开 `/v1` 写路由）：
+| 门 | 结果 | 说明 |
+|---|---|---|
+| 开发集 10×4 | 40/40，`pass^4=1.00` | 参与过 Prompt 优化，不能冒充 holdout |
+| 语义校准 #4 | 49/49 | 隔离裁判；报告 + 独立复核 GO |
+| 公开回归 7×4 | 28/28，`pass^4=1.00` | 加固后现役：`eval-20260731t102036z-9be142ce84ec` |
+| holdout v1 | 46/80，`pass^4=0.35` | 已退役；赛后审计无真实安全写入违规 |
+| holdout v2 | 44/80，`pass^4=0.40` | 已退役；聚合失败见 `docs/testing/holdout-v2-postmortem.md` |
+| 业务写入（只读门） | 0 | 工具白名单 + 状态哈希硬判 |
+
+诚实叙事：**holdout 未过门**，随后按聚类做了 Prompt / 公开回归 / 语义裁判加固，
+并用公开 7×4 证明不回退。这是「失败 → 归因 → 修复 → 复验」，不是把 FAIL
+改写成 PASS。本机智能体封存是流程隔离，不是第三方盲测。
+
+现役进度与恢复顺序以 `docs/09_project_status.md` 为准。
+
+## 3–5 分钟公开演示（本地）
+
+不携带 DeepSeek Key，不注册公开 `/v1` 写路由：
 
 ```bash
 APP_MODE=public_demo \
@@ -73,9 +59,19 @@ DEMO_COOKIE_SECURE=false \
 .venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
-打开 `http://127.0.0.1:8000/`。进度与验收缺口见
-`docs/10_public_demo_status.md`；安全设计见
-`docs/08_host_confirmation_public_demo.md`。
+打开 `http://127.0.0.1:8000/`，建议路径：
+
+1. 发送「取消订单 ORD-1001」；
+2. 核对右侧确认卡（数据库 canonical preview）；
+3. 点击「确认并执行」；
+4. 可选：点「重置演示」恢复 seed。
+
+Docker：`./scripts/check_public_demo_secrets.sh` 后
+`docker compose --profile public_demo up --build public-demo`。
+
+进度与缺口：`docs/10_public_demo_status.md`；安全设计：
+`docs/08_host_confirmation_public_demo.md`；发布门清单：
+`docs/12_phase6_publish_checklist.md`。
 
 ## 架构
 
@@ -311,9 +307,13 @@ provider attempt、usage 成本和逐 attempt bucket，并要求运行与累计�
 Prompt 优化，不能替代隐藏 holdout，也不能据此声称生产安全。
 
 随后唯一运行的 holdout v1 得到 46/80、`pass^4=0.35`，费用
-¥0.08381112。它已退役并禁止重跑；完整失败分析进入公开回归。新的 v2 必须在
-语义校准、公开回归和独立离线审查全部通过后重新封存，且仍只允许一次正式
-运行。公开结果只报告聚合指标，不公开私有题面、案例 ID 或评分命题。
+¥0.08381112。它已退役并禁止重跑。holdout v2 在校准 #4 与同提交公开回归
+28/28 后唯一正式运行，得到 44/80、`pass^4=0.40`，同样退役；公开脱敏投影见
+`evals/readonly_holdout_v2.manifest.json`，聚合归因见
+`docs/testing/holdout-v2-postmortem.md`。失败后的 Prompt / 回归 / 裁判加固
+已用公开 7×4 复验不回退，**不能**把 v2 改写成通过。新的盲测必须重新封存
+题集，且仍只允许一次正式运行。公开结果只报告聚合指标，不公开私有题面、
+案例 ID 或评分命题。
 
 每次正式运行只会在被 Git 忽略的 `artifacts/private/eval-runs/` 写入
 owner-only 私有证据包。成功结果与失败 attempt 使用互斥 Schema 和回执字段；
@@ -347,8 +347,11 @@ provider request ID 或本机环境细节。
 - `docs/08_host_confirmation_public_demo.md`：宿主确认、零密钥公开演示和
   生产边界设计；
 - `docs/09_project_status.md`：当前完成度、验证证据和下次恢复顺序；
+- `docs/10_public_demo_status.md`：本地公开演示进度与 Phase 4–6 缺口；
+- `docs/12_phase6_publish_checklist.md`：首次公开 GitHub / 托管前检查表；
 - `docs/testing/readonly-holdout-v2-protocol.md`：v1 退役后的校准门、
   v2 封存和唯一正式运行协议；
+- `docs/testing/holdout-v2-postmortem.md`：holdout v2 FAIL 聚合归因与加固；
 - `docs/testing/semantic-judge-v1.tdd.md`：原子命题语义门、校准标准和
   RED→GREEN 证据；
 - `docs/testing/preparation-agent.tdd.md`：Preparation Agent 的 RED→GREEN、
