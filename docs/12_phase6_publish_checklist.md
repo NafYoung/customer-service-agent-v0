@@ -75,14 +75,16 @@ gitleaks detect --source . --no-git || true
 公开仓只含合成数据、公开回归题面、脱敏 holdout manifest 投影；原始
 `artifacts/private/**` 永不提交。
 
-## D. 托管演示（可选，需作者选平台）
+## D. 托管演示（Render Free Web Service）
+
+权威步骤：`docs/13_hosted_demo_render.md`（Blueprint：`render.yaml`）。
 
 推荐约束：
 
 - 默认 `APP_MODE=public_demo` + `DEMO_AGENT_MODE=offline_replay`；
 - **不**注入项目 DeepSeek Key；
 - `DEMO_COOKIE_SECURE=true`（HTTPS）；
-- `DEMO_ALLOWED_ORIGIN` 与公开 Origin 完全一致；
+- `DEMO_ALLOWED_ORIGIN` 可空（回退 `RENDER_EXTERNAL_URL`），或锁死为公网 Origin；
 - 调试路由保持关闭。
 
 验收：浏览器走完取消 ORD-1001；Network 中无 DeepSeek 出口；响应/日志无
@@ -109,6 +111,8 @@ Key 子串。
 - `docs/08_host_confirmation_public_demo.md` — 零密钥演示安全设计
 - `docs/09_project_status.md` — 现役评测证据
 - `docs/10_public_demo_status.md` — 本地演示进度
+- `docs/13_hosted_demo_render.md` — Render 托管步骤
 - `docs/testing/holdout-v2-postmortem.md` — holdout FAIL 聚合归因
+- `render.yaml` — Render Blueprint
 - `scripts/check_public_demo_secrets.sh`
 - `scripts/check_publish_preflight.sh`
