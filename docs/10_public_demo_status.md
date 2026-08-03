@@ -100,11 +100,13 @@ docker compose --profile public_demo up --build public-demo
 ./scripts/check_publish_preflight.sh
 ```
 
-仍待作者授权后执行：
+仍待作者在 Render 控制台执行一次 Blueprint 部署后：
 
-- 公开 GitHub 与托管演示链接；
-- 托管环境 CSP / HTTPS Cookie；
+- 公网 HTTPS 演示 URL（填回 README / About Homepage）；
+- （可选）显式锁定 `DEMO_ALLOWED_ORIGIN`；
 - 端到端浏览器网络抓包验收。
+
+步骤：`docs/13_hosted_demo_render.md`。
 
 README 已含正式 3–5 分钟演示路径与 holdout 诚实指标汇总。
 
@@ -126,5 +128,7 @@ README 已含正式 3–5 分钟演示路径与 holdout 诚实指标汇总。
 - `docs/08_host_confirmation_public_demo.md` — 权威安全设计
 - `docs/11_phase5_concurrency_plan.md` — SQLite vs PostgreSQL 边界
 - `docs/12_phase6_publish_checklist.md` — 公开发布检查表
+- `docs/13_hosted_demo_render.md` — Render 托管步骤
 - `docs/testing/holdout-v2-postmortem.md` — holdout v2 FAIL 归因
+- `render.yaml` — Render Blueprint
 - `docs/handoff-holdout-v2.md` — holdout v2 独立智能体交接（题集已退役）
