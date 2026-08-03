@@ -80,13 +80,40 @@ def require_json_content_type(request: Request) -> None:
 
 
 def require_origin(request: Request, allowed_origin: str) -> None:
+    """Allow same-origin demo traffic even when browsers omit Origin on GET.
+
+    fetch() same-origin GET often has no Origin header; POST includes it.
+    Reject cross-site callers via mismatched Origin/Referer.
+    """
+
+    allowed = allowed_origin.rstrip("/")
     origin = request.headers.get("origin")
-    if origin is None or origin != allowed_origin:
+    if origin is not None:
+        if origin.rstrip("/") == allowed:
+            return
         raise AuthorizationError(
             "ORIGIN_FORBIDDEN",
             "请求来源不被允许。",
             status_code=403,
         )
+
+    referer = (request.headers.get("referer") or "").strip()
+    if referer == allowed or referer.startswith(allowed + "/"):
+        return
+
+    sec_fetch_site = (request.headers.get("sec-fetch-site") or "").casefold()
+    host = (request.headers.get("host") or "").split(":", 1)[0].casefold()
+    allowed_host = allowed.split("://", 1)[-1].split("/", 1)[0].split(":", 1)[
+        0
+    ].casefold()
+    if sec_fetch_site == "same-origin" and host == allowed_host:
+        return
+
+    raise AuthorizationError(
+        "ORIGIN_FORBIDDEN",
+        "请求来源不被允许。",
+        status_code=403,
+    )
 
 
 def require_csrf(request: Request, expected_hash: str) -> None:
