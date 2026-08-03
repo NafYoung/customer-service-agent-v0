@@ -32,6 +32,15 @@
 
 诚实叙事：**holdout 未过门** → 归因 → 修复 → 用公开 7×4 证明不回退。不是把 FAIL 改写成 PASS。
 
+## 在线演示（Render）
+
+公网托管步骤见 [`docs/13_hosted_demo_render.md`](docs/13_hosted_demo_render.md)
+（GitHub 仓库 + Render Free Web Service；**不是** GitHub Pages）。
+
+部署完成后把 URL 填到仓库 Homepage，并替换下一行：
+
+**Demo：** _（部署后填写 `https://….onrender.com`）_
+
 ## 3 分钟本地演示（无需 API Key）
 
 ```bash
