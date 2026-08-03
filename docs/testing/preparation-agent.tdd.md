@@ -103,6 +103,9 @@ Reference Eval 8/8
 ## 5. 已知边界
 
 - 没有调用真实模型；本报告只证明离线控制流和确定性后端保证。
-- Preparation Agent 核心尚未接入宿主确认卡或公开 UI。
+- 公开宿主 UI 已通过 `DEMO_AGENT_MODE=preparation_scripted` 接入：
+  `app/demo/preparation_runner.py` 驱动真实 `PreparationAgent`（scripted
+  多轮），确认卡 / present / confirm / execute 复用既有 BFF。
+  证据：`tests/test_demo_preparation_integration.py`。
 - SQLite 的联合唯一约束提供顺序重放兜底，不代表 PostgreSQL 并发竞争已验证。
 - 旧 SQLite 数据库没有 Alembic 迁移，需要备份后重建。

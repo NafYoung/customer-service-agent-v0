@@ -1407,9 +1407,15 @@ def test_formal_execution_capability_rejects_mounts_mock_injection_zero_calls(
         return httpx.Response(200, json={"choices": []})
 
     mounts = bound_model._client._mounts
-    assert mounts
-    mount_key = next(iter(mounts))
-    original_mount_transport = mounts[mount_key]
+    # httpx>=0.28 default clients often start with empty mounts; seed a
+    # pattern key so the post-seal MockTransport remount remains a real attack.
+    pattern_donor = httpx.Client(mounts={"all://": httpx.HTTPTransport()})
+    try:
+        mount_key = next(iter(pattern_donor._mounts))
+    finally:
+        pattern_donor.close()
+    had_existing_mount = mount_key in mounts
+    original_mount_transport = mounts.get(mount_key)
     injected = httpx.MockTransport(_mock_handler)
     try:
         capability = _issue_formal_execution_capability(
@@ -1435,7 +1441,10 @@ def test_formal_execution_capability_rejects_mounts_mock_injection_zero_calls(
         assert mock_hits == 0
         _assert_zero_budget_attempts(guard)
     finally:
-        mounts[mount_key] = original_mount_transport
+        if had_existing_mount:
+            mounts[mount_key] = original_mount_transport
+        else:
+            mounts.pop(mount_key, None)
         bound_model.close()
 
 

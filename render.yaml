@@ -1,4 +1,4 @@
-# Render Blueprint: public_demo (offline replay, no DeepSeek key).
+# Render Blueprint: public_demo (scripted Preparation Agent, no DeepSeek key).
 # Dashboard: New → Blueprint → select this repo → apply.
 # After first deploy, copy the service URL into README homepage / docs.
 # Free web services cold-start after idle; first request may take ~30–60s.
@@ -15,7 +15,7 @@ services:
       - key: APP_MODE
         value: public_demo
       - key: DEMO_AGENT_MODE
-        value: offline_replay
+        value: preparation_scripted
       # Lock Origin to the known public URL (GET may omit Origin; Referer fallback exists).
       - key: DEMO_ALLOWED_ORIGIN
         value: https://rivet-public-demo.onrender.com

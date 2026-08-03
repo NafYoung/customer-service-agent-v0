@@ -5,7 +5,9 @@
 v0 是供 Agent 调用的确定性交易后端原型。它已有业务规则、状态机、最小
 工具契约、宿主确认边界、调试轨迹和 Eval 证据。当前有两个独立运行阶段：
 只读 Agent 固定开放 6 个查询/资格工具；Preparation Agent 核心开放这
-6 个工具和 3 个明确的 `prepare_*`。Preparation Agent 尚未接入公开宿主 UI。
+6 个工具和 3 个明确的 `prepare_*`。公开宿主 UI 已通过
+`DEMO_AGENT_MODE=preparation_scripted` 接入 Preparation Agent（scripted
+多轮工具，零外网）；`offline_replay` 仍可作为对照路径。
 
 当前不应称为端到端客服 Agent、“安全交易层”或安全审计系统：
 
@@ -53,10 +55,10 @@ debug tool events
 2. ✅ 建立自然语言案例并完成真实 DeepSeek Prompt A/B；严格 7/10 → 10/10，工具调用 25 → 12。
 3. ✅ 新建独立 Preparation Agent/dispatcher，只开放三个明确的
    `prepare_*` 增量工具；模型只能解释预览并请求确认。
-4. 实现结构化确认卡片，由宿主应用记录 `PRESENTED` 和 `ConfirmationEvent`。
-5. 宿主应用在确认后触发确定性执行，并把最终结果交回模型。
-6. ◐ Approval 与 Agent 工具轨迹已关联服务端运行和 provider tool call；
-   宿主 UI 控制流仍待接入。
+4. ✅ 实现结构化确认卡片，由宿主应用记录 `PRESENTED` 和 `ConfirmationEvent`。
+5. ✅ 宿主应用在确认后触发确定性执行（公开 demo 将执行结果回写 UI；不交回模型）。
+6. ✅ Approval 与 Agent 工具轨迹关联服务端运行和 tool call；公开 UI 经
+   Preparation Agent（scripted）写出 pending 后走确认卡。
 
 `execute_prepared_action` 不应在任何阶段开放为模型工具。
 
