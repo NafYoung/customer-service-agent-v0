@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import uuid
+from typing import Any
 
 from app.agent.factory import build_preparation_agent
-from app.agent.readonly import AgentRunError
+from app.agent.readonly import AgentRunError, ToolTrace
 from app.agent.scripted import ScriptedModel, final_turn, tool_turn
-from app.demo.replay import ReplayMatch
+from app.demo.matches import ReplayMatch
 from app.demo.session import DemoSession, bump_or_limit, tool_context
 from app.errors import ServiceError
 from app.schemas import PrepareActionResponse
@@ -16,16 +18,18 @@ from app.schemas import PrepareActionResponse
 def _final_reply_for(match: ReplayMatch) -> str:
     if match.kind == "cancel":
         return (
-            "Preparation Agent 已查询订单并准备取消 ORD-1001。"
+            f"Preparation Agent 已查询订单并准备取消 {match.order_id}。"
             "请在右侧确认卡核对数据库中的规范预览；确认前不会执行。"
         )
     if match.kind == "return":
         return (
-            "Preparation Agent 已准备退货申请（ORD-1003 / ITEM-1003-A）。"
+            f"Preparation Agent 已准备退货申请（{match.order_id} / "
+            f"{match.order_item_id}）。"
             "此步骤不会直接退款；请核对确认卡后再确认。"
         )
     return (
-        "Preparation Agent 已准备将 ORD-1003 的德训鞋换为 43 码。"
+        f"Preparation Agent 已准备将 {match.order_id} 换为 "
+        f"{match.target_size} 码。"
         "库存预占只会在你确认后发生；请先核对确认卡。"
     )
 
@@ -33,77 +37,85 @@ def _final_reply_for(match: ReplayMatch) -> str:
 def _scripted_model_for(match: ReplayMatch, *, final_reply: str) -> ScriptedModel:
     """Multi-round trajectory: lookup → eligibility → single prepare → final text."""
 
+    order_id = match.order_id
     if match.kind == "cancel":
         return ScriptedModel(
             tool_turn(
                 "get_order",
-                '{"order_id":"ORD-1001"}',
+                json.dumps({"order_id": order_id}, ensure_ascii=False),
                 call_id="demo-script-get-order",
             ),
             tool_turn(
                 "check_action_eligibility",
-                '{"action_type":"CANCEL_ORDER","order_id":"ORD-1001"}',
+                json.dumps(
+                    {"action_type": "CANCEL_ORDER", "order_id": order_id},
+                    ensure_ascii=False,
+                ),
                 call_id="demo-script-eligibility",
             ),
             tool_turn(
                 "prepare_cancel_order",
-                '{"order_id":"ORD-1001"}',
+                json.dumps({"order_id": order_id}, ensure_ascii=False),
                 call_id="demo-script-prepare-cancel",
             ),
             final_turn(final_reply),
         )
     if match.kind == "return":
+        assert match.order_item_id is not None
+        payload = {
+            "order_id": order_id,
+            "order_item_id": match.order_item_id,
+            "declared_condition": "NEW_UNWORN",
+            "issue_type": "CHANGED_MIND",
+        }
         return ScriptedModel(
             tool_turn(
                 "get_order",
-                '{"order_id":"ORD-1003"}',
+                json.dumps({"order_id": order_id}, ensure_ascii=False),
                 call_id="demo-script-get-order",
             ),
             tool_turn(
                 "check_action_eligibility",
-                (
-                    '{"action_type":"RETURN_ITEM","order_id":"ORD-1003",'
-                    '"order_item_id":"ITEM-1003-A",'
-                    '"declared_condition":"NEW_UNWORN",'
-                    '"issue_type":"CHANGED_MIND"}'
+                json.dumps(
+                    {"action_type": "RETURN_ITEM", **payload},
+                    ensure_ascii=False,
                 ),
                 call_id="demo-script-eligibility",
             ),
             tool_turn(
                 "prepare_return",
-                (
-                    '{"order_id":"ORD-1003","order_item_id":"ITEM-1003-A",'
-                    '"declared_condition":"NEW_UNWORN",'
-                    '"issue_type":"CHANGED_MIND"}'
-                ),
+                json.dumps(payload, ensure_ascii=False),
                 call_id="demo-script-prepare-return",
             ),
             final_turn(final_reply),
         )
     if match.kind == "exchange":
+        assert match.order_item_id is not None
+        assert match.target_size is not None
+        payload = {
+            "order_id": order_id,
+            "order_item_id": match.order_item_id,
+            "target_size": match.target_size,
+            "declared_condition": "NEW_UNWORN",
+            "issue_type": "SIZE_MISMATCH",
+        }
         return ScriptedModel(
             tool_turn(
                 "get_order",
-                '{"order_id":"ORD-1003"}',
+                json.dumps({"order_id": order_id}, ensure_ascii=False),
                 call_id="demo-script-get-order",
             ),
             tool_turn(
                 "check_action_eligibility",
-                (
-                    '{"action_type":"EXCHANGE_ITEM","order_id":"ORD-1003",'
-                    '"order_item_id":"ITEM-1003-A","target_size":"43",'
-                    '"declared_condition":"NEW_UNWORN",'
-                    '"issue_type":"SIZE_MISMATCH"}'
+                json.dumps(
+                    {"action_type": "EXCHANGE_ITEM", **payload},
+                    ensure_ascii=False,
                 ),
                 call_id="demo-script-eligibility",
             ),
             tool_turn(
                 "prepare_exchange",
-                (
-                    '{"order_id":"ORD-1003","order_item_id":"ITEM-1003-A",'
-                    '"target_size":"43","declared_condition":"NEW_UNWORN",'
-                    '"issue_type":"SIZE_MISMATCH"}'
-                ),
+                json.dumps(payload, ensure_ascii=False),
                 call_id="demo-script-prepare-exchange",
             ),
             final_turn(final_reply),
@@ -113,6 +125,25 @@ def _scripted_model_for(match: ReplayMatch, *, final_reply: str) -> ScriptedMode
         "未知 scripted Preparation 场景。",
         status_code=500,
     )
+
+
+def project_tool_trace(trace: tuple[ToolTrace, ...]) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for item in trace:
+        if item.success:
+            summary = f"{item.tool_name} 成功"
+        else:
+            summary = f"{item.tool_name} 失败"
+            if item.error_code:
+                summary = f"{summary}（{item.error_code}）"
+        items.append(
+            {
+                "tool_name": item.tool_name,
+                "success": item.success,
+                "summary": summary,
+            }
+        )
+    return items
 
 
 def run_preparation_scripted(
@@ -138,7 +169,6 @@ def run_preparation_scripted(
         max_tool_rounds=session.settings.agent_max_tool_rounds,
         max_tool_calls=session.settings.agent_max_tool_calls,
     )
-    # Origin tool call id is bound by PreparationAgent for the prepare call.
     context = tool_context(session)
     try:
         with session.database.session() as db:
@@ -165,4 +195,6 @@ def run_preparation_scripted(
     session.pending_approval_id = prepared.approval_id
     session.pending_preview_hash = prepared.preview_hash
     session.pending_ui_event_id = f"demo-ui-{uuid.uuid4().hex}"
+    session.last_tool_trace = project_tool_trace(result.tool_trace)
+    session.pending_slot = None
     return result.final_text or final_reply, prepared

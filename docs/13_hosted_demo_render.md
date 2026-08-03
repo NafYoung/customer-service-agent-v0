@@ -40,6 +40,7 @@ GitHub Pages **不能**跑 FastAPI；本方案是「代码在 GitHub、演示站
 |---|---|---|---|
 | `preparation_scripted` | `PreparationAgent.run`（scripted turns） | 0 | 默认；面试可讲「UI 接 Preparation Agent」 |
 | `offline_replay` | 直调 `prepare_*` | 0 | 更短路径对照；仍走同一确认卡 |
+| `preparation_live` | 真实 DeepSeek（预算闸门） | ≥1 | **仅本地**；`public_demo` / Render 禁止 |
 
 ## 验收
 

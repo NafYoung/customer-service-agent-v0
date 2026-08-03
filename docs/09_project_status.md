@@ -31,13 +31,13 @@ holdout 失败后加固链：`9337e55`（prompt/回归）→ `84eca79` / `69030d
 | 确定性后端与只读 Agent | verified-current | 完整离线门通过；Reference Eval 8/8 |
 | Eval 证据与预算闸门 | verified-current | 开发集 40/40；live 账本可用 |
 | holdout v1 | verified-current / retired | 唯一正式结果 46/80、`pass^4=0.35`；禁止重跑 |
-| Preparation Agent | **verified-current** | 核心 `1b034cd`；公开 UI 经 `preparation_scripted` 接入（`app/demo/preparation_runner.py` + 集成测试） |
+| Preparation Agent | **verified-current** | 核心 `1b034cd`；公开 UI `preparation_scripted`；本地可选 `preparation_live` |
+| 宿主确认、并发、UI、公开演示 | **updated** | reject/tool_trace/补槽；Demo https://rivet-public-demo.onrender.com/ ；Phase 5 Postgres 仍待 |
 | 原子命题语义门 | **verified-current** | `atomic-claims-v4`；校准 **#4** @ `8884b1a` 49/49 |
 | DeepSeek 语义校准 | **passed** | #4：`eval-20260731t080100z-4d65de51789c` **49/49**；review GO |
 | 公开回归 7×4（holdout 绑定历史） | historical | `eval-20260731t080946z-dd64553ceb3e` **28/28** @ `8884b1a` |
 | 公开回归 7×4（加固后现役） | **passed** | `eval-20260731t102036z-9be142ce84ec` **28/28** @ `f7f221a`；`pass^4=1.00`；业务写入 0 |
 | holdout v2 | **failed / retired** | 唯一正式跑 44/80、`pass^4=0.40`；禁止同题集重跑；见 `docs/testing/holdout-v2-postmortem.md` |
-| 宿主确认、并发、UI、公开演示 | **updated** | public_demo + Preparation Agent（scripted）；Demo https://rivet-public-demo.onrender.com/ ；Phase 5 Postgres 仍待 |
 | 作品集对外叙事 | **updated** | README 指标与 holdout FAIL→加固→复验对齐；`docs/12_phase6_publish_checklist.md` |
 | 公开 GitHub | **created** | https://github.com/NafYoung/customer-service-agent-v0 |
 | 生产运行态 | not-applicable | 托管演示为作品原型，非生产 |

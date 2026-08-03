@@ -321,7 +321,32 @@ body {
 }
 
 .card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
   padding: 0 1.15rem 1rem;
+}
+
+.bubble.trace {
+  border-color: rgba(196, 163, 90, 0.35);
+  background: rgba(196, 163, 90, 0.06);
+}
+
+.tool-trace {
+  margin: 0.35rem 0 0;
+  padding-left: 1.1rem;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.02em;
+  color: var(--paper-dim);
+}
+
+.tool-trace li.ok {
+  color: var(--ok);
+}
+
+.tool-trace li.fail {
+  color: var(--danger);
 }
 
 .status {

@@ -298,6 +298,7 @@ class ReadOnlyAgent:
         user_text: str,
         context: ToolCallContext,
         trace_sink: Callable[[ToolTrace], None] | None = None,
+        history: Sequence[Message] | None = None,
     ) -> AgentRunResult:
         if not user_text.strip():
             raise AgentRunError(
@@ -307,8 +308,18 @@ class ReadOnlyAgent:
 
         messages: list[Message] = [
             {"role": "system", "content": self._system_prompt},
-            {"role": "user", "content": user_text},
         ]
+        if history:
+            for history_item in history:
+                role = history_item.get("role")
+                content = history_item.get("content")
+                if role not in {"user", "assistant"} or not isinstance(content, str):
+                    raise AgentRunError(
+                        "INVALID_HISTORY_MESSAGE",
+                        "History messages must be user/assistant text turns.",
+                    )
+                messages.append({"role": role, "content": content})
+        messages.append({"role": "user", "content": user_text})
         trace: list[ToolTrace] = []
         model_turns: list[AssistantTurn] = []
         tool_rounds = 0

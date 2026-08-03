@@ -19,6 +19,8 @@
 `preparation_scripted` 或 `offline_replay`；忽略 DeepSeek Key，不注册 `/v1`
 写路由与 debug，provider HTTP 调用为 0。默认推荐 `preparation_scripted`
 （真实 Preparation Agent 循环 + scripted 多轮工具）。
+`preparation_live` **仅**允许 `APP_MODE=local` + Key + Origin + 宿主令牌；
+公开演示拒绝 live。UI 支持拒绝待确认、展示工具轨迹、模糊意图多轮补槽。
 
 ## 如何运行
 
@@ -63,12 +65,14 @@ docker compose --profile public_demo up --build public-demo
 
 ```bash
 .venv/bin/python -m pytest tests/test_public_demo.py \
-  tests/test_demo_preparation_integration.py -q
+  tests/test_demo_preparation_integration.py \
+  tests/test_demo_ux.py -q
 .venv/bin/python -m pytest \
   tests/test_action_concurrency.py \
   tests/test_public_demo.py \
   tests/test_api_actions.py \
-  tests/test_demo_preparation_integration.py -q
+  tests/test_demo_preparation_integration.py \
+  tests/test_demo_ux.py -q
 ```
 
 ## 已交付
@@ -76,9 +80,11 @@ docker compose --profile public_demo up --build public-demo
 | 项 | 状态 |
 |---|---|
 | `APP_MODE=public_demo` 失败关闭 / 忽略 DeepSeek Key | 完成 |
-| Demo BFF：session / messages / pending-action / presented / confirm / reset | 完成 |
-| 确认卡仅投影 DB canonical preview；按钮确认；宿主令牌服务端 | 完成 |
+| Demo BFF：session / messages / pending-action / presented / confirm / reject / reset | 完成 |
+| 确认卡仅投影 DB canonical preview；按钮确认/拒绝；宿主令牌服务端 | 完成 |
+| 对话展示 tool_trace；模糊意图多轮补槽；session 返回 mode_label | 完成 |
 | `DEMO_AGENT_MODE=preparation_scripted` 经 Preparation Agent 写出 pending | 完成 |
+| 本地 `preparation_live`（public_demo 仍禁；预算闸门） | 完成 |
 | 每会话 ephemeral SQLite + seed；reset 轮换 Cookie | 完成 |
 | 同域静态 UI（RIVET 品牌） | 完成 |
 | `tests/test_public_demo.py` + `tests/test_demo_preparation_integration.py` | 完成 |

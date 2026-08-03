@@ -16,16 +16,25 @@ class DemoSessionResponse(APIModel):
     customer_display_name: str
     supported_scenarios: list[str]
     expires_at: datetime
+    demo_agent_mode: str
+    mode_label: str
 
 
 class DemoMessageRequest(APIModel):
     message: str = Field(min_length=1, max_length=500)
 
 
+class DemoToolTraceItem(APIModel):
+    tool_name: str
+    success: bool
+    summary: str
+
+
 class DemoMessageResponse(APIModel):
     reply: str
     has_pending_action: bool
     provider_http_calls: int = 0
+    tool_trace: list[DemoToolTraceItem] = Field(default_factory=list)
 
 
 class DemoConfirmationCard(APIModel):
@@ -59,8 +68,15 @@ class DemoConfirmResponse(APIModel):
     provider_http_calls: int = 0
 
 
+class DemoRejectResponse(APIModel):
+    status: str
+    message: str
+
+
 class DemoResetResponse(APIModel):
     csrf_token: str
     customer_display_name: str
     message: str
     expires_at: datetime
+    demo_agent_mode: str
+    mode_label: str
