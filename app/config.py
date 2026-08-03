@@ -16,6 +16,48 @@ def _env_bool(name: str, default: bool = False) -> bool:
     raise ValueError(f"{name} must be a boolean value")
 
 
+def resolve_demo_allowed_origin(
+    *,
+    explicit: str | None = None,
+    render_external_url: str | None = None,
+    railway_public_domain: str | None = None,
+) -> str:
+    """Resolve the browser Origin allowed for public_demo CSRF/CORS checks.
+
+    Prefer an explicit DEMO_ALLOWED_ORIGIN. On managed hosts, fall back to the
+    platform-provided public URL so a first deploy works without a circular
+    "set Origin after you know the URL" step.
+    """
+
+    candidates = (
+        explicit if explicit is not None else os.getenv("DEMO_ALLOWED_ORIGIN"),
+        (
+            render_external_url
+            if render_external_url is not None
+            else os.getenv("RENDER_EXTERNAL_URL")
+        ),
+    )
+    for raw in candidates:
+        value = (raw or "").strip().rstrip("/")
+        if value:
+            return value
+
+    railway = (
+        railway_public_domain
+        if railway_public_domain is not None
+        else os.getenv("RAILWAY_PUBLIC_DOMAIN")
+    )
+    railway_value = (railway or "").strip().rstrip("/")
+    if railway_value:
+        if railway_value.startswith("http://") or railway_value.startswith(
+            "https://"
+        ):
+            return railway_value
+        return f"https://{railway_value}"
+
+    return "http://127.0.0.1:8000"
+
+
 @dataclass(frozen=True)
 class Settings:
     """Runtime settings for the v0 service.
@@ -51,10 +93,7 @@ class Settings:
     demo_agent_mode: str = (
         os.getenv("DEMO_AGENT_MODE", "offline_replay").strip() or "offline_replay"
     )
-    demo_allowed_origin: str = os.getenv(
-        "DEMO_ALLOWED_ORIGIN",
-        "http://127.0.0.1:8000",
-    )
+    demo_allowed_origin: str = resolve_demo_allowed_origin()
     demo_cookie_secure: bool = _env_bool("DEMO_COOKIE_SECURE", True)
     demo_session_ttl_minutes: int = int(os.getenv("DEMO_SESSION_TTL_MINUTES", "30"))
     demo_max_active_sessions: int = int(os.getenv("DEMO_MAX_ACTIVE_SESSIONS", "50"))
