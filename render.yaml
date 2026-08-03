@@ -16,8 +16,9 @@ services:
         value: public_demo
       - key: DEMO_AGENT_MODE
         value: offline_replay
-      # Leave unset so app.config.resolve_demo_allowed_origin uses RENDER_EXTERNAL_URL.
-      # Optionally lock it later to the exact https://….onrender.com Origin.
+      # Lock Origin to the known public URL (GET may omit Origin; Referer fallback exists).
+      - key: DEMO_ALLOWED_ORIGIN
+        value: https://rivet-public-demo.onrender.com
       - key: DEMO_COOKIE_SECURE
         value: "true"
       - key: ENABLE_DEBUG_ROUTES
