@@ -37,7 +37,7 @@ holdout 失败后加固链：`9337e55`（prompt/回归）→ `84eca79` / `69030d
 | 公开回归 7×4（holdout 绑定历史） | historical | `eval-20260731t080946z-dd64553ceb3e` **28/28** @ `8884b1a` |
 | 公开回归 7×4（加固后现役） | **passed** | `eval-20260731t102036z-9be142ce84ec` **28/28** @ `f7f221a`；`pass^4=1.00`；业务写入 0 |
 | holdout v2 | **failed / retired** | 唯一正式跑 44/80、`pass^4=0.40`；禁止同题集重跑；见 `docs/testing/holdout-v2-postmortem.md` |
-| 宿主确认、并发、UI、公开演示 | partial | 本地 public_demo 可跑；公开仓已建，托管演示 URL pending |
+| 宿主确认、并发、UI、公开演示 | partial | 本地 public_demo 可跑；Render Blueprint 已备（`render.yaml` / `docs/13`）；**公网 URL 待作者在 Render 点一次部署后回填** |
 | 作品集对外叙事 | **updated** | README 指标与 holdout FAIL→加固→复验对齐；`docs/12_phase6_publish_checklist.md` |
 | 公开 GitHub | **created** | https://github.com/NafYoung/customer-service-agent-v0 （`main` @ `5de421f` 起） |
 | 生产运行态 | not-applicable | 尚无托管演示 URL |
