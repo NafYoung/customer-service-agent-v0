@@ -160,7 +160,24 @@ def test_browser_cannot_inject_host_fields_on_present_confirm(
     assert forged_confirm.status_code == 422
 
 
-def test_confirm_without_present_fail_closed(demo_client: TestClient, demo_app):
+def test_pending_action_get_rejects_cross_site_without_origin(
+    demo_client: TestClient,
+):
+    csrf = _start_session(demo_client)
+    demo_client.post(
+        "/demo/messages",
+        headers=_json_headers(csrf),
+        json={"message": "取消订单 ORD-1001"},
+    )
+    blocked = demo_client.get(
+        "/demo/pending-action",
+        headers={
+            "Accept": "application/json",
+            "Referer": "https://evil.example/",
+        },
+    )
+    assert blocked.status_code == 403
+    assert blocked.json()["error"]["code"] == "ORIGIN_FORBIDDEN"
     csrf = _start_session(demo_client)
     prepared = demo_client.post(
         "/demo/messages",
@@ -203,9 +220,15 @@ def test_prepare_present_confirm_execute_happy_path(demo_client: TestClient, dem
     assert HOST_TOKEN not in message.text
     assert "sk-should-never-leak" not in message.text
 
+    # Browsers often omit Origin on same-origin GET; Referer must still pass.
     pending = demo_client.get(
         "/demo/pending-action",
-        headers={"Origin": ORIGIN, "Accept": "application/json"},
+        headers={
+            "Accept": "application/json",
+            "Referer": ORIGIN + "/",
+            "Sec-Fetch-Site": "same-origin",
+            "Host": "testserver",
+        },
     )
     assert pending.status_code == 200
     card = pending.json()
