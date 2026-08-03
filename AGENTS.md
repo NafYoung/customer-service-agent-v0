@@ -47,3 +47,22 @@
 `docs/09_project_status.md`；阶段验收合同见
 `docs/06_portfolio_completion_plan.md`。不要从旧会话或历史 artifact
 推断当前完成度。
+
+## Cursor Cloud specific instructions
+
+单进程 Python 应用（FastAPI + 内嵌 SQLite），无独立前端/数据库服务。启动脚本已
+建好 `.venv` 并装好 `requirements-dev.txt`，直接用 `.venv/bin/python` 即可。
+
+- 系统依赖：创建 `.venv` 需要 `python3.12-venv`（Debian/Ubuntu 默认没有），环境构建
+  已安装；本机无网重建 venv 时若报 `ensurepip is not available`，即缺此包。
+- 离线门与运行命令见根 `README.md` 与 `Makefile`（`make verify`/`make run`/`make test`）；
+  Reference Eval 见 AGENTS「环境与验证」。全部离线，无需 API Key。
+- 公开演示（浏览器端到端，推荐）：`APP_MODE=public_demo`、
+  `DEMO_AGENT_MODE=preparation_scripted`、`DEMO_ALLOWED_ORIGIN=http://127.0.0.1:8000`、
+  `DEMO_COOKIE_SECURE=false` 四个变量必须内联传入 uvicorn（完整命令见 README）。此模式用
+  **内存 SQLite（重启即丢）**，且拒绝 live DeepSeek，`provider_http_calls` 恒为 0。
+- 用 curl 打 `/demo/*` 时的非显然点：写请求必须带 `Origin` 头、会话 Cookie，以及
+  CSRF 头 `X-CSRF-Token`（值取自 `POST /demo/session` 返回的 `csrf_token`），否则报
+  `CSRF_FORBIDDEN`。流程：`session → messages → pending-action → presented → confirm`。
+- `local` 模式（`make run`，带 Swagger `/docs`）用文件库 `./customer_service.db` 并自动播种；
+  要跑 present/confirm/execute 写流程需在 `.env` 设 `HOST_CONFIRMATION_TOKEN`。
