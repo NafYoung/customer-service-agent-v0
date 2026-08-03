@@ -1,0 +1,36 @@
+# Render Blueprint: public_demo (offline replay, no DeepSeek key).
+# Dashboard: New → Blueprint → select this repo → apply.
+# After first deploy, copy the service URL into README homepage / docs.
+# Free web services cold-start after idle; first request may take ~30–60s.
+
+services:
+  - type: web
+    name: rivet-public-demo
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    envVars:
+      - key: APP_MODE
+        value: public_demo
+      - key: DEMO_AGENT_MODE
+        value: offline_replay
+      # Leave unset so app.config.resolve_demo_allowed_origin uses RENDER_EXTERNAL_URL.
+      # Optionally lock it later to the exact https://….onrender.com Origin.
+      - key: DEMO_COOKIE_SECURE
+        value: "true"
+      - key: ENABLE_DEBUG_ROUTES
+        value: "false"
+      - key: AUTH_SESSION_MINUTES
+        value: "60"
+      - key: APPROVAL_TTL_MINUTES
+        value: "10"
+      - key: DEMO_VERIFICATION_CODE
+        value: "246810"
+      - key: DEMO_SESSION_TTL_MINUTES
+        value: "30"
+      - key: DEMO_MAX_ACTIVE_SESSIONS
+        value: "50"
+      - key: HOST_CONFIRMATION_TOKEN
+        generateValue: true
