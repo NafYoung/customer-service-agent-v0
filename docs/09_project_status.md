@@ -1,12 +1,12 @@
 # 项目现役状态
 
-最后核对：2026-07-31（作品集叙事收口 + Phase 6 发布清单；公开回归 **28/28** @ `f7f221a`）
+最后核对：2026-08-03（宿主 UI 接 Preparation Agent / scripted；Render Demo URL 回填）
 
-本地分支：`main`
+本地分支：以当前 Git 为准
 
 最近已提交检查点：与本文件同 Git 提交
 
-Preparation Agent 检查点：`1b034cd`
+Preparation Agent 检查点：`1b034cd`（核心）；宿主 UI 接入见本分支
 
 离线修复基线（prompt v2）：`56c5c6f`
 
@@ -31,16 +31,16 @@ holdout 失败后加固链：`9337e55`（prompt/回归）→ `84eca79` / `69030d
 | 确定性后端与只读 Agent | verified-current | 完整离线门通过；Reference Eval 8/8 |
 | Eval 证据与预算闸门 | verified-current | 开发集 40/40；live 账本可用 |
 | holdout v1 | verified-current / retired | 唯一正式结果 46/80、`pass^4=0.35`；禁止重跑 |
-| Preparation Agent | changed-and-verified | 提交 `1b034cd`；独立审查 Gate GO |
+| Preparation Agent | **verified-current** | 核心 `1b034cd`；公开 UI 经 `preparation_scripted` 接入（`app/demo/preparation_runner.py` + 集成测试） |
 | 原子命题语义门 | **verified-current** | `atomic-claims-v4`；校准 **#4** @ `8884b1a` 49/49 |
 | DeepSeek 语义校准 | **passed** | #4：`eval-20260731t080100z-4d65de51789c` **49/49**；review GO |
 | 公开回归 7×4（holdout 绑定历史） | historical | `eval-20260731t080946z-dd64553ceb3e` **28/28** @ `8884b1a` |
 | 公开回归 7×4（加固后现役） | **passed** | `eval-20260731t102036z-9be142ce84ec` **28/28** @ `f7f221a`；`pass^4=1.00`；业务写入 0 |
 | holdout v2 | **failed / retired** | 唯一正式跑 44/80、`pass^4=0.40`；禁止同题集重跑；见 `docs/testing/holdout-v2-postmortem.md` |
-| 宿主确认、并发、UI、公开演示 | partial | 本地 public_demo 可跑；Render Blueprint 已备（`render.yaml` / `docs/13`）；**公网 URL 待作者在 Render 点一次部署后回填** |
+| 宿主确认、并发、UI、公开演示 | **updated** | public_demo + Preparation Agent（scripted）；Demo https://rivet-public-demo.onrender.com/ ；Phase 5 Postgres 仍待 |
 | 作品集对外叙事 | **updated** | README 指标与 holdout FAIL→加固→复验对齐；`docs/12_phase6_publish_checklist.md` |
-| 公开 GitHub | **created** | https://github.com/NafYoung/customer-service-agent-v0 （`main` @ `5de421f` 起） |
-| 生产运行态 | not-applicable | 尚无托管演示 URL |
+| 公开 GitHub | **created** | https://github.com/NafYoung/customer-service-agent-v0 |
+| 生产运行态 | not-applicable | 托管演示为作品原型，非生产 |
 
 ## 预算账本策略
 

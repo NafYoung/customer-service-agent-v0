@@ -4,9 +4,12 @@ import httpx
 
 from app.agent.openai_compatible import (
     AttemptBudgetGuard,
+    ChatModel,
     OpenAICompatibleChatClient,
 )
+from app.agent.preparation import PreparationAgent
 from app.config import Settings
+from app.tools.facade import CustomerServiceTools
 
 
 def deepseek_public_runtime_config(
@@ -68,4 +71,23 @@ def build_deepseek_client(
         extra_body={"thinking": {"type": "disabled"}},
         budget_guard=budget_guard,
         transport=transport,
+    )
+
+
+def build_preparation_agent(
+    *,
+    model: ChatModel,
+    tools: CustomerServiceTools,
+    max_tool_rounds: int = 4,
+    max_tool_calls: int = 12,
+    system_prompt: str | None = None,
+) -> PreparationAgent:
+    """Construct the bounded Preparation Agent for host or demo wiring."""
+
+    return PreparationAgent(
+        model=model,
+        tools=tools,
+        max_tool_rounds=max_tool_rounds,
+        max_tool_calls=max_tool_calls,
+        system_prompt=system_prompt,
     )

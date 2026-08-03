@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from copy import deepcopy
 from pathlib import Path
 
 import pytest
@@ -10,6 +9,7 @@ from sqlalchemy import func, select
 from app.agent.openai_compatible import AssistantTurn, ToolCall
 from app.agent.preparation import PreparationAgent
 from app.agent.readonly import AgentRunError
+from app.agent.scripted import ScriptedModel, final_turn, tool_turn
 from app.config import Settings
 from app.database import Database
 from app.models import (
@@ -30,46 +30,6 @@ from app.tools.contracts import (
 )
 from app.tools.facade import ToolCallContext
 from app.tools.factory import build_tools
-
-
-class ScriptedModel:
-    def __init__(self, *turns: AssistantTurn):
-        self.turns = list(turns)
-        self.calls: list[dict[str, object]] = []
-
-    def complete(self, *, messages, tools):
-        self.calls.append(
-            {
-                "messages": deepcopy(messages),
-                "tools": deepcopy(tools),
-            }
-        )
-        if not self.turns:
-            raise AssertionError("scripted model ran out of turns")
-        return self.turns.pop(0)
-
-
-def tool_turn(
-    name: str,
-    arguments: str,
-    *,
-    call_id: str = "call-prepare-1",
-) -> AssistantTurn:
-    return AssistantTurn(
-        content=None,
-        tool_calls=(ToolCall(id=call_id, name=name, arguments=arguments),),
-        finish_reason="tool_calls",
-        usage=None,
-    )
-
-
-def final_turn(content: str) -> AssistantTurn:
-    return AssistantTurn(
-        content=content,
-        tool_calls=(),
-        finish_reason="stop",
-        usage=None,
-    )
 
 
 def build_runtime(

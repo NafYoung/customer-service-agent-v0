@@ -37,9 +37,9 @@
 公网托管步骤见 [`docs/13_hosted_demo_render.md`](docs/13_hosted_demo_render.md)
 （GitHub 仓库 + Render Free Web Service；**不是** GitHub Pages）。
 
-部署完成后把 URL 填到仓库 Homepage，并替换下一行：
+**Demo：** https://rivet-public-demo.onrender.com/
 
-**Demo：** _（部署后填写 `https://….onrender.com`）_
+Free 档闲置约 15 分钟会休眠，首次打开可能需等待约 1 分钟。
 
 ## 3 分钟本地演示（无需 API Key）
 
@@ -49,13 +49,14 @@ pip install -r requirements-dev.txt
 test -f .env || cp .env.example .env
 
 APP_MODE=public_demo \
-DEMO_AGENT_MODE=offline_replay \
+DEMO_AGENT_MODE=preparation_scripted \
 DEMO_ALLOWED_ORIGIN=http://127.0.0.1:8000 \
 DEMO_COOKIE_SECURE=false \
 python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
 打开 http://127.0.0.1:8000/ →「取消订单 ORD-1001」→ 核对确认卡 →「确认并执行」。
+消息经 **Preparation Agent**（scripted 多轮工具，零外网）写出 pending；确认与执行仍由宿主完成。
 
 ## 开发运行
 

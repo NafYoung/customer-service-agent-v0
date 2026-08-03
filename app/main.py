@@ -13,7 +13,10 @@ from app.api.routes import debug_router, router
 from app.config import Settings
 from app.config import settings as default_settings
 from app.database import Database
-from app.demo import APP_MODE_PUBLIC_DEMO, DEMO_AGENT_MODE_OFFLINE_REPLAY
+from app.demo import (
+    APP_MODE_PUBLIC_DEMO,
+    PUBLIC_DEMO_AGENT_MODES,
+)
 from app.demo.routes import demo_index, handle_demo_service_error
 from app.demo.routes import router as demo_router
 from app.demo.session import DemoSessionManager
@@ -26,14 +29,15 @@ DEMO_STATIC_DIR = Path(__file__).resolve().parent / "static" / "demo"
 
 
 def _normalize_public_demo_settings(settings: Settings) -> Settings:
-    """Fail closed for public demo: offline replay only, no live model key."""
+    """Fail closed for public demo: no live model key; scripted or offline only."""
 
     if settings.app_mode != APP_MODE_PUBLIC_DEMO:
         return settings
-    if settings.demo_agent_mode != DEMO_AGENT_MODE_OFFLINE_REPLAY:
+    if settings.demo_agent_mode not in PUBLIC_DEMO_AGENT_MODES:
+        allowed = ", ".join(sorted(PUBLIC_DEMO_AGENT_MODES))
         raise ValueError(
-            "APP_MODE=public_demo requires DEMO_AGENT_MODE=offline_replay "
-            "(refuse live model network)"
+            "APP_MODE=public_demo requires DEMO_AGENT_MODE in "
+            f"{{{allowed}}} (refuse live model network)"
         )
     if settings.enable_debug_routes:
         raise ValueError("APP_MODE=public_demo refuses ENABLE_DEBUG_ROUTES")
@@ -46,7 +50,7 @@ def _normalize_public_demo_settings(settings: Settings) -> Settings:
         host_confirmation_token=host_token,
         enable_debug_routes=False,
         debug_admin_token=None,
-        demo_agent_mode=DEMO_AGENT_MODE_OFFLINE_REPLAY,
+        demo_agent_mode=settings.demo_agent_mode,
     )
 
 
@@ -91,7 +95,8 @@ def create_app(
         ),
         version="0.1.0",
         description=(
-            "Same-origin offline public demo: prepare → host card → confirm → execute."
+            "Same-origin public demo: Preparation Agent (scripted or offline) "
+            "→ host card → confirm → execute."
             if public_demo
             else (
                 "A deterministic transaction layer for a future e-commerce customer "
@@ -137,7 +142,7 @@ def create_app(
         payload: dict[str, object] = {"status": "ok", "version": "0.1.0"}
         if public_demo:
             payload["app_mode"] = APP_MODE_PUBLIC_DEMO
-            payload["demo_agent_mode"] = DEMO_AGENT_MODE_OFFLINE_REPLAY
+            payload["demo_agent_mode"] = runtime_settings.demo_agent_mode
             payload["provider_http_calls"] = 0
         return payload
 

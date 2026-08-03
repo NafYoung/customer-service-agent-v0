@@ -10,12 +10,15 @@
 在浏览器中本地跑通：
 
 ```text
-离线对话 → 真实 prepare_* → canonical confirmation card
+对话（Preparation Agent / scripted 或 offline_replay）
+→ 真实 prepare_* → canonical confirmation card
 → 结构化按钮确认 → 确定性 execute → reset
 ```
 
-约束：`APP_MODE=public_demo` 时强制 `DEMO_AGENT_MODE=offline_replay`，
-忽略 DeepSeek Key，不注册 `/v1` 写路由与 debug，provider HTTP 调用为 0。
+约束：`APP_MODE=public_demo` 时 `DEMO_AGENT_MODE` 仅允许
+`preparation_scripted` 或 `offline_replay`；忽略 DeepSeek Key，不注册 `/v1`
+写路由与 debug，provider HTTP 调用为 0。默认推荐 `preparation_scripted`
+（真实 Preparation Agent 循环 + scripted 多轮工具）。
 
 ## 如何运行
 
@@ -27,7 +30,7 @@ source .venv/bin/activate
 
 # 本机 HTTP 演示（关闭 Secure Cookie；Origin 需与浏览器地址一致）
 APP_MODE=public_demo \
-DEMO_AGENT_MODE=offline_replay \
+DEMO_AGENT_MODE=preparation_scripted \
 DEMO_ALLOWED_ORIGIN=http://127.0.0.1:8000 \
 DEMO_COOKIE_SECURE=false \
 .venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
@@ -59,13 +62,13 @@ docker compose --profile public_demo up --build public-demo
 聚焦测试：
 
 ```bash
-.venv/bin/python -m pytest tests/test_public_demo.py -q
+.venv/bin/python -m pytest tests/test_public_demo.py \
+  tests/test_demo_preparation_integration.py -q
 .venv/bin/python -m pytest \
   tests/test_action_concurrency.py \
   tests/test_public_demo.py \
-  tests/test_api_actions.py -q
-# 最近一次（2026-07-31）：23 passed
-#   concurrency 2 / public_demo 13 / api_actions 8
+  tests/test_api_actions.py \
+  tests/test_demo_preparation_integration.py -q
 ```
 
 ## 已交付
@@ -75,12 +78,14 @@ docker compose --profile public_demo up --build public-demo
 | `APP_MODE=public_demo` 失败关闭 / 忽略 DeepSeek Key | 完成 |
 | Demo BFF：session / messages / pending-action / presented / confirm / reset | 完成 |
 | 确认卡仅投影 DB canonical preview；按钮确认；宿主令牌服务端 | 完成 |
+| `DEMO_AGENT_MODE=preparation_scripted` 经 Preparation Agent 写出 pending | 完成 |
 | 每会话 ephemeral SQLite + seed；reset 轮换 Cookie | 完成 |
 | 同域静态 UI（RIVET 品牌） | 完成 |
-| `tests/test_public_demo.py`（13） | 完成 |
+| `tests/test_public_demo.py` + `tests/test_demo_preparation_integration.py` | 完成 |
 | Docker 非 root + 精简 COPY + `.dockerignore` 密钥卫生 | 完成 |
 | `scripts/check_public_demo_secrets.sh` | 完成 |
 | Compose `public_demo` profile（无 DeepSeek Key） | 完成 |
+| Render 公网 Demo URL | 完成（https://rivet-public-demo.onrender.com/） |
 | 本运行说明 | 完成 |
 
 ## 尚未完成（留给后续）
@@ -100,15 +105,9 @@ docker compose --profile public_demo up --build public-demo
 ./scripts/check_publish_preflight.sh
 ```
 
-仍待作者在 Render 控制台执行一次 Blueprint 部署后：
-
-- 公网 HTTPS 演示 URL（填回 README / About Homepage）；
-- （可选）显式锁定 `DEMO_ALLOWED_ORIGIN`；
-- 端到端浏览器网络抓包验收。
+公网 URL 已回填 README。Render 改 `DEMO_AGENT_MODE` 后需 Manual Deploy 一次。
 
 步骤：`docs/13_hosted_demo_render.md`。
-
-README 已含正式 3–5 分钟演示路径与 holdout 诚实指标汇总。
 
 ### Holdout（独立评测）
 
@@ -117,13 +116,14 @@ README 已含正式 3–5 分钟演示路径与 holdout 诚实指标汇总。
 - 新盲测需新 `case_set` + 重绑校准 + 另授权。
 ## 关键文件
 
-- `app/demo/` — BFF、会话、离线回放、确认投影
+- `app/demo/` — BFF、会话、scripted Preparation runner、离线回放、确认投影
 - `app/static/demo/` — UI
 - `app/main.py` / `app/config.py` — 模式开关
 - `Dockerfile` / `docker-compose.yml` / `.dockerignore`
 - `scripts/check_public_demo_secrets.sh`
 - `scripts/check_publish_preflight.sh`
 - `tests/test_public_demo.py`
+- `tests/test_demo_preparation_integration.py`
 - `tests/test_action_concurrency.py` — Phase 5 SQLite 并发骨架
 - `docs/08_host_confirmation_public_demo.md` — 权威安全设计
 - `docs/11_phase5_concurrency_plan.md` — SQLite vs PostgreSQL 边界

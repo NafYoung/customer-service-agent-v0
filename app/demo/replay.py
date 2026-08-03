@@ -7,6 +7,10 @@ from typing import Literal
 
 from sqlalchemy.orm import Session
 
+from app.demo import (
+    DEMO_AGENT_MODE_OFFLINE_REPLAY,
+    DEMO_AGENT_MODE_PREPARATION_SCRIPTED,
+)
 from app.demo.session import DemoSession, bump_or_limit, tool_context
 from app.enums import IssueType, ItemCondition
 from app.errors import ValidationError
@@ -68,7 +72,7 @@ def match_offline_replay(message: str) -> ReplayMatch | None:
 
 
 UNSUPPORTED_REPLY = (
-    "当前公开演示仅支持离线脚本场景，不会调用在线模型。\n"
+    "当前公开演示仅支持固定场景，不会调用在线模型。\n"
     "可尝试：\n"
     "• 取消订单 ORD-1001\n"
     "• 退货 ORD-1003\n"
@@ -149,7 +153,22 @@ def handle_message(session: DemoSession, message: str) -> tuple[str, bool]:
         message="本会话消息条数已达上限，请重置演示。",
     )
     match = match_offline_replay(message)
+    mode = session.settings.demo_agent_mode
     if match is not None:
+        if mode == DEMO_AGENT_MODE_PREPARATION_SCRIPTED:
+            from app.demo.preparation_runner import run_preparation_scripted
+
+            reply, _prepared = run_preparation_scripted(
+                session,
+                message=message,
+                match=match,
+            )
+            return reply, True
+        if mode != DEMO_AGENT_MODE_OFFLINE_REPLAY:
+            raise ValidationError(
+                "DEMO_AGENT_MODE_UNSUPPORTED",
+                f"不支持的 DEMO_AGENT_MODE: {mode}",
+            )
         with session.database.session() as db:
             run_offline_prepare(session, db, match)
         return match.reply, True

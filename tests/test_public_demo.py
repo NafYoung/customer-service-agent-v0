@@ -62,7 +62,7 @@ def _start_session(client: TestClient) -> str:
 
 
 def test_public_demo_refuses_live_agent_mode():
-    with pytest.raises(ValueError, match="offline_replay"):
+    with pytest.raises(ValueError, match="refuse live model network"):
         create_app(
             settings=Settings(
                 app_mode=APP_MODE_PUBLIC_DEMO,
@@ -70,6 +70,23 @@ def test_public_demo_refuses_live_agent_mode():
                 deepseek_api_key="sk-x",
             )
         )
+
+
+def test_public_demo_accepts_preparation_scripted_mode():
+    app = create_app(
+        settings=Settings(
+            app_mode=APP_MODE_PUBLIC_DEMO,
+            demo_agent_mode="preparation_scripted",
+            demo_allowed_origin=ORIGIN,
+            demo_cookie_secure=False,
+            host_confirmation_token=HOST_TOKEN,
+            deepseek_api_key="sk-should-be-cleared",
+            enable_debug_routes=False,
+        ),
+        seed_demo=False,
+    )
+    assert app.state.settings.demo_agent_mode == "preparation_scripted"
+    assert app.state.settings.deepseek_api_key is None
 
 
 def test_public_demo_clears_deepseek_key(demo_app):
@@ -162,6 +179,7 @@ def test_browser_cannot_inject_host_fields_on_present_confirm(
 
 def test_pending_action_get_rejects_cross_site_without_origin(
     demo_client: TestClient,
+    demo_app,
 ):
     csrf = _start_session(demo_client)
     demo_client.post(

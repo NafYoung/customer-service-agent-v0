@@ -58,13 +58,14 @@ flowchart LR
 
 ```text
 APP_MODE=public_demo
-DEMO_AGENT_MODE=offline_replay
+DEMO_AGENT_MODE=preparation_scripted  # 或 offline_replay
 provider HTTP calls=0
 single process / single worker
 ```
 
-`public_demo` 启动时若发现在线模型模式或 DeepSeek Key，应失败关闭或明确忽略
-该 Key，绝不能静默回退到付费模型。
+`public_demo` 启动时若发现 live 模型模式或 DeepSeek Key，应失败关闭或明确忽略
+该 Key，绝不能静默回退到付费模型。`preparation_scripted` 仍为零外网：用
+scripted `ChatModel` 驱动真实 Preparation Agent。
 
 ## 4. 浏览器 BFF 契约
 
