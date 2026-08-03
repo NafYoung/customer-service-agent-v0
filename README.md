@@ -55,8 +55,20 @@ DEMO_COOKIE_SECURE=false \
 python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
-打开 http://127.0.0.1:8000/ →「取消订单 ORD-1001」→ 核对确认卡 →「确认并执行」。
-消息经 **Preparation Agent**（scripted 多轮工具，零外网）写出 pending；确认与执行仍由宿主完成。
+打开 http://127.0.0.1:8000/ →「取消订单 ORD-1001」→ 核对确认卡 →「确认并执行」或「拒绝」。
+消息经 **Preparation Agent**（scripted 多轮工具，零外网）写出 pending；确认与执行仍由宿主完成。模糊意图（如「我想退货」）会先补问订单号。
+
+本地 live DeepSeek（**禁止**公开部署；走预算闸门，累计硬上限见项目规则）：
+
+```bash
+APP_MODE=local \
+DEMO_AGENT_MODE=preparation_live \
+DEMO_ALLOWED_ORIGIN=http://127.0.0.1:8000 \
+DEMO_COOKIE_SECURE=false \
+DEEPSEEK_API_KEY=... \
+HOST_CONFIRMATION_TOKEN=... \
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
 
 ## 开发运行
 

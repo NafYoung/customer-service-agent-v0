@@ -3,39 +3,35 @@ from __future__ import annotations
 import re
 import uuid
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any
 
 from sqlalchemy.orm import Session
 
 from app.demo import (
     DEMO_AGENT_MODE_OFFLINE_REPLAY,
+    DEMO_AGENT_MODE_PREPARATION_LIVE,
     DEMO_AGENT_MODE_PREPARATION_SCRIPTED,
 )
+from app.demo.matches import ReplayMatch, normalized
 from app.demo.session import DemoSession, bump_or_limit, tool_context
+from app.demo.slots import continue_pending_slot, detect_incomplete_intent
 from app.enums import IssueType, ItemCondition
 from app.errors import ValidationError
 from app.schemas import PrepareActionResponse
 
-PrepareKind = Literal["cancel", "return", "exchange"]
-
 
 @dataclass(frozen=True)
-class ReplayMatch:
-    kind: PrepareKind
+class MessageOutcome:
     reply: str
-    order_id: str
-    order_item_id: str | None = None
-    target_size: str | None = None
-
-
-def _normalized(text: str) -> str:
-    return re.sub(r"\s+", "", text.casefold())
+    has_pending: bool
+    tool_trace: tuple[dict[str, Any], ...] = ()
+    provider_http_delta: int = 0
 
 
 def match_offline_replay(message: str) -> ReplayMatch | None:
     """Map a small set of Chinese demo intents to deterministic prepare paths."""
 
-    text = _normalized(message)
+    text = normalized(message)
     upper = message.upper()
 
     if "取消" in text and ("ORD-1001" in upper or "1001" in upper or "德训" in text):
@@ -48,17 +44,30 @@ def match_offline_replay(message: str) -> ReplayMatch | None:
             ),
         )
     if "换货" in text or ("换成" in text and "码" in text):
+        # Require an explicit size token for complete exchange match.
+        if not re.search(r"\d{2}\s*码|[：:]\s*\d{2}|\d{2}$", message):
+            if "换" in text and "码" not in text and "43" not in message:
+                return None
+        size_match = re.search(r"(\d{2})\s*码|换成\s*(\d{2})|(\d{2})$", message)
+        target = "43"
+        if size_match:
+            target = next(g for g in size_match.groups() if g)
         return ReplayMatch(
             kind="exchange",
             order_id="ORD-1003",
             order_item_id="ITEM-1003-A",
-            target_size="43",
+            target_size=target,
             reply=(
-                "已根据离线演示脚本准备将 ORD-1003 的德训鞋换为 43 码。"
+                f"已根据离线演示脚本准备将 ORD-1003 的德训鞋换为 {target} 码。"
                 "库存预占只会在你确认后发生；请先核对确认卡。"
             ),
         )
-    if "退货" in text or "退款" in text:
+    if ("退货" in text or "退款" in text) and (
+        "ORD-1003" in upper or "1003" in upper or "ITEM" in upper or len(text) > 4
+    ):
+        # Short bare 「退货」goes to slot fill; longer phrases with order still match.
+        if text in {"退货", "退款", "我要退货", "想退货", "我想退货"}:
+            return None
         return ReplayMatch(
             kind="return",
             order_id="ORD-1003",
@@ -72,11 +81,13 @@ def match_offline_replay(message: str) -> ReplayMatch | None:
 
 
 UNSUPPORTED_REPLY = (
-    "当前公开演示仅支持固定场景，不会调用在线模型。\n"
+    "当前演示支持固定售后场景（scripted）或本地 live DeepSeek。"
+    "公开演示路径不会调用在线模型。\n"
     "可尝试：\n"
     "• 取消订单 ORD-1001\n"
-    "• 退货 ORD-1003\n"
+    "• 退货 / 退货 ORD-1003\n"
     "• 把 ORD-1003 换成 43 码\n"
+    "• 查一下我的订单\n"
     "确认卡只渲染服务端数据库中的 canonical preview。"
 )
 
@@ -85,8 +96,19 @@ LOOKUP_REPLY = (
     "演示客户「林帆」常用订单：\n"
     "• ORD-1001 — 已支付，可取消\n"
     "• ORD-1003 — 已签收，可退货/换货（ITEM-1003-A）\n"
-    "请直接说出要准备的操作；公开模式不会联网调用 DeepSeek。"
+    "请直接说出要准备的操作。"
 )
+
+
+MODE_LABELS = {
+    DEMO_AGENT_MODE_OFFLINE_REPLAY: "离线脚本 · 零密钥",
+    DEMO_AGENT_MODE_PREPARATION_SCRIPTED: "Preparation Agent · scripted",
+    DEMO_AGENT_MODE_PREPARATION_LIVE: "Preparation Agent · live DeepSeek",
+}
+
+
+def mode_label(mode: str) -> str:
+    return MODE_LABELS.get(mode, mode)
 
 
 def run_offline_prepare(
@@ -141,10 +163,54 @@ def run_offline_prepare(
     session.pending_approval_id = prepared.approval_id
     session.pending_preview_hash = prepared.preview_hash
     session.pending_ui_event_id = f"demo-ui-{uuid.uuid4().hex}"
+    session.last_tool_trace = [
+        {
+            "tool_name": (
+                "prepare_cancel_order"
+                if match.kind == "cancel"
+                else f"prepare_{match.kind}"
+            ),
+            "success": True,
+            "summary": f"直调 prepare（{match.kind}）成功",
+        }
+    ]
     return prepared
 
 
-def handle_message(session: DemoSession, message: str) -> tuple[str, bool]:
+def _prepare_from_match(
+    session: DemoSession,
+    message: str,
+    match: ReplayMatch,
+) -> MessageOutcome:
+    mode = session.settings.demo_agent_mode
+    if mode == DEMO_AGENT_MODE_PREPARATION_SCRIPTED:
+        from app.demo.preparation_runner import run_preparation_scripted
+
+        reply, _prepared = run_preparation_scripted(
+            session,
+            message=message,
+            match=match,
+        )
+        return MessageOutcome(
+            reply=reply,
+            has_pending=True,
+            tool_trace=tuple(session.last_tool_trace),
+        )
+    if mode != DEMO_AGENT_MODE_OFFLINE_REPLAY:
+        raise ValidationError(
+            "DEMO_AGENT_MODE_UNSUPPORTED",
+            f"不支持的 DEMO_AGENT_MODE: {mode}",
+        )
+    with session.database.session() as db:
+        run_offline_prepare(session, db, match)
+    return MessageOutcome(
+        reply=match.reply or f"已准备 {match.kind}（{match.order_id}）。",
+        has_pending=True,
+        tool_trace=tuple(session.last_tool_trace),
+    )
+
+
+def handle_message(session: DemoSession, message: str) -> MessageOutcome:
     bump_or_limit(
         session,
         counter="message_count",
@@ -152,35 +218,47 @@ def handle_message(session: DemoSession, message: str) -> tuple[str, bool]:
         code="DEMO_MESSAGE_LIMIT",
         message="本会话消息条数已达上限，请重置演示。",
     )
-    match = match_offline_replay(message)
     mode = session.settings.demo_agent_mode
+    session.last_tool_trace = []
+
+    if mode == DEMO_AGENT_MODE_PREPARATION_LIVE:
+        from app.demo.live_runner import run_preparation_live
+
+        reply, has_pending, provider_delta = run_preparation_live(
+            session, message=message
+        )
+        return MessageOutcome(
+            reply=reply,
+            has_pending=has_pending,
+            tool_trace=tuple(session.last_tool_trace),
+            provider_http_delta=provider_delta,
+        )
+
+    clarify, slot_match = continue_pending_slot(session, message)
+    if clarify is not None:
+        return MessageOutcome(reply=clarify, has_pending=False)
+    if slot_match is not None:
+        return _prepare_from_match(session, message, slot_match)
+
+    incomplete = detect_incomplete_intent(message)
+    if incomplete is not None:
+        session.pending_slot = incomplete
+        return MessageOutcome(reply=incomplete.prompt, has_pending=False)
+
+    match = match_offline_replay(message)
     if match is not None:
-        if mode == DEMO_AGENT_MODE_PREPARATION_SCRIPTED:
-            from app.demo.preparation_runner import run_preparation_scripted
+        return _prepare_from_match(session, message, match)
 
-            reply, _prepared = run_preparation_scripted(
-                session,
-                message=message,
-                match=match,
-            )
-            return reply, True
-        if mode != DEMO_AGENT_MODE_OFFLINE_REPLAY:
-            raise ValidationError(
-                "DEMO_AGENT_MODE_UNSUPPORTED",
-                f"不支持的 DEMO_AGENT_MODE: {mode}",
-            )
-        with session.database.session() as db:
-            run_offline_prepare(session, db, match)
-        return match.reply, True
-
-    text = _normalized(message)
+    text = normalized(message)
     if "订单" in text or "查" in text:
-        return LOOKUP_REPLY, False
-    return UNSUPPORTED_REPLY, False
+        return MessageOutcome(reply=LOOKUP_REPLY, has_pending=False)
+    return MessageOutcome(reply=UNSUPPORTED_REPLY, has_pending=False)
 
 
 SUPPORTED_SCENARIOS: tuple[str, ...] = (
     "取消订单 ORD-1001",
+    "我想退货",
     "退货 ORD-1003",
-    "换货 ORD-1003 → 43 码",
+    "把 ORD-1003 换成 43 码",
+    "查一下我的订单",
 )

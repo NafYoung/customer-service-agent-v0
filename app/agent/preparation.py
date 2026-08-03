@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Sequence
 
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -175,6 +175,7 @@ class PreparationAgent(ReadOnlyAgent):
         user_text: str,
         context: ToolCallContext,
         trace_sink: Callable[[ToolTrace], None] | None = None,
+        history: Sequence[dict[str, str]] | None = None,
     ) -> PreparationAgentRunResult:
         with session.begin_nested():
             result = super().run(
@@ -182,6 +183,7 @@ class PreparationAgent(ReadOnlyAgent):
                 user_text=user_text,
                 context=context,
                 trace_sink=trace_sink,
+                history=history,
             )
         successful_prepares = [
             item

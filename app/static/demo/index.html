@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="description" content="RIVET 公开演示：离线对话 → 规范确认卡 → 确定性执行" />
-  <title>RIVET · 售后公开演示</title>
+  <meta name="description" content="RIVET 演示：对话准备 → 规范确认卡 → 确定性执行" />
+  <title>RIVET · 售后演示</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;600&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
@@ -16,20 +16,20 @@
   <header class="mast">
     <div class="brand-lockup">
       <p class="brand">RIVET</p>
-      <p class="brand-sub">售后控制台 · 公开演示</p>
+      <p class="brand-sub">售后控制台 · 演示</p>
     </div>
-    <p class="mode-badge">离线回放 · 零密钥</p>
+    <p class="mode-badge" id="mode-badge">加载中…</p>
   </header>
   <main class="stage">
     <section class="chat-panel" aria-label="演示对话">
       <div class="panel-head">
         <h1 class="panel-title">对话</h1>
-        <p class="panel-note">虚构数据 · 不调用 DeepSeek</p>
+        <p class="panel-note" id="panel-note">虚构数据 · 宿主确认后才执行</p>
       </div>
       <div id="log" class="log" role="log" aria-live="polite"></div>
       <form id="composer" class="composer">
         <label class="sr-only" for="message">消息</label>
-        <textarea id="message" name="message" rows="2" maxlength="500" placeholder="例如：取消订单 ORD-1001" required></textarea>
+        <textarea id="message" name="message" rows="2" maxlength="500" placeholder="例如：取消订单 ORD-1001 / 我想退货" required></textarea>
         <div class="composer-actions">
           <button type="submit" id="send" class="btn primary">发送</button>
           <button type="button" id="reset" class="btn ghost">重置演示</button>
@@ -43,16 +43,17 @@
         <p class="panel-note">仅来自数据库 canonical preview</p>
       </div>
       <div id="card" class="card empty">
-        <p class="card-empty-copy">尚无待确认操作。完成离线准备后，这里会展示规范预览。</p>
+        <p class="card-empty-copy">尚无待确认操作。完成准备后，这里会展示规范预览。</p>
       </div>
       <div class="card-actions">
         <button type="button" id="confirm" class="btn accent" disabled>确认并执行</button>
+        <button type="button" id="reject" class="btn ghost" disabled>拒绝</button>
       </div>
       <p id="status" class="status" role="status"></p>
     </aside>
   </main>
   <footer class="foot">
-    <p>求职作品级原型 · 浏览器不可信 · 宿主令牌仅存服务端</p>
+    <p>求职作品级原型 · 浏览器不可信 · 宿主令牌仅存服务端 · 模型不能 confirm/execute</p>
   </footer>
   <script src="/demo-static/app.js" defer></script>
 </body>

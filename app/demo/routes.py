@@ -11,15 +11,18 @@ from app.demo.host import (
     load_pending_approval,
     present_pending,
     project_confirmation_card,
+    reject_pending,
 )
-from app.demo.replay import SUPPORTED_SCENARIOS, handle_message
+from app.demo.replay import SUPPORTED_SCENARIOS, handle_message, mode_label
 from app.demo.schemas import (
     DemoConfirmationCard,
     DemoConfirmResponse,
     DemoMessageRequest,
     DemoMessageResponse,
+    DemoRejectResponse,
     DemoResetResponse,
     DemoSessionResponse,
+    DemoToolTraceItem,
     EmptyDemoBody,
 )
 from app.demo.security import (
@@ -62,6 +65,11 @@ def _guard_session_mutating(request: Request) -> tuple[str, DemoSession]:
     return raw, demo
 
 
+def _session_mode_fields(request: Request) -> dict[str, str]:
+    mode = _settings(request).demo_agent_mode
+    return {"demo_agent_mode": mode, "mode_label": mode_label(mode)}
+
+
 @router.post("/session", response_model=DemoSessionResponse)
 def create_demo_session(
     payload: EmptyDemoBody,
@@ -83,6 +91,7 @@ def create_demo_session(
         customer_display_name=demo.customer_display_name,
         supported_scenarios=list(SUPPORTED_SCENARIOS),
         expires_at=demo.expires_at,
+        **_session_mode_fields(request),
     )
 
 
@@ -94,12 +103,18 @@ def post_demo_message(
 ) -> DemoMessageResponse:
     _, demo = _guard_session_mutating(request)
     assert_no_obvious_pii(payload.message)
-    reply, has_pending = handle_message(demo, payload.message)
+    outcome = handle_message(demo, payload.message)
+    manager = _manager(request)
+    if outcome.provider_http_delta:
+        manager.provider_http_calls += outcome.provider_http_delta
     apply_security_headers(response)
     return DemoMessageResponse(
-        reply=reply,
-        has_pending_action=has_pending,
-        provider_http_calls=_manager(request).provider_http_calls,
+        reply=outcome.reply,
+        has_pending_action=outcome.has_pending,
+        provider_http_calls=manager.provider_http_calls,
+        tool_trace=[
+            DemoToolTraceItem.model_validate(item) for item in outcome.tool_trace
+        ],
     )
 
 
@@ -145,6 +160,19 @@ def confirm_pending_action(
     return result
 
 
+@router.post("/pending-action/reject", response_model=DemoRejectResponse)
+def reject_pending_action(
+    payload: EmptyDemoBody,
+    request: Request,
+    response: Response,
+) -> DemoRejectResponse:
+    del payload
+    _, demo = _guard_session_mutating(request)
+    result = reject_pending(demo)
+    apply_security_headers(response)
+    return result
+
+
 @router.post("/reset", response_model=DemoResetResponse)
 def reset_demo_session(
     payload: EmptyDemoBody,
@@ -170,6 +198,7 @@ def reset_demo_session(
         customer_display_name=demo.customer_display_name,
         message="演示数据已重置，会话 Cookie 已轮换。",
         expires_at=demo.expires_at,
+        **_session_mode_fields(request),
     )
 
 

@@ -5,13 +5,18 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.demo.schemas import DemoConfirmationCard, DemoConfirmResponse
+from app.demo.schemas import (
+    DemoConfirmationCard,
+    DemoConfirmResponse,
+    DemoRejectResponse,
+)
 from app.demo.session import DemoSession, bump_or_limit
 from app.enums import ApprovalStatus, ConfirmationSource
 from app.errors import ConflictError, NotFoundError, ServiceError
-from app.models import Approval
+from app.models import Approval, ConfirmationEvent
 from app.schemas import ConfirmActionRequest, PresentApprovalRequest
 from app.services.actions import ActionService
+from app.utils import utcnow
 
 
 def _active_approvals(
@@ -204,6 +209,7 @@ def confirm_pending(
     demo.pending_approval_id = None
     demo.pending_preview_hash = None
     demo.pending_ui_event_id = None
+    demo.last_tool_trace = []
 
     result = executed.result or {}
     summary_parts = [
@@ -221,4 +227,28 @@ def confirm_pending(
         result_summary="；".join(summary_parts),
         idempotent_replay=executed.idempotent_replay,
         provider_http_calls=provider_http_calls,
+    )
+
+
+def reject_pending(demo: DemoSession) -> DemoRejectResponse:
+    """Host rejects the pending approval without executing business writes."""
+
+    with demo.database.session() as db:
+        approval = load_pending_approval(db, demo)
+        now = utcnow()
+        approval.status = ApprovalStatus.SUPERSEDED.value
+        approval.superseded_at = now
+        confirmation = db.scalar(
+            select(ConfirmationEvent).where(
+                ConfirmationEvent.approval_id == approval.id
+            )
+        )
+        if confirmation is not None and confirmation.consumed_at is None:
+            confirmation.consumed_at = now
+
+    demo.clear_pending_action()
+    demo.pending_slot = None
+    return DemoRejectResponse(
+        status="REJECTED",
+        message="已拒绝待确认操作；未写入业务状态。可继续对话重新准备。",
     )

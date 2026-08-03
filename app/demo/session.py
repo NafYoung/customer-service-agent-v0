@@ -1,12 +1,14 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from pathlib import Path
 from threading import Lock
+from typing import Any
 
 from app.config import Settings
 from app.database import Database
+from app.demo import DEMO_AGENT_MODE_PREPARATION_LIVE
 from app.demo.security import random_token, token_hash
 from app.errors import ConflictError, ServiceError, ValidationError
 from app.seed import seed_demo_data
@@ -18,6 +20,17 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 POLICY_DIR = PROJECT_ROOT / "policies"
 DEMO_CUSTOMER_EMAIL = "linfan@example.com"
 DEMO_CUSTOMER_DISPLAY_NAME = "林帆"
+
+
+@dataclass
+class PendingSlot:
+    """Multi-turn slot fill state before Preparation Agent prepare."""
+
+    kind: str
+    order_id: str | None = None
+    order_item_id: str | None = None
+    target_size: str | None = None
+    prompt: str = ""
 
 
 @dataclass
@@ -40,9 +53,18 @@ class DemoSession:
     database: Database
     tools: CustomerServiceTools
     settings: Settings
+    pending_slot: PendingSlot | None = None
+    chat_history: list[dict[str, str]] = field(default_factory=list)
+    last_tool_trace: list[dict[str, Any]] = field(default_factory=list)
 
     def is_expired(self, now: datetime | None = None) -> bool:
         return (now or utcnow()) >= self.expires_at
+
+    def clear_pending_action(self) -> None:
+        self.pending_approval_id = None
+        self.pending_preview_hash = None
+        self.pending_ui_event_id = None
+        self.last_tool_trace = []
 
 
 class DemoSessionManager:
@@ -113,13 +135,21 @@ class DemoSessionManager:
             self._base_settings.host_confirmation_token
             or f"demo-host-{random_token(16)}"
         )
+        # public_demo already cleared the key at app boot; local preparation_live
+        # must keep DEEPSEEK_API_KEY on the ephemeral session settings.
+        keep_key = (
+            self._base_settings.demo_agent_mode == DEMO_AGENT_MODE_PREPARATION_LIVE
+            and self._base_settings.deepseek_api_key
+        )
         session_settings = replace(
             self._base_settings,
             database_url="sqlite:///:memory:",
             host_confirmation_token=host_token,
             enable_debug_routes=False,
             debug_admin_token=None,
-            deepseek_api_key=None,
+            deepseek_api_key=(
+                self._base_settings.deepseek_api_key if keep_key else None
+            ),
         )
         database = Database(session_settings.database_url)
         database.create_all()
@@ -151,6 +181,9 @@ class DemoSessionManager:
             database=database,
             tools=tools,
             settings=session_settings,
+            pending_slot=None,
+            chat_history=[],
+            last_tool_trace=[],
         )
 
     def _purge_locked(self, now: datetime) -> None:

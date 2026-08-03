@@ -58,7 +58,7 @@ flowchart LR
 
 ```text
 APP_MODE=public_demo
-DEMO_AGENT_MODE=preparation_scripted  # 或 offline_replay
+DEMO_AGENT_MODE=preparation_scripted  # 或 offline_replay；preparation_live 仅 local
 provider HTTP calls=0
 single process / single worker
 ```

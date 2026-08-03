@@ -15,6 +15,8 @@ from app.config import settings as default_settings
 from app.database import Database
 from app.demo import (
     APP_MODE_PUBLIC_DEMO,
+    DEMO_AGENT_MODE_PREPARATION_LIVE,
+    LOCAL_DEMO_AGENT_MODES,
     PUBLIC_DEMO_AGENT_MODES,
 )
 from app.demo.routes import demo_index, handle_demo_service_error
@@ -54,6 +56,32 @@ def _normalize_public_demo_settings(settings: Settings) -> Settings:
     )
 
 
+def _normalize_local_live_demo_settings(settings: Settings) -> Settings:
+    """Local-only live Preparation Agent: require key + origin; never public_demo."""
+
+    if settings.demo_agent_mode != DEMO_AGENT_MODE_PREPARATION_LIVE:
+        return settings
+    if settings.app_mode == APP_MODE_PUBLIC_DEMO:
+        raise ValueError(
+            "DEMO_AGENT_MODE=preparation_live is forbidden under APP_MODE=public_demo"
+        )
+    if settings.demo_agent_mode not in LOCAL_DEMO_AGENT_MODES:
+        raise ValueError(f"Unsupported DEMO_AGENT_MODE: {settings.demo_agent_mode}")
+    if not settings.deepseek_api_key:
+        raise ValueError(
+            "DEMO_AGENT_MODE=preparation_live requires DEEPSEEK_API_KEY (local only)"
+        )
+    if not settings.demo_allowed_origin:
+        raise ValueError(
+            "DEMO_AGENT_MODE=preparation_live requires DEMO_ALLOWED_ORIGIN"
+        )
+    if not settings.host_confirmation_token:
+        raise ValueError(
+            "DEMO_AGENT_MODE=preparation_live requires HOST_CONFIRMATION_TOKEN"
+        )
+    return settings
+
+
 def create_app(
     *,
     settings: Settings | None = None,
@@ -64,6 +92,7 @@ def create_app(
     if database_url is not None:
         runtime_settings = replace(runtime_settings, database_url=database_url)
     runtime_settings = _normalize_public_demo_settings(runtime_settings)
+    runtime_settings = _normalize_local_live_demo_settings(runtime_settings)
 
     if runtime_settings.enable_debug_routes and not runtime_settings.debug_admin_token:
         raise ValueError(
@@ -71,6 +100,11 @@ def create_app(
         )
 
     public_demo = runtime_settings.app_mode == APP_MODE_PUBLIC_DEMO
+    local_live_demo = (
+        not public_demo
+        and runtime_settings.demo_agent_mode == DEMO_AGENT_MODE_PREPARATION_LIVE
+    )
+    demo_surface = public_demo or local_live_demo
     database = Database(
         "sqlite:///:memory:" if public_demo else runtime_settings.database_url
     )
@@ -83,7 +117,7 @@ def create_app(
         try:
             yield
         finally:
-            if public_demo and hasattr(app.state, "demo_sessions"):
+            if demo_surface and hasattr(app.state, "demo_sessions"):
                 app.state.demo_sessions.dispose_all()
             database.engine.dispose()
 
@@ -91,7 +125,11 @@ def create_app(
         title=(
             "RIVET Public Demo"
             if public_demo
-            else "RIVET Customer Service Agent Backend v0"
+            else (
+                "RIVET Local Live Demo"
+                if local_live_demo
+                else "RIVET Customer Service Agent Backend v0"
+            )
         ),
         version="0.1.0",
         description=(
@@ -99,8 +137,13 @@ def create_app(
             "→ host card → confirm → execute."
             if public_demo
             else (
-                "A deterministic transaction layer for a future e-commerce customer "
-                "service agent. All data and policies are synthetic."
+                "Local live DeepSeek Preparation Agent → host card → confirm. "
+                "Not for public deploy; budget-gated."
+                if local_live_demo
+                else (
+                    "A deterministic transaction layer for a future e-commerce customer "
+                    "service agent. All data and policies are synthetic."
+                )
             )
         ),
         lifespan=lifespan,
@@ -113,7 +156,7 @@ def create_app(
     app.state.tools = build_tools(runtime_settings, policy_dir=PROJECT_ROOT / "policies")
     app.state.provider_http_calls = 0
 
-    if public_demo:
+    if demo_surface:
         app.state.demo_sessions = DemoSessionManager(runtime_settings)
         app.include_router(demo_router)
         app.add_api_route("/", demo_index, methods=["GET"], include_in_schema=False)
@@ -123,14 +166,18 @@ def create_app(
                 StaticFiles(directory=str(DEMO_STATIC_DIR)),
                 name="demo-static",
             )
-    else:
+
+    if not public_demo:
         app.include_router(router)
         if runtime_settings.enable_debug_routes:
             app.include_router(debug_router)
 
     @app.exception_handler(ServiceError)
     async def handle_service_error(request: Request, exc: ServiceError) -> JSONResponse:
-        if public_demo:
+        use_demo_errors = public_demo or (
+            local_live_demo and request.url.path.startswith("/demo")
+        )
+        if use_demo_errors:
             return handle_demo_service_error(request, exc)
         return JSONResponse(
             status_code=exc.status_code,
@@ -144,6 +191,13 @@ def create_app(
             payload["app_mode"] = APP_MODE_PUBLIC_DEMO
             payload["demo_agent_mode"] = runtime_settings.demo_agent_mode
             payload["provider_http_calls"] = 0
+        elif local_live_demo:
+            payload["app_mode"] = runtime_settings.app_mode
+            payload["demo_agent_mode"] = DEMO_AGENT_MODE_PREPARATION_LIVE
+            manager = getattr(app.state, "demo_sessions", None)
+            payload["provider_http_calls"] = (
+                manager.provider_http_calls if manager is not None else 0
+            )
         return payload
 
     return app
