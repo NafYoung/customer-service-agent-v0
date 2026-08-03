@@ -5,7 +5,11 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.demo.schemas import DemoConfirmationCard, DemoConfirmResponse, DemoRejectResponse
+from app.demo.schemas import (
+    DemoConfirmationCard,
+    DemoConfirmResponse,
+    DemoRejectResponse,
+)
 from app.demo.session import DemoSession, bump_or_limit
 from app.enums import ApprovalStatus, ConfirmationSource
 from app.errors import ConflictError, NotFoundError, ServiceError
