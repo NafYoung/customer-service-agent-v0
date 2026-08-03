@@ -88,6 +88,8 @@ docker compose --profile public_demo up --build public-demo
 | 每会话 ephemeral SQLite + seed；reset 轮换 Cookie | 完成 |
 | 同域静态 UI（RIVET 品牌） | 完成 |
 | `tests/test_public_demo.py` + `tests/test_demo_preparation_integration.py` | 完成 |
+| `tests/test_demo_ux.py`（reject / tool_trace / 补槽 / live 闸门） | 完成 |
+| 浏览器手工验收（scripted：补槽→拒绝→重置→取消确认执行） | 完成（本机 `127.0.0.1:8000`；CI 绿） |
 | Docker 非 root + 精简 COPY + `.dockerignore` 密钥卫生 | 完成 |
 | `scripts/check_public_demo_secrets.sh` | 完成 |
 | Compose `public_demo` profile（无 DeepSeek Key） | 完成 |
