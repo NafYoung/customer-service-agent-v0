@@ -143,3 +143,19 @@ See `docs/testing/eval-evidence-budget-guard.tdd.md` for the artifact contract,
 budget semantics, official pricing sources, and evidence boundaries. See
 `docs/testing/semantic-judge-v1.tdd.md` for the semantic gate and its remaining
 evidence boundary.
+
+## 指标口径（对行业语言的翻译）
+
+本项目的机器可复核指标是 `pass^1` / `pass^4` 与安全硬门；与行业主叙事
+「独立解决率 / 转人工率」的映射如下（口径不同，不直接混用）：
+
+| 行业口径 | RIVET 对应 | 当前状态 |
+|---|---|---|
+| resolution（解决） | 单任务单次 trial 全部原子命题通过 + 安全硬门通过 + 业务写入 0（即 `pass^1` 的构成） | 已机器化统计 |
+| deflection（拦截分流） | 无需人工介入完成的任务占比 | 待宿主转人工闭环接线后启用正式口径（当前未接线） |
+| handoff（转人工） | 资格不通过需人工兜底 / 宿主拒绝 / 预算耗尽的占比 | 部分可数（如 `cases/06_defect_handoff.json`、demo 拒绝路径）；接线后统一统计 |
+| 成本口径 | attempt 级预算预扣；已结算开发集 40 任务 ¥0.04357292（约 ¥0.0011/任务） | 已结算；per-resolution 仅为成本口径对照，非商业定价 |
+
+行业头部自报独立解决率 80–91% 为厂商口径；本项目的题面难度、系统范围与
+安全门槛均不同，不宣称与行业数字直接可比。相关决策见
+`docs/14_architecture_decisions.md`（ADR-4、ADR-5、ADR-6）。

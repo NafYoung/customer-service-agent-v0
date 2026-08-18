@@ -1,6 +1,6 @@
 # 项目现役状态
 
-最后核对：2026-08-03（宿主 UI 接 Preparation Agent / scripted；Render Demo URL 回填）
+最后核对：2026-08-18（README / README_DETAILED 新增「行业对标」章节；此前 2026-08-03 宿主 UI 接 Preparation Agent / Render Demo URL 回填）
 
 本地分支：以当前 Git 为准
 
@@ -38,7 +38,9 @@ holdout 失败后加固链：`9337e55`（prompt/回归）→ `84eca79` / `69030d
 | 公开回归 7×4（holdout 绑定历史） | historical | `eval-20260731t080946z-dd64553ceb3e` **28/28** @ `8884b1a` |
 | 公开回归 7×4（加固后现役） | **passed** | `eval-20260731t102036z-9be142ce84ec` **28/28** @ `f7f221a`；`pass^4=1.00`；业务写入 0 |
 | holdout v2 | **failed / retired** | 唯一正式跑 44/80、`pass^4=0.40`；禁止同题集重跑；见 `docs/testing/holdout-v2-postmortem.md` |
-| 作品集对外叙事 | **updated** | README 指标与 holdout FAIL→加固→复验对齐；`docs/12_phase6_publish_checklist.md` |
+| 作品集对外叙事 | **updated** | README 指标与 holdout FAIL→加固→复验对齐；README + `README_DETAILED` 新增行业对标章节（per-resolution 成本 / Air Canada 判例 / 仅退款退潮背景）；`docs/12_phase6_publish_checklist.md` |
+| 架构决策记录 | **updated** | `docs/14_architecture_decisions.md`：单 Agent / 确定性后端 / 结构化政策 / 原子命题裁判 / 自研评测 / 预算闸门 |
+| 指标口径与合规叙事 | **updated** | README + `evals/README.md` 补充 resolution/deflection/handoff 口径定义与成本换算；演示 UI 增加「本回复由 AI 生成」标识；README 增 PIPL/PCI 声明 |
 | 公开 GitHub | **created** | https://github.com/NafYoung/customer-service-agent-v0 |
 | 生产运行态 | not-applicable | 托管演示为作品原型，非生产 |
 

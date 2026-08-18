@@ -47,6 +47,73 @@
 
 现役进度与恢复顺序以 `docs/09_project_status.md` 为准。
 
+## 行业对标与设计依据（2026-08 网络调研）
+
+> 三路并行网络调研（59+ 次检索）：海外企业级产品、国内市场、Agent 工程与评测实践。
+> 外部产品数据为厂商自报口径；来源链接已内联。本项目的三项核心设计决策与行业实践对齐如下。
+
+### 1. 人机协同：宿主确认是行业标配
+
+- Intercom 的 Fin Procedures 对关键操作提供 human-in-the-loop approvals
+  （[文档](https://www.intercom.com/help/en/articles/14468561-human-in-the-loop-approvals-for-fin-procedures)）；
+  Cloudflare Agents 把「执行前暂停并请求人确认」列为标准 agentic 模式
+  （[文档](https://developers.cloudflare.com/agents/concepts/agentic-patterns/human-in-the-loop/index.md)）。
+- 判例：Moffatt v. Air Canada（2024-02）——航空公司须履行其聊天机器人编造的政策
+  （[分析](https://www.dentonsdata.com/airline-ordered-to-compensate-a-b-c-man-because-its-chatbot-provided-inaccurate-information/)）。
+  本项目 `prepare → present → confirm → execute` 状态机 + 宿主确认令牌即该模式的
+  确定性落地：确认卡从数据库 canonical preview 渲染，模型自述确认无效。
+- 行业治理现状反衬本项目护栏的价值：Amla Labs 报告 79% 的组织对 AI agent 没有护栏
+  （[报告](https://amlalabs.com/blog/akto-agentic-security-report/)）；
+  Gartner 预测 2027 年 40% 的 agentic 项目将失败
+  （[报道](https://cio.economictimes.indiatimes.com/amp/news/artificial-intelligence/gartner-predicts-40-failure-rate-for-agentic-ai-projects-by-2027-industry-leaders-respond/122319085)）。
+  本项目护栏全部由确定性代码强制：工具白名单（OWASP LLM06 过度代理）、
+  认证在 Agent 外、attempt 级预算预扣（OWASP LLM10 无界消耗）。
+
+### 2. 单 Agent 与结构化政策
+
+- Anthropic 官方指南：单 Agent 能处理绝大多数企业工作流，多 Agent 只在可大量并行、
+  需要独立上下文窗口或专业化分工时才划算（[原文](https://claude.com/blog/building-multi-agent-systems-when-and-how-to-use-them)）。
+  本项目的 9 工具（6 只读 + 3 prepare）无并行需求，多 Agent 只会放大延迟与成本。
+- 高频确定性售后规则（退换货窗口、资格判定）由版本化结构化政策 + 代码判定，
+  不做向量 RAG；检索结果视为数据而非指令，对齐「结构化执行优先于 RAG」实践
+  （[讨论](https://www.usefini.com/blog/rag-vs-structured-execution-ai-customer-support)）。
+  政策新鲜度与可溯源由 `policies/index.json` 版本化保证。
+
+### 3. 成本口径与预算闸门
+
+- 海外头部转向按「自动化解决」计费：Fin/Zendesk 采用 per-resolution 或
+  automated resolutions 定价，Agentforce 按会话 + Flex Credits
+  （[官方](https://www.salesforce.com/news/press-releases/2025/05/15/agentforce-flexible-pricing-news/)）。
+- 本项目真实模型调用经持久预算闸门：总硬上限 ¥20、自动执行上限 ¥18，每次
+  HTTP attempt 前原子预留最坏费用。已结算开发集 40 任务成本 ¥0.04357292
+  （约 ¥0.0011/任务）；holdout v2 结算约 ¥0.10435。以上均为成本口径对照，非商业定价。
+
+### 4. 国内市场背景与指标口径
+
+- 2025-04 起主要平台取消「仅退款」改商家自主处理
+  （[北京商报](https://www.bbtnews.com.cn/2025/0422/554521.shtml)），售后 Agent 成为
+  商家自担风控的承接方案：阿里 AI 店小蜜（2026-05）自报转人工率 -45%
+  （[亿欧](https://www.iyiou.com/news/202605111129570)）、京小智 5.0 免费开放
+  （[亿欧](https://www.iyiou.com/news/202509251110307)）、腾讯企点接 DeepSeek 车企
+  独立解决率 30%→80%（[腾讯云](https://cloud.tencent.cn/developer/article/2677612)）。
+- 行业主指标是独立解决率（头部自报 80–91%），本项目用 pass^1/pass^4 报告任务
+  成功率；两者口径不同，本项目不宣称与行业数字直接可比。淘宝天猫 2026-04 上线的
+  售后 AI 假图识别（[DoNews](https://www.donews.com/news/detail/4/6526287.html)）
+  属多模态风控，不在本原型范围内；README 的定位说明保持「不是生产系统」。
+
+### 5. 诚实能力对照（公开定位）
+
+| 能力 | 店小蜜/京小智/企点（厂商口径） | RIVET v0 |
+|---|---|---|
+| 对话入口 | 平台 IM / 网页 / 电话多形态 | 单页 Web demo |
+| 售后写操作 | 平台托管执行 | 宿主确认后确定性执行（本原型核心） |
+| 多模态验货 | 假图识别 / 凭证分类 | 无（明确不在范围） |
+| 多租户 / 真实对接 | 平台级 | 合成数据 + SQLite |
+| 评测口径 | 独立解决率（自报） | pass^k + 安全硬门 + 一次性 holdout |
+| 成本治理 | 按解决 / 会话计费 | 持久预算闸门（¥20 硬上限） |
+
+对照意图是如实定位：本原型演示的是「单 Agent 最小安全闭环」，不是平台级产品。
+
 ## 3–5 分钟公开演示（本地）
 
 不携带 DeepSeek Key，不注册公开 `/v1` 写路由：
@@ -348,6 +415,7 @@ provider request ID 或本机环境细节。
   生产边界设计；
 - `docs/09_project_status.md`：当前完成度、验证证据和下次恢复顺序；
 - `docs/10_public_demo_status.md`：本地公开演示进度与 Phase 4–6 缺口；
+- `docs/14_architecture_decisions.md`：架构决策记录（单 Agent、确定性后端、结构化政策、原子命题裁判、自研评测、预算闸门）；
 - `docs/12_phase6_publish_checklist.md`：首次公开 GitHub / 托管前检查表；
 - `docs/testing/readonly-holdout-v2-protocol.md`：v1 退役后的校准门、
   v2 封存和唯一正式运行协议；
@@ -396,4 +464,8 @@ docs/                   business, tool, eval and integration specs
 - SQLite 替换为 PostgreSQL，并增加事务隔离与库存行锁；
 - 审计事件写入独立、不可篡改的日志存储；
 - 接入真实系统前进行数据最小化、隐私、合规和威胁建模；
-- 真实退款、赔偿或支付必须增加更高等级审批，不应直接沿用 v0。
+- 真实退款、赔偿或支付必须增加更高等级审批，不应直接沿用 v0；
+- 演示 UI 已带「本回复由 AI 生成」显式标识；生产化仍需落实《人工智能生成
+  合成内容标识办法》的隐式标识与留存要求；
+- README 的 PIPL/PCI 声明是原型边界说明；接入真实支付与个人信息前需完成
+  告知同意、数据最小化、隐私与威胁建模。
