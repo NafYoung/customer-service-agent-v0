@@ -199,6 +199,15 @@ body {
   color: var(--brass);
 }
 
+.bubble .ai-badge {
+  display: block;
+  margin-top: 0.4rem;
+  font-family: var(--mono);
+  font-size: 0.6rem;
+  letter-spacing: 0.08em;
+  color: var(--paper-dim);
+}
+
 .composer {
   padding: 0.9rem 1.15rem 0.5rem;
   border-top: 1px solid var(--line);

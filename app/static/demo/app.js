@@ -71,6 +71,12 @@
     body.textContent = text;
     div.appendChild(who);
     div.appendChild(body);
+    if (role === "assistant") {
+      const badge = document.createElement("span");
+      badge.className = "ai-badge";
+      badge.textContent = "本回复由 AI 生成";
+      div.appendChild(badge);
+    }
     logEl.appendChild(div);
     logEl.scrollTop = logEl.scrollHeight;
   }
