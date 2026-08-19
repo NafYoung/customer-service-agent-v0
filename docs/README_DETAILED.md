@@ -419,6 +419,7 @@ provider request ID 或本机环境细节。
   生产边界设计；
 - `docs/09_project_status.md`：当前完成度、验证证据和下次恢复顺序；
 - `docs/10_public_demo_status.md`：本地公开演示进度与 Phase 4–6 缺口；
+- `docs/research/`：2026-08 品类调研快照（总报告 + 国内原始报告 + Canvas 面板）；
 - `docs/14_architecture_decisions.md`：架构决策记录（单 Agent、确定性后端、结构化政策、原子命题裁判、自研评测、预算闸门）；
 - `docs/12_phase6_publish_checklist.md`：首次公开 GitHub / 托管前检查表；
 - `docs/testing/readonly-holdout-v2-protocol.md`：v1 退役后的校准门、
