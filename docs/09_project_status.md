@@ -38,6 +38,7 @@ holdout 失败后加固链：`9337e55`（prompt/回归）→ `84eca79` / `69030d
 | 决策审计快照 | **updated** | 每次执行在同一事务写 `DecisionSnapshot`（规则版本/政策版本/资格输入/确认来源/结果；不含凭证）；幂等重放不重复写 |
 | 幂等与状态机硬闸 | **updated** | 退货/换货执行增加「仅已签收可发起」硬闸；退货/换货进行中申请增加 SQLite 部分唯一索引兜底；`DecisionSnapshot.approval_id` 唯一；并发执行冲突映射 409 |
 | 凭证校验占位（宿主侧） | **updated** | `verify_return_evidence` 契约 + 确定性 mock（`FORGED-` 前缀演示风控）；仅宿主可用（`HOST_TOOL_NAMES`），永不进入 Agent allowlist；`/v1/evidence/verify` 路由含归属复核 |
+| shadow 离线回放 | **updated** | `evals/run_shadow_offline.py`：零付费/零写入的 scripted 覆盖+风险回放；公开回归基线 3/7 覆盖、3/7 风险（不与模型评测混同） |
 | 原子命题语义门 | **verified-current** | `atomic-claims-v4`；校准 **#4** @ `8884b1a` 49/49 |
 | DeepSeek 语义校准 | **passed** | #4：`eval-20260731t080100z-4d65de51789c` **49/49**；review GO |
 | 公开回归 7×4（holdout 绑定历史） | historical | `eval-20260731t080946z-dd64553ceb3e` **28/28** @ `8884b1a` |

@@ -38,6 +38,7 @@ select = ["E4", "E7", "E9", "F", "I", "B"]
 
 [tool.ruff.lint.per-file-ignores]
 "evals/run_*_evals.py" = ["E402"]
+"evals/run_shadow_offline.py" = ["E402"]
 "evals/run_semantic_judge_calibration.py" = ["E402"]
 "evals/verify_eval_bundle.py" = ["E402"]
 "scripts/export_contracts.py" = ["E402"]

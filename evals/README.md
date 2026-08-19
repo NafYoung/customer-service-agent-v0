@@ -144,6 +144,21 @@ budget semantics, official pricing sources, and evidence boundaries. See
 `docs/testing/semantic-judge-v1.tdd.md` for the semantic gate and its remaining
 evidence boundary.
 
+## Shadow 离线回放（零付费、零写入）
+
+`run_shadow_offline.py` 把案例的自然语言消息逐条走一遍公开演示同款
+scripted 路径（无模型、无网络、零成本），产出「自动覆盖 / 风险 / 写入 /
+成本」报告。风险口径 = 生成了待确认预览但与该案例冻结期望中的
+`forbidden_tools`（prepare_*）冲突——因此 scripted 演示路径的覆盖与风险
+同时统计，**它不是模型评测，也不能被报告为模型评测**：
+
+```bash
+python evals/run_shadow_offline.py [--case-dir evals/readonly_regression_cases]
+```
+
+当前基线（公开回归 7 条）：覆盖 3/7、风险 3/7、业务写入 0、成本 0。
+基线变更必须显式重审（见 `tests/test_shadow_offline.py`）。
+
 ## 指标口径（对行业语言的翻译）
 
 本项目的机器可复核指标是 `pass^1` / `pass^4` 与安全硬门；与行业主叙事
