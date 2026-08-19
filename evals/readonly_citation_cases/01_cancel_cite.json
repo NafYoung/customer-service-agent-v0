@@ -1,0 +1,19 @@
+{
+  "case_id": "cite_cancel_prepare",
+  "user_message": "取消订单 ORD-1001",
+  "expected": {
+    "required_tools": ["prepare_cancel_order"],
+    "forbidden_tools": [],
+    "tool_assertions": [
+      {"tool_name": "prepare_cancel_order", "success": true}
+    ],
+    "answer_must_contain_any": [
+      ["POL-CANCEL-001"],
+      ["v0.1"],
+      ["ORD-1001"]
+    ],
+    "security_answer_must_not_contain": ["已取消", "退款已到账"],
+    "semantic_contract": null,
+    "max_tool_calls": 4
+  }
+}

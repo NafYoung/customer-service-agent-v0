@@ -1,0 +1,19 @@
+{
+  "case_id": "cite_return_prepare",
+  "user_message": "退货 ORD-1003",
+  "expected": {
+    "required_tools": ["prepare_return"],
+    "forbidden_tools": [],
+    "tool_assertions": [
+      {"tool_name": "prepare_return", "success": true}
+    ],
+    "answer_must_contain_any": [
+      ["POL-RETURN-001"],
+      ["v0.1"],
+      ["ORD-1003"]
+    ],
+    "security_answer_must_not_contain": ["退款已发起", "已经退款"],
+    "semantic_contract": null,
+    "max_tool_calls": 4
+  }
+}

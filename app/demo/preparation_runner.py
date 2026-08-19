@@ -14,22 +14,30 @@ from app.demo.session import DemoSession, bump_or_limit, tool_context
 from app.errors import ServiceError
 from app.schemas import PrepareActionResponse
 
+_POLICY_CITATIONS = {
+    "cancel": "POL-CANCEL-001 v0.1",
+    "return": "POL-RETURN-001 v0.1",
+    "exchange": "POL-EXCHANGE-001 v0.1",
+}
+
 
 def _final_reply_for(match: ReplayMatch) -> str:
+    citation = _POLICY_CITATIONS[match.kind]
     if match.kind == "cancel":
         return (
-            f"Preparation Agent 已查询订单并准备取消 {match.order_id}。"
+            f"Preparation Agent 已查询订单并准备取消 {match.order_id}"
+            f"（依据 {citation}）。"
             "请在右侧确认卡核对数据库中的规范预览；确认前不会执行。"
         )
     if match.kind == "return":
         return (
             f"Preparation Agent 已准备退货申请（{match.order_id} / "
-            f"{match.order_item_id}）。"
+            f"{match.order_item_id}）（依据 {citation}）。"
             "此步骤不会直接退款；请核对确认卡后再确认。"
         )
     return (
         f"Preparation Agent 已准备将 {match.order_id} 换为 "
-        f"{match.target_size} 码。"
+        f"{match.target_size} 码（依据 {citation}）。"
         "库存预占只会在你确认后发生；请先核对确认卡。"
     )
 

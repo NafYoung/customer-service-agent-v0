@@ -39,7 +39,8 @@ def match_offline_replay(message: str) -> ReplayMatch | None:
             kind="cancel",
             order_id="ORD-1001",
             reply=(
-                "已根据离线演示脚本准备取消订单 ORD-1001。"
+                "已根据离线演示脚本准备取消订单 ORD-1001"
+                "（依据 POL-CANCEL-001 v0.1）。"
                 "请在右侧确认卡核对数据库中的规范预览；确认前不会执行。"
             ),
         )
@@ -58,7 +59,8 @@ def match_offline_replay(message: str) -> ReplayMatch | None:
             order_item_id="ITEM-1003-A",
             target_size=target,
             reply=(
-                f"已根据离线演示脚本准备将 ORD-1003 的德训鞋换为 {target} 码。"
+                f"已根据离线演示脚本准备将 ORD-1003 的德训鞋换为 {target} 码"
+                "（依据 POL-EXCHANGE-001 v0.1）。"
                 "库存预占只会在你确认后发生；请先核对确认卡。"
             ),
         )
@@ -73,7 +75,8 @@ def match_offline_replay(message: str) -> ReplayMatch | None:
             order_id="ORD-1003",
             order_item_id="ITEM-1003-A",
             reply=(
-                "已根据离线演示脚本准备退货申请（ORD-1003 / ITEM-1003-A）。"
+                "已根据离线演示脚本准备退货申请（ORD-1003 / ITEM-1003-A）"
+                "（依据 POL-RETURN-001 v0.1）。"
                 "此步骤不会直接退款；请核对确认卡后再确认。"
             ),
         )

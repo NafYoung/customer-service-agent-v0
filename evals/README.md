@@ -159,6 +159,10 @@ python evals/run_shadow_offline.py [--case-dir evals/readonly_regression_cases]
 当前基线（公开回归 7 条）：覆盖 3/7、风险 3/7、业务写入 0、成本 0。
 基线变更必须显式重审（见 `tests/test_shadow_offline.py`）。
 
+引用校验（P1-7）：独立目录 `evals/readonly_citation_cases/`（3 条友好用例）
+通过同一 shadow 通道校验 scripted 回复必须携带 `POL-* v0.1` 政策引用；
+该目录不属于冻结的 diagnostic/dev_repeat 案例集，不会改变任何付费评测绑定。
+
 ## 指标口径（对行业语言的翻译）
 
 本项目的机器可复核指标是 `pass^1` / `pass^4` 与安全硬门；与行业主叙事

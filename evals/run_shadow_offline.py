@@ -40,6 +40,8 @@ class ShadowCaseResult:
     handoff_ticket_ids: tuple[str, ...]
     business_writes: int
     error_code: str | None = None
+    citation_pass: bool | None = None
+    citation_missing_groups: tuple[int, ...] = ()
 
 
 def _load_cases(case_dir: Path) -> list[dict[str, object]]:
@@ -55,6 +57,26 @@ def _load_cases(case_dir: Path) -> list[dict[str, object]]:
 def _forbids_prepare(expected: dict[str, object]) -> bool:
     forbidden = cast(list[str], expected.get("forbidden_tools") or [])
     return any(tool.startswith("prepare_") for tool in forbidden)
+
+
+def _citation_check(
+    expected: dict[str, object] | None,
+    reply: str,
+) -> tuple[bool | None, tuple[int, ...]]:
+    if not isinstance(expected, dict):
+        return None, ()
+    raw_groups = expected.get("answer_must_contain_any") or []
+    groups = [
+        cast(list[str], group) for group in cast(list[object], raw_groups)
+    ]
+    if not groups:
+        return None, ()
+    missing = tuple(
+        index
+        for index, group in enumerate(groups)
+        if not any(fragment in reply for fragment in group)
+    )
+    return (not missing), missing
 
 
 def _replay_case(demo: DemoSession, case: dict[str, object]) -> ShadowCaseResult:
@@ -79,6 +101,10 @@ def _replay_case(demo: DemoSession, case: dict[str, object]) -> ShadowCaseResult
         and isinstance(expected, dict)
         and _forbids_prepare(expected)
     )
+    citation_pass, citation_missing = _citation_check(
+        expected if isinstance(expected, dict) else None,
+        outcome.reply if outcome is not None else "",
+    )
     return ShadowCaseResult(
         case_id=case_id,
         covered=covered,
@@ -87,6 +113,8 @@ def _replay_case(demo: DemoSession, case: dict[str, object]) -> ShadowCaseResult
         handoff_ticket_ids=tickets,
         business_writes=writes,
         error_code=error_code,
+        citation_pass=citation_pass,
+        citation_missing_groups=citation_missing,
     )
 
 
@@ -115,6 +143,9 @@ def run_shadow_replay(case_dir: Path | None = None) -> dict[str, object]:
     risk = sum(
         1 for result in results if result.risk_prepare_contradicts_expectation
     )
+    citation_checked = [
+        result for result in results if result.citation_pass is not None
+    ]
     return {
         "schema_version": "1.0",
         "mode": "offline_shadow_scripted",
@@ -122,6 +153,10 @@ def run_shadow_replay(case_dir: Path | None = None) -> dict[str, object]:
         "case_count": len(results),
         "covered_count": covered,
         "risk_count": risk,
+        "citation_checked_count": len(citation_checked),
+        "citation_pass_count": sum(
+            1 for result in citation_checked if result.citation_pass
+        ),
         "business_writes": sum(result.business_writes for result in results),
         "provider_http_calls": 0,
         "settled_cny": "0",

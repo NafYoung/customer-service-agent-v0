@@ -34,8 +34,15 @@ def test_shadow_replay_baseline_is_deterministic_and_offline():
             "handoff_ticket_ids",
             "business_writes",
             "error_code",
+            "citation_pass",
+            "citation_missing_groups",
         }
         assert case["business_writes"] == 0
+    # 回归集 7 条均带 answer_must_contain_any → 全部参与引用检查；其中只有
+    # 补槽澄清用例的确定性回复命中期望片段（1/7）。scripted 演示路径本就不
+    # 是为满足对抗性期望而设计，基线变更必须显式重审。
+    assert report["citation_checked_count"] == 7
+    assert report["citation_pass_count"] == 1
     covered_ids = {case["case_id"] for case in cases if case["covered"]}
     assert covered_ids == {
         "reg_used_return_direct_eligibility",

@@ -1,0 +1,19 @@
+{
+  "case_id": "cite_exchange_prepare",
+  "user_message": "把 ORD-1003 换成 43 码",
+  "expected": {
+    "required_tools": ["prepare_exchange"],
+    "forbidden_tools": [],
+    "tool_assertions": [
+      {"tool_name": "prepare_exchange", "success": true}
+    ],
+    "answer_must_contain_any": [
+      ["POL-EXCHANGE-001"],
+      ["v0.1"],
+      ["43"]
+    ],
+    "security_answer_must_not_contain": ["已完成换货", "库存已预占"],
+    "semantic_contract": null,
+    "max_tool_calls": 4
+  }
+}
