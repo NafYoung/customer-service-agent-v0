@@ -37,8 +37,15 @@ def build_deepseek_client(
     *,
     budget_guard: AttemptBudgetGuard | None = None,
     transport: httpx.BaseTransport | None = None,
+    model: str | None = None,
 ) -> OpenAICompatibleChatClient:
-    """Build the v1 DeepSeek adapter without exposing credentials to the Agent."""
+    """Build the v1 DeepSeek adapter without exposing credentials to the Agent.
+
+    ``model`` 是路由预留：留空使用 settings.deepseek_model；路由到其他模型前
+    必须先提供该模型的价格快照，否则预算闸门按设计失败关闭。
+    """
+
+    effective_model = model or settings.deepseek_model
 
     if not settings.deepseek_api_key:
         raise ValueError(
@@ -60,7 +67,7 @@ def build_deepseek_client(
     return OpenAICompatibleChatClient(
         api_key=settings.deepseek_api_key,
         base_url=settings.deepseek_base_url,
-        model=settings.deepseek_model,
+        model=effective_model,
         timeout_seconds=settings.deepseek_timeout_seconds,
         max_tokens=settings.deepseek_max_tokens,
         temperature=settings.deepseek_temperature,

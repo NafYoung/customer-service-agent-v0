@@ -106,6 +106,13 @@ class Settings:
     demo_max_confirm_per_session: int = int(
         os.getenv("DEMO_MAX_CONFIRM_PER_SESSION", "3")
     )
+    demo_max_live_attempts_per_session: int = int(
+        os.getenv("DEMO_MAX_LIVE_ATTEMPTS_PER_SESSION", "8")
+    )
+    # 模型路由预留：留空时回退到 deepseek_model。路由到非 deepseek-v4-flash
+    # 的模型前必须先提供该模型的价格快照，否则预算闸门按设计失败关闭。
+    demo_live_query_model: str = os.getenv("DEMO_LIVE_QUERY_MODEL", "").strip()
+    demo_live_action_model: str = os.getenv("DEMO_LIVE_ACTION_MODEL", "").strip()
 
 
 settings = Settings()

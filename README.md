@@ -136,6 +136,11 @@ HOST_CONFIRMATION_TOKEN=... \
 python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
+live 模式另有**每会话软闸门**（`DEMO_MAX_LIVE_ATTEMPTS_PER_SESSION`，触发后自动转人工落工单）
+与**模型路由预留**（`DEMO_LIVE_QUERY_MODEL` / `DEMO_LIVE_ACTION_MODEL`，留空回退
+`DEEPSEEK_MODEL`；换模型前必须先提供该模型的价格快照，否则预算闸门失败关闭）。
+全局 ¥20/¥18 硬上限不变。
+
 ## 开发运行
 
 ```bash

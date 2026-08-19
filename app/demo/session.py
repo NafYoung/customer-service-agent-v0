@@ -51,6 +51,7 @@ class DemoSession:
     message_count: int
     prepare_count: int
     confirm_count: int
+    live_attempt_count: int
     expires_at: datetime
     database: Database
     tools: CustomerServiceTools
@@ -180,6 +181,7 @@ class DemoSessionManager:
             message_count=0,
             prepare_count=0,
             confirm_count=0,
+            live_attempt_count=0,
             expires_at=now
             + timedelta(minutes=session_settings.demo_session_ttl_minutes),
             database=database,

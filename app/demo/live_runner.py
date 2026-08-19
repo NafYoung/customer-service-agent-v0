@@ -28,6 +28,22 @@ from evals.canonical_pricing import load_canonical_price_snapshot
 
 _LEDGER_DIR = Path(tempfile.gettempdir()) / "rivet-demo-live-budget"
 
+_ACTION_INTENT_MARKERS = ("取消", "退货", "退款", "换货", "换成", "调换")
+
+
+def _resolve_live_model(session: DemoSession, message: str) -> str:
+    """Model routing reservation: action intent vs plain query.
+
+    Empty settings fall back to the canonical deepseek_model; routing to a
+    different model fails closed at the budget guard unless that model has its
+    own pricing snapshot.
+    """
+
+    settings = session.settings
+    if any(marker in message for marker in _ACTION_INTENT_MARKERS):
+        return settings.demo_live_action_model or settings.deepseek_model
+    return settings.demo_live_query_model or settings.deepseek_model
+
 
 def _live_budget_guard(session: DemoSession) -> DeepSeekBudgetGuard:
     settings = session.settings
@@ -64,8 +80,33 @@ def run_preparation_live(
             status_code=503,
         )
 
+    if (
+        session.live_attempt_count
+        >= session.settings.demo_max_live_attempts_per_session
+    ):
+        ticket_id = ensure_handoff_ticket(
+            session,
+            reason="conversation_budget",
+            category="CONVERSATION_BUDGET",
+            summary=(
+                "本会话 live 模型调用次数达到每会话软闸门上限，"
+                "自动转人工跟进。"
+            ),
+        )
+        return (
+            f"本会话模型调用次数已达软闸门上限，已生成人工工单 {ticket_id}，"
+            "后续由人工客服跟进。",
+            False,
+            0,
+        )
+
     guard = _live_budget_guard(session)
-    model = build_deepseek_client(session.settings, budget_guard=guard)
+    model_name = _resolve_live_model(session, message)
+    model = build_deepseek_client(
+        session.settings,
+        budget_guard=guard,
+        model=model_name,
+    )
     agent = build_preparation_agent(
         model=model,
         tools=session.tools,
@@ -119,6 +160,7 @@ def run_preparation_live(
         session.chat_history = session.chat_history[-12:]
     session.last_tool_trace = project_tool_trace(result.tool_trace)
     provider_delta = len(result.model_turns)
+    session.live_attempt_count += provider_delta
 
     prepared = result.prepared_action
     if prepared is None:

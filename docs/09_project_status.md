@@ -1,6 +1,6 @@
 # 项目现役状态
 
-最后核对：2026-08-19（P1-1 转人工闭环接线：reject/会话限额/预算耗尽 → SupportTicket；此前 2026-08-18 行业对标章节；2026-08-03 宿主 UI 接 Preparation Agent / Render Demo URL 回填）
+最后核对：2026-08-19（P1-2 live 每会话软闸门 + 模型路由预留；此前 P1-1 转人工闭环接线；2026-08-18 行业对标章节）
 
 本地分支：以当前 Git 为准
 
@@ -34,6 +34,7 @@ holdout 失败后加固链：`9337e55`（prompt/回归）→ `84eca79` / `69030d
 | Preparation Agent | **verified-current** | 核心 `1b034cd`；公开 UI `preparation_scripted`；本地可选 `preparation_live` |
 | 宿主确认、并发、UI、公开演示 | **updated** | reject/tool_trace/补槽 + 浏览器手工验收；Demo https://rivet-public-demo.onrender.com/ （仍 `preparation_scripted`）；Phase 5 Postgres 仍待 |
 | 转人工闭环（demo 宿主） | **updated** | reject / 会话限额 / live 预算耗尽 → 落 `SupportTicket` 并回传工单号（按原因去重）；Agent 保持精确 9 工具；live 预算 run_id 派生修复 |
+| 护栏分层（live demo） | **updated** | 每会话 attempt 软闸门（触发转人工）+ 模型路由预留（query/action 双模型，留空回退）；全局 ¥20/¥18 硬上限不变 |
 | 原子命题语义门 | **verified-current** | `atomic-claims-v4`；校准 **#4** @ `8884b1a` 49/49 |
 | DeepSeek 语义校准 | **passed** | #4：`eval-20260731t080100z-4d65de51789c` **49/49**；review GO |
 | 公开回归 7×4（holdout 绑定历史） | historical | `eval-20260731t080946z-dd64553ceb3e` **28/28** @ `8884b1a` |
