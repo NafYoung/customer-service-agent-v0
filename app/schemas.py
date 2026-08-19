@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
@@ -10,6 +10,7 @@ from app.enums import (
     ApprovalStatus,
     ConfirmationSource,
     EligibilityReason,
+    EvidenceKind,
     IssueType,
     ItemCondition,
     OrderStatus,
@@ -141,6 +142,23 @@ class TicketCreateRequest(APIModel):
     category: str = Field(min_length=2, max_length=60)
     summary: str = Field(min_length=5, max_length=1000)
     priority: TicketPriority = TicketPriority.NORMAL
+
+
+class VerifyEvidenceRequest(APIModel):
+    """宿主侧凭证校验占位请求：不进任何 Agent allowlist。"""
+
+    order_id: str = Field(min_length=3, max_length=40)
+    evidence_kind: EvidenceKind
+    evidence_ref: str = Field(min_length=8, max_length=200)
+    declared_notes: str | None = Field(default=None, max_length=500)
+
+
+class EvidenceVerificationRead(APIModel):
+    order_id: str
+    evidence_kind: str
+    evidence_ref: str
+    verdict: Literal["MOCK_ACCEPTED", "MOCK_FORGED"]
+    note: str
 
 
 class TicketRead(APIModel):

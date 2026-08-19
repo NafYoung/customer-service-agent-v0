@@ -4,8 +4,13 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from app.enums import ActionType, IssueType, ItemCondition, TicketPriority
-from app.schemas import PolicySearchRequest
+from app.enums import (
+    ActionType,
+    IssueType,
+    ItemCondition,
+    TicketPriority,
+)
+from app.schemas import PolicySearchRequest, VerifyEvidenceRequest
 
 READ_ONLY_TOOL_NAMES = (
     "get_customer_orders",
@@ -21,6 +26,8 @@ PREPARE_TOOL_NAMES = (
     "prepare_exchange",
 )
 PREPARATION_TOOL_NAMES = (*READ_ONLY_TOOL_NAMES, *PREPARE_TOOL_NAMES)
+# 宿主专用工具：有契约与实现，但永不进入任何 Agent allowlist。
+HOST_TOOL_NAMES = ("verify_return_evidence",)
 
 
 class ToolInput(BaseModel):
@@ -169,6 +176,11 @@ def get_tool_contracts() -> list[dict[str, Any]]:
             "create_handoff_ticket",
             "Create a human-support ticket for defects, damage, wrong items, policy ambiguity, or any case the automated flow cannot safely decide.",
             CreateHandoffTicketInput,
+        ),
+        _contract(
+            "verify_return_evidence",
+            "Host-only placeholder for return evidence verification (invoice / logistics label / defect photo). Deterministic mock in v0; real CV or human review required in production. Never exposed to the Agent allowlist.",
+            VerifyEvidenceRequest,
         ),
     ]
 

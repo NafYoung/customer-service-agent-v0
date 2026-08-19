@@ -14,6 +14,7 @@ from app.models import ToolEvent
 from app.schemas import (
     EligibilityRequest,
     EligibilityResponse,
+    EvidenceVerificationRead,
     InventoryRead,
     OrderRead,
     PolicySearchRequest,
@@ -23,6 +24,7 @@ from app.schemas import (
     ShipmentRead,
     TicketCreateRequest,
     TicketRead,
+    VerifyEvidenceRequest,
 )
 from app.services.actions import ActionService
 from app.services.auth import AuthService
@@ -449,5 +451,47 @@ class CustomerServiceTools:
                 session,
                 customer_id=customer_id,
                 request=request,
+            ),
+        )
+
+    def verify_return_evidence(
+        self,
+        session: Session,
+        *,
+        request: VerifyEvidenceRequest,
+        context: ToolCallContext,
+    ) -> EvidenceVerificationRead:
+        """Host-only deterministic placeholder for evidence verification.
+
+        Never exposed to the Agent allowlist (see HOST_TOOL_NAMES). Ownership
+        is rechecked server-side; the verdict is a deterministic mock until a
+        real CV pipeline or human review replaces it.
+        """
+
+        customer_id = self._customer_id(session, context)
+        self.order_service.get_order_model(
+            session,
+            customer_id=customer_id,
+            order_id=request.order_id,
+        )
+        return self._call(
+            session,
+            tool_name="verify_return_evidence",
+            arguments=request.model_dump(mode="json"),
+            context=context,
+            customer_id=customer_id,
+            operation=lambda: EvidenceVerificationRead(
+                order_id=request.order_id,
+                evidence_kind=str(request.evidence_kind),
+                evidence_ref=request.evidence_ref,
+                verdict=(
+                    "MOCK_FORGED"
+                    if request.evidence_ref.upper().startswith("FORGED-")
+                    else "MOCK_ACCEPTED"
+                ),
+                note=(
+                    "演示用确定性占位校验：未接入真实 CV/多模态模型；"
+                    "生产环境需真实凭证识别与人工复核。"
+                ),
             ),
         )

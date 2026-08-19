@@ -16,6 +16,7 @@ from app.schemas import (
     DebugToolEventRead,
     EligibilityRequest,
     EligibilityResponse,
+    EvidenceVerificationRead,
     ExecuteActionResponse,
     InventoryRead,
     OrderRead,
@@ -28,6 +29,7 @@ from app.schemas import (
     ShipmentRead,
     TicketCreateRequest,
     TicketRead,
+    VerifyEvidenceRequest,
 )
 from app.tools.facade import CustomerServiceTools, ToolCallContext
 
@@ -354,6 +356,27 @@ def create_handoff_ticket(
 ) -> TicketRead:
     with request.app.state.database.session() as session:
         return _tools(request).create_handoff_ticket(
+            session,
+            request=payload,
+            context=_context(credentials, x_run_id),
+        )
+
+
+@router.post(
+    "/evidence/verify",
+    response_model=EvidenceVerificationRead,
+    tags=["host-only"],
+)
+def verify_return_evidence(
+    payload: VerifyEvidenceRequest,
+    request: Request,
+    credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)],
+    x_run_id: Annotated[str | None, Header()] = None,
+) -> EvidenceVerificationRead:
+    """Host-side placeholder; never part of the Agent tool allowlist."""
+
+    with request.app.state.database.session() as session:
+        return _tools(request).verify_return_evidence(
             session,
             request=payload,
             context=_context(credentials, x_run_id),

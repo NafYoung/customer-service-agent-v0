@@ -159,6 +159,7 @@ def test_agent_contract_excludes_authentication_and_execution():
         "prepare_return",
         "prepare_exchange",
         "create_handoff_ticket",
+        "verify_return_evidence",
     }
     serialized = repr(contracts)
     for forbidden_field in {

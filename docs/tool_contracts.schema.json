@@ -454,5 +454,62 @@
       "title": "CreateHandoffTicketInput",
       "type": "object"
     }
+  },
+  {
+    "name": "verify_return_evidence",
+    "description": "Host-only placeholder for return evidence verification (invoice / logistics label / defect photo). Deterministic mock in v0; real CV or human review required in production. Never exposed to the Agent allowlist.",
+    "input_schema": {
+      "$defs": {
+        "EvidenceKind": {
+          "enum": [
+            "INVOICE",
+            "LOGISTICS_LABEL",
+            "DEFECT_PHOTO",
+            "WRONG_ITEM_PHOTO"
+          ],
+          "title": "EvidenceKind",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "description": "宿主侧凭证校验占位请求：不进任何 Agent allowlist。",
+      "properties": {
+        "order_id": {
+          "maxLength": 40,
+          "minLength": 3,
+          "title": "Order Id",
+          "type": "string"
+        },
+        "evidence_kind": {
+          "$ref": "#/$defs/EvidenceKind"
+        },
+        "evidence_ref": {
+          "maxLength": 200,
+          "minLength": 8,
+          "title": "Evidence Ref",
+          "type": "string"
+        },
+        "declared_notes": {
+          "anyOf": [
+            {
+              "maxLength": 500,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Declared Notes"
+        }
+      },
+      "required": [
+        "order_id",
+        "evidence_kind",
+        "evidence_ref"
+      ],
+      "title": "VerifyEvidenceRequest",
+      "type": "object"
+    }
   }
 ]

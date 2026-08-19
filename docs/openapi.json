@@ -737,6 +737,71 @@
         }
       }
     },
+    "/v1/evidence/verify": {
+      "post": {
+        "tags": [
+          "host-only"
+        ],
+        "summary": "Verify Return Evidence",
+        "description": "Host-side placeholder; never part of the Agent tool allowlist.",
+        "operationId": "verify_return_evidence_v1_evidence_verify_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "x-run-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Run-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifyEvidenceRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvidenceVerificationRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/health": {
       "get": {
         "tags": [
@@ -976,6 +1041,54 @@
           "user_message"
         ],
         "title": "EligibilityResponse"
+      },
+      "EvidenceKind": {
+        "type": "string",
+        "enum": [
+          "INVOICE",
+          "LOGISTICS_LABEL",
+          "DEFECT_PHOTO",
+          "WRONG_ITEM_PHOTO"
+        ],
+        "title": "EvidenceKind"
+      },
+      "EvidenceVerificationRead": {
+        "properties": {
+          "order_id": {
+            "type": "string",
+            "title": "Order Id"
+          },
+          "evidence_kind": {
+            "type": "string",
+            "title": "Evidence Kind"
+          },
+          "evidence_ref": {
+            "type": "string",
+            "title": "Evidence Ref"
+          },
+          "verdict": {
+            "type": "string",
+            "enum": [
+              "MOCK_ACCEPTED",
+              "MOCK_FORGED"
+            ],
+            "title": "Verdict"
+          },
+          "note": {
+            "type": "string",
+            "title": "Note"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "order_id",
+          "evidence_kind",
+          "evidence_ref",
+          "verdict",
+          "note"
+        ],
+        "title": "EvidenceVerificationRead"
       },
       "ExecuteActionResponse": {
         "properties": {
@@ -1637,6 +1750,46 @@
           "type"
         ],
         "title": "ValidationError"
+      },
+      "VerifyEvidenceRequest": {
+        "properties": {
+          "order_id": {
+            "type": "string",
+            "maxLength": 40,
+            "minLength": 3,
+            "title": "Order Id"
+          },
+          "evidence_kind": {
+            "$ref": "#/components/schemas/EvidenceKind"
+          },
+          "evidence_ref": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 8,
+            "title": "Evidence Ref"
+          },
+          "declared_notes": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Declared Notes"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "order_id",
+          "evidence_kind",
+          "evidence_ref"
+        ],
+        "title": "VerifyEvidenceRequest",
+        "description": "宿主侧凭证校验占位请求：不进任何 Agent allowlist。"
       }
     },
     "securitySchemes": {

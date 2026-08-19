@@ -41,6 +41,13 @@ class ItemCondition(StrEnum):
     DAMAGED = "DAMAGED"
 
 
+class EvidenceKind(StrEnum):
+    INVOICE = "INVOICE"
+    LOGISTICS_LABEL = "LOGISTICS_LABEL"
+    DEFECT_PHOTO = "DEFECT_PHOTO"
+    WRONG_ITEM_PHOTO = "WRONG_ITEM_PHOTO"
+
+
 class IssueType(StrEnum):
     CHANGED_MIND = "CHANGED_MIND"
     SIZE_MISMATCH = "SIZE_MISMATCH"

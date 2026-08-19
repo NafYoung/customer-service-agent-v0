@@ -159,6 +159,7 @@ def test_exported_agent_tool_contracts_are_unique_and_closed():
         "prepare_return",
         "prepare_exchange",
         "create_handoff_ticket",
+        "verify_return_evidence",
     }
     assert len(names) == len(set(names))
     assert set(names) == expected_names
