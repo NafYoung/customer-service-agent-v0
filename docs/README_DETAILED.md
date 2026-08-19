@@ -22,6 +22,8 @@
 - 本地 `public_demo` 离线演示：对话 → 确认卡 → 按钮确认 → 确定性执行；
 - demo 宿主转人工闭环：拒绝 / 会话限额 / live 预算耗尽 → 自动落
   `SupportTicket` 并回传工单号（按原因去重；模型工具面不变）；
+- 决策审计快照：每次执行在同一事务写 `DecisionSnapshot`（规则版本、
+  政策版本映射、资格输入与结论、确认来源；不含凭证），幂等重放不重复写；
 - CI：`ruff`、`mypy`、覆盖率门、Schema freshness、`pip-audit`、Gitleaks。
 
 尚未完成 / 明确不做：

@@ -11,6 +11,8 @@ from app.enums import (
 )
 
 RETURN_WINDOW_DAYS = 7
+# 决策审计快照记录的确定性规则代码版本；规则语义变更时必须递增。
+RULES_VERSION = "v0.1"
 _HUMAN_REVIEW_ISSUES = {
     IssueType.WRONG_ITEM,
     IssueType.DEFECTIVE,

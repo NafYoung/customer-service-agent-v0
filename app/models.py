@@ -178,6 +178,31 @@ class ActionExecution(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
 
 
+class DecisionSnapshot(Base):
+    """Immutable decision audit written in the same transaction as execution.
+
+    Stores only the eligibility inputs, rule/policy versions, confirmation
+    source and outcome — never credentials, tokens or verification codes.
+    """
+
+    __tablename__ = "decision_snapshots"
+
+    id: Mapped[str] = mapped_column(String(50), primary_key=True)
+    customer_id: Mapped[str] = mapped_column(ForeignKey("customers.id"), index=True, nullable=False)
+    approval_id: Mapped[str] = mapped_column(String(50), index=True, nullable=False)
+    execution_id: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    confirmation_event_id: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    order_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    action_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    confirmation_source: Mapped[str] = mapped_column(String(24), nullable=False)
+    rule_version: Mapped[str] = mapped_column(String(40), nullable=False)
+    policy_versions: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    eligibility_inputs: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    eligibility_decision: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    model_cost_cny: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+
+
 class ReturnRequest(Base):
     __tablename__ = "return_requests"
 

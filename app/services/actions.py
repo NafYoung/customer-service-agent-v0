@@ -4,12 +4,14 @@ import hashlib
 import json
 import uuid
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.domain.rules import (
+    RULES_VERSION,
     check_cancel_eligibility,
     check_exchange_eligibility,
     check_return_eligibility,
@@ -29,6 +31,7 @@ from app.models import (
     ActionExecution,
     Approval,
     ConfirmationEvent,
+    DecisionSnapshot,
     ExchangeRequest,
     Inventory,
     OrderItem,
@@ -58,6 +61,19 @@ _ACTIVE_APPROVAL_STATUSES = {
     ApprovalStatus.PRESENTED.value,
     ApprovalStatus.CONFIRMED.value,
 }
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+POLICY_INDEX_PATH = PROJECT_ROOT / "policies" / "index.json"
+
+
+def _policy_version_map() -> dict[str, str]:
+    """Policy-id → version map from the versioned repo index at decision time."""
+
+    payload = json.loads(POLICY_INDEX_PATH.read_text(encoding="utf-8"))
+    return {
+        str(entry["policy_id"]): str(entry["version"])
+        for entry in payload
+    }
 
 
 def _approval_preview_hash(approval: Approval) -> str:
@@ -851,6 +867,32 @@ class ActionService:
         approval.status = ApprovalStatus.EXECUTED.value
         approval.executed_at = now
         session.add(execution)
+        session.flush()
+
+        snapshot = DecisionSnapshot(
+            id=f"DEC-{uuid.uuid4().hex[:12].upper()}",
+            customer_id=customer_id,
+            approval_id=approval.id,
+            execution_id=execution.id,
+            confirmation_event_id=confirmation.id,
+            order_id=order.id,
+            action_type=action_type.value,
+            confirmation_source=confirmation.confirmation_source,
+            rule_version=RULES_VERSION,
+            policy_versions=_policy_version_map(),
+            eligibility_inputs=prepared_request.model_dump(
+                mode="json",
+                exclude={"user_note"},
+            ),
+            eligibility_decision={
+                "allowed": eligibility.allowed,
+                "reason_code": str(eligibility.reason_code),
+                "user_message": eligibility.user_message,
+            },
+            model_cost_cny=None,
+            created_at=now,
+        )
+        session.add(snapshot)
         session.flush()
         return ExecuteActionResponse(
             execution_id=execution.id,
