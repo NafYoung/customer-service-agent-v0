@@ -1,16 +1,18 @@
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from pathlib import Path
 from threading import Lock
-from typing import Any
+from typing import Any, TypedDict
 
 from app.config import Settings
 from app.database import Database
 from app.demo import DEMO_AGENT_MODE_PREPARATION_LIVE
 from app.demo.security import random_token, token_hash
 from app.errors import ConflictError, ServiceError, ValidationError
+from app.schemas import TicketCreateRequest, TicketRead
 from app.seed import seed_demo_data
 from app.tools.facade import CustomerServiceTools, ToolCallContext
 from app.tools.factory import build_tools
@@ -56,6 +58,8 @@ class DemoSession:
     pending_slot: PendingSlot | None = None
     chat_history: list[dict[str, str]] = field(default_factory=list)
     last_tool_trace: list[dict[str, Any]] = field(default_factory=list)
+    handoff_ticket_ids: list[str] = field(default_factory=list)
+    handoff_reasons: set[str] = field(default_factory=set)
 
     def is_expired(self, now: datetime | None = None) -> bool:
         return (now or utcnow()) >= self.expires_at
@@ -184,6 +188,8 @@ class DemoSessionManager:
             pending_slot=None,
             chat_history=[],
             last_tool_trace=[],
+            handoff_ticket_ids=[],
+            handoff_reasons=set(),
         )
 
     def _purge_locked(self, now: datetime) -> None:
@@ -199,6 +205,49 @@ class DemoSessionManager:
             session.database.engine.dispose()
 
 
+class HandoffSpec(TypedDict, total=False):
+    reason: str
+    category: str
+    summary: str
+    order_id: str | None
+
+
+def ensure_handoff_ticket(
+    session: DemoSession,
+    *,
+    reason: str,
+    category: str,
+    summary: str,
+    order_id: str | None = None,
+) -> str | None:
+    """Host-side handoff ticket, deduplicated per session reason.
+
+    The Agent keeps its exact 9-tool allowlist; creating a handoff ticket is a
+    host decision, never a model tool. Returns the ticket id, or None when this
+    reason already produced a ticket in the session.
+    """
+
+    if reason in session.handoff_reasons:
+        return None
+    request = TicketCreateRequest(
+        order_id=order_id,
+        category=category,
+        summary=summary,
+    )
+    with session.database.session() as db:
+        ticket: TicketRead = session.tools.create_handoff_ticket(
+            db,
+            request=request,
+            context=tool_context(
+                session,
+                tool_call_id=f"demo-handoff-{uuid.uuid4().hex[:12]}",
+            ),
+        )
+    session.handoff_reasons.add(reason)
+    session.handoff_ticket_ids.append(ticket.id)
+    return ticket.id
+
+
 def bump_or_limit(
     session: DemoSession,
     *,
@@ -206,10 +255,25 @@ def bump_or_limit(
     limit: int,
     code: str,
     message: str,
+    handoff: HandoffSpec | None = None,
 ) -> None:
     current = getattr(session, counter)
     if current >= limit:
-        raise ServiceError(code, message, status_code=429)
+        ticket_id = None
+        if handoff is not None:
+            ticket_id = ensure_handoff_ticket(
+                session,
+                reason=handoff["reason"],
+                category=handoff["category"],
+                summary=handoff["summary"],
+                order_id=handoff.get("order_id"),
+            )
+        suffix = (
+            f" 已生成人工工单 {ticket_id}，后续由人工客服跟进。"
+            if ticket_id
+            else ""
+        )
+        raise ServiceError(code, message + suffix, status_code=429)
     setattr(session, counter, current + 1)
 
 

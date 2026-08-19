@@ -10,7 +10,7 @@ from app.demo.schemas import (
     DemoConfirmResponse,
     DemoRejectResponse,
 )
-from app.demo.session import DemoSession, bump_or_limit
+from app.demo.session import DemoSession, bump_or_limit, ensure_handoff_ticket
 from app.enums import ApprovalStatus, ConfirmationSource
 from app.errors import ConflictError, NotFoundError, ServiceError
 from app.models import Approval, ConfirmationEvent
@@ -178,6 +178,11 @@ def confirm_pending(
         limit=demo.settings.demo_max_confirm_per_session,
         code="DEMO_CONFIRM_LIMIT",
         message="本会话确认次数已达上限，请重置演示。",
+        handoff={
+            "reason": "confirm_limit",
+            "category": "SESSION_LIMIT",
+            "summary": "本会话确认次数达到上限，自动转人工跟进。",
+        },
     )
     approval_id = demo.pending_approval_id
     preview_hash = demo.pending_preview_hash
@@ -248,7 +253,23 @@ def reject_pending(demo: DemoSession) -> DemoRejectResponse:
 
     demo.clear_pending_action()
     demo.pending_slot = None
+    ticket_id = ensure_handoff_ticket(
+        demo,
+        reason="host_reject",
+        category="HOST_REJECT",
+        summary=(
+            f"客户拒绝了待执行操作 {approval.action_type}（订单 "
+            f"{approval.order_id}）；未写入业务状态，转人工跟进。"
+        ),
+        order_id=approval.order_id,
+    )
     return DemoRejectResponse(
         status="REJECTED",
-        message="已拒绝待确认操作；未写入业务状态。可继续对话重新准备。",
+        message=(
+            f"已拒绝待确认操作；未写入业务状态。已生成人工工单 {ticket_id}，"
+            "后续由人工客服跟进。"
+            if ticket_id
+            else "已拒绝待确认操作；未写入业务状态。可继续对话重新准备。"
+        ),
+        handoff_ticket_id=ticket_id,
     )

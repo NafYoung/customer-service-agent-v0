@@ -20,6 +20,8 @@
 - `readonly-scorer-v6` 原子命题语义门 + 49/49 付费校准（#4）；
 - holdout v1 / v2 均按一次性协议唯一运行并如实退役（见下方指标）；
 - 本地 `public_demo` 离线演示：对话 → 确认卡 → 按钮确认 → 确定性执行；
+- demo 宿主转人工闭环：拒绝 / 会话限额 / live 预算耗尽 → 自动落
+  `SupportTicket` 并回传工单号（按原因去重；模型工具面不变）；
 - CI：`ruff`、`mypy`、覆盖率门、Schema freshness、`pip-audit`、Gitleaks。
 
 尚未完成 / 明确不做：

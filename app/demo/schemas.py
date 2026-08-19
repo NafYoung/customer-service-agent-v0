@@ -71,6 +71,7 @@ class DemoConfirmResponse(APIModel):
 class DemoRejectResponse(APIModel):
     status: str
     message: str
+    handoff_ticket_id: str | None = None
 
 
 class DemoResetResponse(APIModel):

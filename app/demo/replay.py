@@ -122,6 +122,12 @@ def run_offline_prepare(
         limit=session.settings.demo_max_prepare_per_session,
         code="DEMO_PREPARE_LIMIT",
         message="本会话准备次数已达上限，请重置演示。",
+        handoff={
+            "reason": "prepare_limit",
+            "category": "SESSION_LIMIT",
+            "summary": "本会话准备次数达到上限，自动转人工跟进。",
+            "order_id": match.order_id,
+        },
     )
     tool_call_id = f"demo-tool-{uuid.uuid4().hex[:12]}"
     context = tool_context(session, tool_call_id=tool_call_id)
@@ -217,6 +223,11 @@ def handle_message(session: DemoSession, message: str) -> MessageOutcome:
         limit=session.settings.demo_max_messages_per_session,
         code="DEMO_MESSAGE_LIMIT",
         message="本会话消息条数已达上限，请重置演示。",
+        handoff={
+            "reason": "message_limit",
+            "category": "SESSION_LIMIT",
+            "summary": "本会话消息条数达到上限，自动转人工跟进。",
+        },
     )
     mode = session.settings.demo_agent_mode
     session.last_tool_trace = []

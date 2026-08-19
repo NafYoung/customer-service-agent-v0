@@ -7,11 +7,22 @@ import uuid
 from decimal import Decimal
 from pathlib import Path
 
-from app.agent.deepseek_budget import DeepSeekBudgetGuard, SQLiteBudgetLedger
+from app.agent.deepseek_budget import (
+    BudgetExceededError,
+    DeepSeekBudgetGuard,
+    SQLiteBudgetLedger,
+)
 from app.agent.factory import build_deepseek_client, build_preparation_agent
+from app.agent.openai_compatible import ModelAPIError
 from app.agent.readonly import AgentRunError
 from app.demo.preparation_runner import project_tool_trace
-from app.demo.session import DemoSession, bump_or_limit, tool_context
+from app.demo.security import token_hash
+from app.demo.session import (
+    DemoSession,
+    bump_or_limit,
+    ensure_handoff_ticket,
+    tool_context,
+)
 from app.errors import ServiceError
 from evals.canonical_pricing import load_canonical_price_snapshot
 
@@ -28,7 +39,9 @@ def _live_budget_guard(session: DemoSession) -> DeepSeekBudgetGuard:
             hard_limit_cny=Decimal("20"),
             execution_limit_cny=Decimal("18"),
         ),
-        run_id=f"demo-live-{session.server_run_id}",
+        # Ledger run_id 只允许小写字母/数字/._-：server_run_id 来自
+        # token_urlsafe（含大写），必须派生为小写哈希。
+        run_id=f"demo-live-{token_hash(session.server_run_id)[:16]}",
         purpose="diagnostic",
         price_snapshot=load_canonical_price_snapshot(),
         model=settings.deepseek_model,
@@ -72,6 +85,21 @@ def run_preparation_live(
     except AgentRunError as exc:
         raise ServiceError(exc.code, str(exc), status_code=409) from exc
     except Exception as exc:  # noqa: BLE001 — surface provider/budget failures
+        if isinstance(exc, BudgetExceededError) or (
+            isinstance(exc, ModelAPIError)
+            and getattr(exc, "code", None) == "MODEL_BUDGET_EXHAUSTED"
+        ):
+            ensure_handoff_ticket(
+                session,
+                reason="budget_exhausted",
+                category="BUDGET_EXHAUSTED",
+                summary="预算闸门拒绝付费请求（预算耗尽），已停止模型调用并转人工跟进。",
+            )
+            raise ServiceError(
+                "DEMO_LIVE_BUDGET_EXHAUSTED",
+                "预算耗尽：已停止模型调用并生成人工工单，后续由人工客服跟进。",
+                status_code=409,
+            ) from exc
         raise ServiceError(
             "DEMO_LIVE_AGENT_FAILED",
             f"Live Preparation Agent 失败：{exc}",
@@ -106,6 +134,16 @@ def run_preparation_live(
         limit=session.settings.demo_max_prepare_per_session,
         code="DEMO_PREPARE_LIMIT",
         message="本会话准备次数已达上限，请重置演示。",
+        handoff={
+            "reason": "prepare_limit",
+            "category": "SESSION_LIMIT",
+            "summary": "本会话准备次数达到上限，自动转人工跟进。",
+            "order_id": (
+                str(prepared.preview["order_id"])
+                if prepared.preview.get("order_id") is not None
+                else None
+            ),
+        },
     )
     session.pending_approval_id = prepared.approval_id
     session.pending_preview_hash = prepared.preview_hash

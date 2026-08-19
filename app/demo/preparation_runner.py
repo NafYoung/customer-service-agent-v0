@@ -160,6 +160,12 @@ def run_preparation_scripted(
         limit=session.settings.demo_max_prepare_per_session,
         code="DEMO_PREPARE_LIMIT",
         message="本会话准备次数已达上限，请重置演示。",
+        handoff={
+            "reason": "prepare_limit",
+            "category": "SESSION_LIMIT",
+            "summary": "本会话准备次数达到上限，自动转人工跟进。",
+            "order_id": match.order_id,
+        },
     )
     final_reply = _final_reply_for(match)
     model = _scripted_model_for(match, final_reply=final_reply)
