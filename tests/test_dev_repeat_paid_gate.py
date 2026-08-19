@@ -114,7 +114,7 @@ def _model_call(
     return ModelCallEvidence(
         sequence=1,
         status="success",
-        started_at="2026-08-01T12:00:00+00:00",
+        started_at="2026-08-20T12:00:00+00:00",
         latency_ms=1,
         message_count=2,
         tool_contract_count=tool_contract_count,
@@ -234,8 +234,8 @@ def _result(*, case: ReadonlyEvalCase, trial: int) -> ReadonlyEvalResult:
         case_run_id=f"eval-run-{case.case_id}-{trial}",
         input_sha256=input_sha256,
         passed=rescored.passed,
-        started_at="2026-08-01T12:00:00+00:00",
-        completed_at="2026-08-01T12:00:01+00:00",
+        started_at="2026-08-20T12:00:00+00:00",
+        completed_at="2026-08-20T12:00:01+00:00",
         duration_ms=1,
         checks=list(rescored.checks),
         failures=list(rescored.failures),
@@ -393,7 +393,7 @@ def _formal_runtime_inputs(
         fixture_kinds=tuple(
             (f"fixture-{index:02d}", "safe_canonical") for index in range(49)
         ),
-        completed_at=datetime(2026, 8, 1, 12, tzinfo=UTC),
+        completed_at=datetime(2026, 8, 20, 12, tzinfo=UTC),
     )
     review = ValidatedCalibrationReview(
         review_sha256="2" * 64,
@@ -643,7 +643,7 @@ def _paid_budget(
             "reserved_cny": reservation,
             "known_cost_cny": format_cny(per_attempt),
             "error_code": None,
-            "completed_at": "2026-08-01T12:04:59+00:00",
+            "completed_at": "2026-08-20T12:04:59+00:00",
             "count": 1,
         }
         for logical_call_sha256 in hashes
@@ -658,8 +658,8 @@ def _paid_budget(
             "model": runtime_settings.deepseek_model,
             "price_sha256": price.sha256,
             "status": "completed",
-            "started_at": "2026-08-01T12:00:00+00:00",
-            "completed_at": "2026-08-01T12:05:00+00:00",
+            "started_at": "2026-08-20T12:00:00+00:00",
+            "completed_at": "2026-08-20T12:05:00+00:00",
         },
         "price": canonical_budget_price_payload(price),
         "reservation_cny_per_attempt": reservation,
@@ -686,7 +686,7 @@ def _dev_repeat_payload(
         settings=runtime_settings,
         logical_call_hashes=_logical_call_hashes(results),
     )
-    started = datetime(2026, 8, 1, 12, tzinfo=UTC)
+    started = datetime(2026, 8, 20, 12, tzinfo=UTC)
     manifest = build_readonly_manifest(
         run_id=run_id,
         purpose="dev_repeat",
@@ -1623,7 +1623,7 @@ def test_issued_formal_context_binds_output_and_source_before_model_call(
         fixture_kinds=tuple(
             (f"fixture-{index:02d}", "safe_canonical") for index in range(49)
         ),
-        completed_at=datetime(2026, 8, 1, 12, tzinfo=UTC),
+        completed_at=datetime(2026, 8, 20, 12, tzinfo=UTC),
     )
     review = ValidatedCalibrationReview(
         review_sha256="2" * 64,
@@ -2383,7 +2383,7 @@ def test_diagnostic_manifest_and_schema_reject_noncanonical_identity() -> None:
         }
     )
     result = _result(case=arbitrary_case, trial=1)
-    started = datetime(2026, 8, 1, 12, tzinfo=UTC)
+    started = datetime(2026, 8, 20, 12, tzinfo=UTC)
 
     with pytest.raises(ValueError, match="canonical|case"):
         build_readonly_manifest(
@@ -2454,7 +2454,7 @@ def test_diagnostic_manifest_and_schema_reject_noncanonical_identity() -> None:
 def test_dev_repeat_manifest_accepts_only_canonical_7_by_4_case_set() -> None:
     cases, results = _dev_repeat_inputs()
     run_id = "eval-20260729-dev-repeat-valid"
-    started = datetime(2026, 8, 1, 12, tzinfo=UTC)
+    started = datetime(2026, 8, 20, 12, tzinfo=UTC)
 
     manifest = build_readonly_manifest(
         run_id=run_id,
@@ -2491,7 +2491,7 @@ def test_public_validator_recomputes_dev_repeat_bucket_costs() -> None:
         attempt_count=_attempt_count(results),
         logical_call_hashes=_logical_call_hashes(results),
     )
-    started = datetime(2026, 8, 1, 12, tzinfo=UTC)
+    started = datetime(2026, 8, 20, 12, tzinfo=UTC)
     manifest = build_readonly_manifest(
         run_id=run_id,
         purpose="dev_repeat",
@@ -2710,7 +2710,7 @@ def test_dev_repeat_manifest_rejects_unsettled_or_unpriced_paid_evidence(
                 "f",
             )
 
-    started = datetime(2026, 8, 1, 12, tzinfo=UTC)
+    started = datetime(2026, 8, 20, 12, tzinfo=UTC)
     with pytest.raises(ValueError, match="budget|price|usage|attempt|canonical"):
         build_readonly_manifest(
             run_id=run_id,
@@ -2775,7 +2775,7 @@ def test_dev_repeat_manifest_binds_calls_to_each_completed_trial(
         results[0].model_calls = (
             replace(
                 agent,
-                started_at="2026-08-01T11:59:59+00:00",
+                started_at="2026-08-20T11:59:59+00:00",
             ),
             judge,
         )
@@ -2792,7 +2792,7 @@ def test_dev_repeat_manifest_binds_calls_to_each_completed_trial(
             judge,
         )
 
-    started = datetime(2026, 8, 1, 12, tzinfo=UTC)
+    started = datetime(2026, 8, 20, 12, tzinfo=UTC)
     with pytest.raises(
         ValueError,
         match="call|trial|phase|sequence|judge|time|record",

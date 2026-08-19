@@ -38,7 +38,7 @@ from evals.readonly_reporting import (
 )
 
 PRICE_SNAPSHOT_PATH = (
-    readonly_reporting.ROOT / "pricing" / "deepseek-v4-flash-2026-07-30.json"
+    readonly_reporting.ROOT / "pricing" / "deepseek-v4-flash-2026-08-19.json"
 )
 
 
@@ -109,14 +109,14 @@ def _budget_report(
     identity_started_at = (
         started_at - timedelta(seconds=1)
         if started_at is not None
-        else datetime(2026, 8, 1, 12, tzinfo=UTC)
+        else datetime(2026, 8, 20, 12, tzinfo=UTC)
     )
     identity_completed_at = (
         started_at + (completed_at - started_at) / 2
         if started_at is not None and completed_at is not None
-        else datetime(2026, 8, 1, 12, 5, tzinfo=UTC)
+        else datetime(2026, 8, 20, 12, 5, tzinfo=UTC)
     )
-    settled = Decimal(attempt_count) * Decimal("0.000012")
+    settled = Decimal(attempt_count) * Decimal("0.000042")
     settled_cny = format(settled, "f")
     call_hashes = logical_call_hashes or [
         hashlib.sha256(
@@ -131,8 +131,8 @@ def _budget_report(
             "logical_call_sha256": logical_hash,
             "status": "settled_upper_bound",
             "settlement_mode": "upper_bound",
-            "reserved_cny": "1.002048",
-            "known_cost_cny": "0.000012",
+            "reserved_cny": "3.009216",
+            "known_cost_cny": "0.000042",
             "error_code": None,
             "completed_at": identity_completed_at.isoformat(),
             "count": 1,
@@ -167,7 +167,7 @@ def _budget_report(
             "completed_at": identity_completed_at.isoformat(),
         },
         "price": _canonical_price_summary(),
-        "reservation_cny_per_attempt": "1.002048",
+        "reservation_cny_per_attempt": "3.009216",
         "run": dict(amount),
         "cumulative": dict(amount),
         "attempt_evidence": {
@@ -194,7 +194,7 @@ def _attestation() -> ValidatedCalibrationAttestation:
             )
             for index in range(49)
         ),
-        completed_at=datetime(2026, 8, 1, 12, tzinfo=UTC),
+        completed_at=datetime(2026, 8, 20, 12, tzinfo=UTC),
     )
 
 
@@ -230,8 +230,8 @@ def _result(
         case_run_id=f"eval-run-t{trial}-{case_id}",
         input_sha256="0" * 64,
         passed=passed,
-        started_at="2026-08-01T10:00:00+00:00",
-        completed_at="2026-08-01T10:00:01+00:00",
+        started_at="2026-08-20T10:00:00+00:00",
+        completed_at="2026-08-20T10:00:01+00:00",
         duration_ms=1000 + trial,
         checks=[check.message for check in score_checks if check.passed],
         failures=[check.message for check in score_checks if not check.passed],
@@ -241,7 +241,7 @@ def _result(
             ModelCallEvidence(
                 sequence=1,
                 status="success",
-                started_at="2026-08-01T10:00:00+00:00",
+                started_at="2026-08-20T10:00:00+00:00",
                 latency_ms=100,
                 message_count=2,
                 tool_contract_count=6,
@@ -262,7 +262,7 @@ def _result(
             ModelCallEvidence(
                 sequence=1,
                 status="success",
-                started_at="2026-08-01T10:00:00+00:00",
+                started_at="2026-08-20T10:00:00+00:00",
                 latency_ms=100,
                 message_count=2,
                 tool_contract_count=0,
@@ -445,7 +445,7 @@ def test_summary_separates_strict_reliability_safety_usage_and_latency():
     assert summary["latency_ms"]["case"]["p50"] >= 1001
     assert summary["latency_ms"]["model_call"]["max"] == 100
     assert summary["business_state"]["changed_trials"] == 0
-    assert summary["budget"]["run"]["committed_cny"] == "0.000096"
+    assert summary["budget"]["run"]["committed_cny"] == "0.000336"
     assert summary["budget"]["cumulative"]["hard_limit_cny"] == "20"
 
 
@@ -793,7 +793,7 @@ def test_formal_manifest_binds_calls_to_each_completed_trial(
             agent,
             replace(
                 judge,
-                started_at="2026-08-01T10:00:02+00:00",
+                started_at="2026-08-20T10:00:02+00:00",
             ),
         )
     run_id = "eval-20260729-formal-call-binding"

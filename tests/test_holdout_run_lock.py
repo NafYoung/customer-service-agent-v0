@@ -57,7 +57,7 @@ def _attestation() -> ValidatedCalibrationAttestation:
             )
             for index in range(49)
         ),
-        completed_at=datetime(2026, 8, 1, 12, tzinfo=UTC),
+        completed_at=datetime(2026, 8, 20, 12, tzinfo=UTC),
     )
 
 
@@ -204,7 +204,7 @@ def _write_manifest_for_cases(
         "formal_runs_completed": 0,
         "lifecycle_status": "sealed",
         "rerun_policy": "prohibited",
-        "sealed_at": "2026-08-01T13:00:00+00:00",
+        "sealed_at": "2026-08-20T13:00:00+00:00",
         "sealer_id": "independent-holdout-sealer-v2",
         "source_git_commit": "2" * 40,
         "implementation_independence_declared": True,
@@ -267,7 +267,7 @@ def _manifest(
         "formal_runs_completed": formal_runs_completed,
         "lifecycle_status": "sealed",
         "rerun_policy": "prohibited",
-        "sealed_at": "2026-08-01T13:00:00+00:00",
+        "sealed_at": "2026-08-20T13:00:00+00:00",
         "sealer_id": "independent-holdout-sealer-v2",
         "source_git_commit": "2" * 40,
         "implementation_independence_declared": True,
@@ -298,7 +298,7 @@ def test_holdout_lock_is_exclusive_and_final_status_is_persisted(
         lock_root=lock_root,
         declaration=declaration,
         run_id="eval-20260729-holdout-v2",
-        now=datetime(2026, 8, 1, 10, tzinfo=UTC),
+        now=datetime(2026, 8, 20, 10, tzinfo=UTC),
     )
 
     assert stat.S_IMODE(lock_root.stat().st_mode) == 0o700
@@ -317,7 +317,7 @@ def test_holdout_lock_is_exclusive_and_final_status_is_persisted(
         run_id="eval-20260729-holdout-v2",
         expected_start_receipt_sha256=start_receipt_sha256,
         bundle_integrity_sha256="f" * 64,
-        now=datetime(2026, 8, 1, 10, 5, tzinfo=UTC),
+        now=datetime(2026, 8, 20, 10, 5, tzinfo=UTC),
     )
     lock_payload = json.loads(lock_path.read_text(encoding="utf-8"))
     terminal_payload = json.loads(terminal_path.read_text(encoding="utf-8"))
@@ -570,7 +570,7 @@ def test_holdout_finalize_rejects_a_replaced_start_receipt(
     )
     expected_start_sha256 = holdout_lock_receipt_sha256(lock_path)
     payload = json.loads(lock_path.read_text(encoding="utf-8"))
-    payload["created_at"] = "2026-08-01T23:59:59+00:00"
+    payload["created_at"] = "2026-08-20T23:59:59+00:00"
     lock_path.write_text(
         json.dumps(payload, ensure_ascii=False, sort_keys=True),
         encoding="utf-8",
@@ -675,8 +675,8 @@ def test_failed_holdout_chain_binds_private_attempt_bundle(
         context=FormalFailureContext.model_validate(
             {
                 "run_id": run_id,
-                "created_at": "2026-08-01T16:00:00+00:00",
-                "failed_at": "2026-08-01T16:00:01+00:00",
+                "created_at": "2026-08-20T16:00:00+00:00",
+                "failed_at": "2026-08-20T16:00:01+00:00",
                 "failure_stage": "suite_execution",
                 "failure_code": "MODEL_HTTP_ERROR",
                 "max_output_tokens": 1024,

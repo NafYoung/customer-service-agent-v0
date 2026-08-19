@@ -42,7 +42,7 @@ from evals.semantic_judge import (
 FIXTURE_PATH = Path("evals/semantic_judge_calibration_cases.jsonl")
 CASE_DIR = Path("evals/readonly_regression_cases")
 PRICE_SNAPSHOT_PATH = Path(
-    "pricing/deepseek-v4-flash-2026-07-30.json"
+    "pricing/deepseek-v4-flash-2026-08-19.json"
 )
 _TRUSTED_TEST_COMMIT = "1" * 40
 
@@ -160,7 +160,7 @@ def _model_call(
     return {
         "sequence": 1,
         "status": "success",
-        "started_at": "2026-08-01T12:00:00+00:00",
+        "started_at": "2026-08-20T12:00:00+00:00",
         "latency_ms": 1,
         "message_count": 2,
         "tool_contract_count": 0,
@@ -205,7 +205,7 @@ def _settled_budget(
     *,
     response_digests: list[str] | None = None,
 ) -> dict[str, object]:
-    settled = Decimal(attempt_count) * Decimal("0.00002")
+    settled = Decimal(attempt_count) * Decimal("0.000075")
     settled_cny = format(settled, "f")
     snapshot = {
         "currency": "CNY",
@@ -228,10 +228,10 @@ def _settled_budget(
             ),
             "status": "settled_upper_bound",
             "settlement_mode": "upper_bound",
-            "reserved_cny": "1.002048",
-            "known_cost_cny": "0.00002",
+            "reserved_cny": "3.009216",
+            "known_cost_cny": "0.000075",
             "error_code": None,
-            "completed_at": "2026-08-01T12:04:59+00:00",
+            "completed_at": "2026-08-20T12:04:59+00:00",
             "response_content_sha256": (
                 response_digests[index]
                 if response_digests is not None
@@ -253,11 +253,11 @@ def _settled_budget(
                 "snapshot_sha256"
             ],
             "status": "completed",
-            "started_at": "2026-08-01T12:00:00+00:00",
-            "completed_at": "2026-08-01T12:05:00+00:00",
+            "started_at": "2026-08-20T12:00:00+00:00",
+            "completed_at": "2026-08-20T12:05:00+00:00",
         },
         "price": _canonical_price_summary(),
-        "reservation_cny_per_attempt": "1.002048",
+        "reservation_cny_per_attempt": "3.009216",
         "run": dict(snapshot),
         "cumulative": dict(snapshot),
         "attempt_evidence": {
@@ -314,8 +314,8 @@ def _valid_report() -> dict[str, object]:
         "attestation_kind": "semantic_judge_holdout_eligibility",
         "run_id": "eval-20260729-calibration-attestation",
         "source_git_commit": "1" * 40,
-        "started_at": "2026-08-01T12:00:00+00:00",
-        "completed_at": "2026-08-01T12:05:00+00:00",
+        "started_at": "2026-08-20T12:00:00+00:00",
+        "completed_at": "2026-08-20T12:05:00+00:00",
         "fixture_sha256": _file_sha256(FIXTURE_PATH),
         "contract_set_sha256": canonical_contract_set_sha256(cases),
         "harness": current_readonly_harness_fingerprints(settings),
@@ -340,7 +340,7 @@ def _matching_temporary_calibration_ledger(
     monkeypatch: pytest.MonkeyPatch,
     report_digests: list[str] | None = None,
 ) -> tuple[Path, dict[str, object], datetime]:
-    fixed_now = datetime(2026, 8, 1, 12, tzinfo=UTC)
+    fixed_now = datetime(2026, 8, 20, 12, tzinfo=UTC)
 
     class _FixedDateTime(datetime):
         @classmethod
@@ -454,7 +454,7 @@ def test_calibration_attestation_rejects_synthetic_report_without_live_ledger(
         validate_calibration_attestation(
             report_path=report_path,
             settings=Settings(deepseek_temperature=0),
-            now=datetime(2026, 8, 1, 13, tzinfo=UTC),
+            now=datetime(2026, 8, 20, 13, tzinfo=UTC),
         )
 
     assert not missing_ledger.exists()
@@ -526,7 +526,7 @@ def test_calibration_attestation_recomputes_results_summary_and_budget(
     attestation = validate_calibration_attestation(
         report_path=report_path,
         settings=settings,
-        now=datetime(2026, 8, 1, 13, tzinfo=UTC),
+        now=datetime(2026, 8, 20, 13, tzinfo=UTC),
     )
 
     assert attestation.report_sha256 == _file_sha256(report_path)
@@ -545,7 +545,7 @@ def test_calibration_attestation_recomputes_results_summary_and_budget(
         validate_calibration_attestation(
             report_path=_write_json(tmp_path / "tampered.json", tampered),
             settings=settings,
-            now=datetime(2026, 8, 1, 13, tzinfo=UTC),
+            now=datetime(2026, 8, 20, 13, tzinfo=UTC),
         )
 
     unsettled = _valid_report()
@@ -557,7 +557,7 @@ def test_calibration_attestation_recomputes_results_summary_and_budget(
         validate_calibration_attestation(
             report_path=_write_json(tmp_path / "unsettled.json", unsettled),
             settings=settings,
-            now=datetime(2026, 8, 1, 13, tzinfo=UTC),
+            now=datetime(2026, 8, 20, 13, tzinfo=UTC),
         )
 
     understated_cumulative = _valid_report()
@@ -580,7 +580,7 @@ def test_calibration_attestation_recomputes_results_summary_and_budget(
                 understated_cumulative,
             ),
             settings=settings,
-            now=datetime(2026, 8, 1, 13, tzinfo=UTC),
+            now=datetime(2026, 8, 20, 13, tzinfo=UTC),
         )
 
     retried = _valid_report()
@@ -594,7 +594,7 @@ def test_calibration_attestation_recomputes_results_summary_and_budget(
         validate_calibration_attestation(
             report_path=_write_json(tmp_path / "retried.json", retried),
             settings=settings,
-            now=datetime(2026, 8, 1, 13, tzinfo=UTC),
+            now=datetime(2026, 8, 20, 13, tzinfo=UTC),
         )
 
     drifted_price_unit = _valid_report()
@@ -609,7 +609,7 @@ def test_calibration_attestation_recomputes_results_summary_and_budget(
                 drifted_price_unit,
             ),
             settings=settings,
-            now=datetime(2026, 8, 1, 13, tzinfo=UTC),
+            now=datetime(2026, 8, 20, 13, tzinfo=UTC),
         )
 
     drifted_model = _valid_report()
@@ -623,7 +623,7 @@ def test_calibration_attestation_recomputes_results_summary_and_budget(
                 drifted_model,
             ),
             settings=settings,
-            now=datetime(2026, 8, 1, 13, tzinfo=UTC),
+            now=datetime(2026, 8, 20, 13, tzinfo=UTC),
         )
 
     stale = _valid_report()
@@ -633,7 +633,7 @@ def test_calibration_attestation_recomputes_results_summary_and_budget(
         validate_calibration_attestation(
             report_path=_write_json(tmp_path / "stale.json", stale),
             settings=settings,
-            now=datetime(2026, 8, 1, 13, tzinfo=UTC),
+            now=datetime(2026, 8, 20, 13, tzinfo=UTC),
         )
 
     unbound_source = _valid_report()
@@ -645,7 +645,7 @@ def test_calibration_attestation_recomputes_results_summary_and_budget(
                 unbound_source,
             ),
             settings=settings,
-            now=datetime(2026, 8, 1, 13, tzinfo=UTC),
+            now=datetime(2026, 8, 20, 13, tzinfo=UTC),
         )
 
 
@@ -666,7 +666,7 @@ def test_calibration_attestation_accepts_canonical_trailing_slash_endpoint(
             report,
         ),
         settings=settings,
-        now=datetime(2026, 8, 1, 13, tzinfo=UTC),
+        now=datetime(2026, 8, 20, 13, tzinfo=UTC),
     )
 
     assert validated.run_id == report["run_id"]
@@ -690,7 +690,7 @@ def test_calibration_attestation_rejects_caller_supplied_forged_harness(
                 report,
             ),
             settings=Settings(deepseek_temperature=0),
-            now=datetime(2026, 8, 1, 13, tzinfo=UTC),
+            now=datetime(2026, 8, 20, 13, tzinfo=UTC),
             harness_fingerprints=forged_harness,
         )
 
@@ -711,7 +711,7 @@ def test_calibration_attestation_rejects_report_commit_not_current_trusted_head(
                 report,
             ),
             settings=Settings(deepseek_temperature=0),
-            now=datetime(2026, 8, 1, 13, tzinfo=UTC),
+            now=datetime(2026, 8, 20, 13, tzinfo=UTC),
             harness_fingerprints=report["harness"],
         )
 
@@ -748,7 +748,7 @@ def test_calibration_attestation_rejects_dirty_source_before_report_read(
         validate_calibration_attestation(
             report_path=report_path,
             settings=Settings(deepseek_temperature=0),
-            now=datetime(2026, 8, 1, 13, tzinfo=UTC),
+            now=datetime(2026, 8, 20, 13, tzinfo=UTC),
         )
 
 
@@ -788,7 +788,7 @@ def test_calibration_attestation_rejects_commit_drift_during_freeze(
         validate_calibration_attestation(
             report_path=report_path,
             settings=Settings(deepseek_temperature=0),
-            now=datetime(2026, 8, 1, 13, tzinfo=UTC),
+            now=datetime(2026, 8, 20, 13, tzinfo=UTC),
         )
 
     assert clean_checks == 2
@@ -844,7 +844,7 @@ def test_calibration_attestation_rechecks_trusted_source_before_return(
                 report,
             ),
             settings=Settings(deepseek_temperature=0),
-            now=datetime(2026, 8, 1, 13, tzinfo=UTC),
+            now=datetime(2026, 8, 20, 13, tzinfo=UTC),
             harness_fingerprints=report["harness"],
         )
 
@@ -896,7 +896,7 @@ def test_calibration_attestation_rejects_noncanonical_runtime_settings(
                 report,
             ),
             settings=settings,
-            now=datetime(2026, 8, 1, 13, tzinfo=UTC),
+            now=datetime(2026, 8, 20, 13, tzinfo=UTC),
         )
 
 
@@ -943,7 +943,7 @@ def test_calibration_attestation_rejects_invalid_model_call_protocol(
                 deepseek_model="deepseek-v4-flash",
                 deepseek_temperature=0,
             ),
-            now=datetime(2026, 8, 1, 13, tzinfo=UTC),
+            now=datetime(2026, 8, 20, 13, tzinfo=UTC),
         )
 
 
@@ -951,8 +951,8 @@ def test_calibration_attestation_rejects_invalid_model_call_protocol(
     "started_at",
     [
         "2020-01-01T00:00:00+00:00",
-        "2026-08-01T12:01:00",
-        "2026-08-01T12:06:00+00:00",
+        "2026-08-20T12:01:00",
+        "2026-08-20T12:06:00+00:00",
     ],
 )
 def test_calibration_attestation_binds_call_time_to_report_budget_and_price(
@@ -975,7 +975,7 @@ def test_calibration_attestation_binds_call_time_to_report_budget_and_price(
                 deepseek_model="deepseek-v4-flash",
                 deepseek_temperature=0,
             ),
-            now=datetime(2026, 8, 1, 13, tzinfo=UTC),
+            now=datetime(2026, 8, 20, 13, tzinfo=UTC),
         )
 
 
@@ -1000,7 +1000,7 @@ def test_calibration_attestation_binds_budget_identity_lifecycle(
                 deepseek_model="deepseek-v4-flash",
                 deepseek_temperature=0,
             ),
-            now=datetime(2026, 8, 1, 13, tzinfo=UTC),
+            now=datetime(2026, 8, 20, 13, tzinfo=UTC),
         )
 
 
@@ -1038,7 +1038,7 @@ def test_calibration_attestation_binds_attempt_buckets_to_model_calls(
                 deepseek_model="deepseek-v4-flash",
                 deepseek_temperature=0,
             ),
-            now=datetime(2026, 8, 1, 13, tzinfo=UTC),
+            now=datetime(2026, 8, 20, 13, tzinfo=UTC),
         )
 
 
@@ -1089,7 +1089,7 @@ def test_calibration_attestation_rejects_contradictory_attempt_buckets(
                 "reserved_cny": "8",
                 "known_cost_cny": "19",
                 "error_code": "COST_EXCEEDS_RESERVATION",
-                "completed_at": "2026-08-01T12:04:59+00:00",
+                "completed_at": "2026-08-20T12:04:59+00:00",
                 "count": 2,
             }
         ],
@@ -1108,7 +1108,7 @@ def test_calibration_attestation_rejects_contradictory_attempt_buckets(
                 deepseek_model="deepseek-v4-flash",
                 deepseek_temperature=0,
             ),
-            now=datetime(2026, 8, 1, 13, tzinfo=UTC),
+            now=datetime(2026, 8, 20, 13, tzinfo=UTC),
         )
 
 
@@ -1175,7 +1175,7 @@ def test_calibration_attestation_rejects_noncanonical_budget_contract(
                 report,
             ),
             settings=settings,
-            now=datetime(2026, 8, 1, 13, tzinfo=UTC),
+            now=datetime(2026, 8, 20, 13, tzinfo=UTC),
         )
 
 
@@ -1206,7 +1206,7 @@ def test_calibration_attestation_rejects_a_settled_execution_overrun(
                 deepseek_model="deepseek-v4-flash",
                 deepseek_temperature=0,
             ),
-            now=datetime(2026, 8, 1, 13, tzinfo=UTC),
+            now=datetime(2026, 8, 20, 13, tzinfo=UTC),
         )
 
 
@@ -1221,7 +1221,7 @@ def test_independent_review_is_bound_and_samples_ten_percent(
     attestation = validate_calibration_attestation(
         report_path=report_path,
         settings=settings,
-        now=datetime(2026, 8, 1, 13, tzinfo=UTC),
+        now=datetime(2026, 8, 20, 13, tzinfo=UTC),
     )
     fixtures = load_calibration_fixtures(FIXTURE_PATH)
     sample_count = math.ceil(len(fixtures) * 0.10)
@@ -1231,7 +1231,7 @@ def test_independent_review_is_bound_and_samples_ten_percent(
         "schema_version": "1.0",
         "calibration_report_sha256": attestation.report_sha256,
         "reviewer_id": "independent-semantic-reviewer-v1",
-        "reviewed_at": "2026-08-01T12:30:00+00:00",
+        "reviewed_at": "2026-08-20T12:30:00+00:00",
         "conclusion": "GO",
         "implementation_independence_declared": True,
         "items": [
@@ -1252,7 +1252,7 @@ def test_independent_review_is_bound_and_samples_ten_percent(
         review_path=review_path,
         attestation=attestation,
         report_path=report_path,
-        now=datetime(2026, 8, 1, 13, tzinfo=UTC),
+        now=datetime(2026, 8, 20, 13, tzinfo=UTC),
     )
 
     assert validated_review.review_sha256 == _file_sha256(review_path)
@@ -1268,7 +1268,7 @@ def test_independent_review_is_bound_and_samples_ten_percent(
             review_path=_write_json(tmp_path / "too-small.json", too_small),
             attestation=attestation,
             report_path=report_path,
-            now=datetime(2026, 8, 1, 13, tzinfo=UTC),
+            now=datetime(2026, 8, 20, 13, tzinfo=UTC),
         )
 
     wrong_report = deepcopy(review)
@@ -1284,11 +1284,11 @@ def test_independent_review_is_bound_and_samples_ten_percent(
             ),
             attestation=attestation,
             report_path=report_path,
-            now=datetime(2026, 8, 1, 13, tzinfo=UTC),
+            now=datetime(2026, 8, 20, 13, tzinfo=UTC),
         )
 
     before_report = deepcopy(review)
-    before_report["reviewed_at"] = "2026-08-01T11:59:00+00:00"
+    before_report["reviewed_at"] = "2026-08-20T11:59:00+00:00"
     with pytest.raises(CalibrationAttestationError, match="after|time"):
         validate_calibration_review(
             review_path=_write_json(
@@ -1297,7 +1297,7 @@ def test_independent_review_is_bound_and_samples_ten_percent(
             ),
             attestation=attestation,
             report_path=report_path,
-            now=datetime(2026, 8, 1, 13, tzinfo=UTC),
+            now=datetime(2026, 8, 20, 13, tzinfo=UTC),
         )
 
 
@@ -1396,7 +1396,7 @@ def test_calibration_attestation_rejects_rewritten_verdict_keeping_stale_respons
                 deepseek_model="deepseek-v4-flash",
                 deepseek_temperature=0,
             ),
-            now=datetime(2026, 8, 1, 13, tzinfo=UTC),
+            now=datetime(2026, 8, 20, 13, tzinfo=UTC),
         )
 
 
@@ -1433,7 +1433,7 @@ def test_calibration_attestation_rejects_dual_rewrite_of_verdict_and_digest(
                 deepseek_model="deepseek-v4-flash",
                 deepseek_temperature=0,
             ),
-            now=datetime(2026, 8, 1, 13, tzinfo=UTC),
+            now=datetime(2026, 8, 20, 13, tzinfo=UTC),
         )
 
 
@@ -1456,7 +1456,7 @@ def test_calibration_attestation_rejects_missing_response_content_digest(
                 deepseek_model="deepseek-v4-flash",
                 deepseek_temperature=0,
             ),
-            now=datetime(2026, 8, 1, 13, tzinfo=UTC),
+            now=datetime(2026, 8, 20, 13, tzinfo=UTC),
         )
 
 
@@ -1535,7 +1535,7 @@ def test_independent_review_rejects_go_when_report_verdicts_mismatch_fixtures(
         "schema_version": "1.0",
         "calibration_report_sha256": forged_attestation.report_sha256,
         "reviewer_id": "independent-semantic-reviewer-v1",
-        "reviewed_at": "2026-08-01T12:30:00+00:00",
+        "reviewed_at": "2026-08-20T12:30:00+00:00",
         "conclusion": "GO",
         "implementation_independence_declared": True,
         "items": [
@@ -1586,5 +1586,5 @@ def test_calibration_attestations_reject_public_file_permissions(
         validate_calibration_attestation(
             report_path=report_path,
             settings=settings,
-            now=datetime(2026, 8, 1, 13, tzinfo=UTC),
+            now=datetime(2026, 8, 20, 13, tzinfo=UTC),
         )

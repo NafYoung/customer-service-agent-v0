@@ -5,9 +5,9 @@
   "currency": "CNY",
   "tokens_per_price_unit": 1000000,
   "rates_cny": {
-    "prompt_cache_hit": "0.02",
-    "prompt_cache_miss": "1",
-    "completion": "2"
+    "prompt_cache_hit": "0.10",
+    "prompt_cache_miss": "3.0",
+    "completion": "9.0"
   },
   "limits": {
     "context_tokens": 1000000,
@@ -15,6 +15,6 @@
   },
   "source_url": "https://api-docs.deepseek.com/zh-cn/quick_start/pricing/",
   "usage_source_url": "https://api-docs.deepseek.com/api/create-chat-completion/",
-  "captured_at": "2026-07-30T17:20:00Z",
-  "valid_until": "2026-08-06T17:20:00Z"
+  "captured_at": "2026-08-19T03:15:00Z",
+  "valid_until": "2026-08-26T03:15:00Z"
 }

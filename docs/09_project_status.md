@@ -51,6 +51,7 @@ holdout 失败后加固链：`9337e55`（prompt/回归）→ `84eca79` / `69030d
 | 规范 live 路径 | `artifacts/private/deepseek-budget.sqlite3` |
 | 正式硬上限 | ¥20（未上调） |
 | 自动执行上限 | ¥18（未上调） |
+| 价格快照 | 2026-08-19 刷新：官方定价改为空闲/高峰双档；按**高峰档保守上界**录入（缓存命中 0.10 / 未命中 3.0 / 输出 9.0 元每百万）；`pricing/deepseek-v4-flash-2026-08-19.json`，`valid_until` 2026-08-26 |
 | 当前 remaining_execution | 以 live 账本为准（加固后多次公开回归后仍远高于执行闸） |
 | reserved / uncertain | 以 live 账本为准 |
 

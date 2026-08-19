@@ -42,7 +42,7 @@ class _ClosedBudgetGuard:
         assert self.closed is True
         assert self.completed_at is not None
         price = canonical_budget_price_payload()
-        settled = Decimal(self.attempt_count) * Decimal("0.00002")
+        settled = Decimal(self.attempt_count) * Decimal("0.000075")
         settled_cny = format(settled, "f")
         amounts = {
             "currency": "CNY",
@@ -67,8 +67,8 @@ class _ClosedBudgetGuard:
                 "logical_call_sha256": call_hash,
                 "status": "settled_upper_bound",
                 "settlement_mode": "upper_bound",
-                "reserved_cny": "1.002048",
-                "known_cost_cny": "0.00002",
+                "reserved_cny": "3.009216",
+                "known_cost_cny": "0.000075",
                 "error_code": None,
                 "completed_at": self.completed_at.isoformat(),
                 "response_content_sha256": self.response_digests.get(
@@ -92,7 +92,7 @@ class _ClosedBudgetGuard:
                 "completed_at": self.completed_at.isoformat(),
             },
             "price": price,
-            "reservation_cny_per_attempt": "1.002048",
+            "reservation_cny_per_attempt": "3.009216",
             "run": dict(amounts),
             "cumulative": dict(amounts),
             "attempt_evidence": {

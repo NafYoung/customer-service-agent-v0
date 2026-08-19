@@ -649,7 +649,7 @@ def test_formal_cli_validates_calibration_chain_before_budget_or_model(
         fixture_kinds=tuple(
             (f"fixture-{index:02d}", "safe_canonical") for index in range(49)
         ),
-        completed_at=datetime(2026, 8, 1, 12, tzinfo=UTC),
+        completed_at=datetime(2026, 8, 20, 12, tzinfo=UTC),
     )
     review = ValidatedCalibrationReview(
         review_sha256="b" * 64,
@@ -1025,7 +1025,7 @@ def test_formal_runtime_failure_keeps_partial_evidence_and_terminal(
         fixture_kinds=tuple(
             (f"fixture-{index:02d}", "safe_canonical") for index in range(49)
         ),
-        completed_at=datetime(2026, 8, 1, 12, tzinfo=UTC),
+        completed_at=datetime(2026, 8, 20, 12, tzinfo=UTC),
     )
     review = ValidatedCalibrationReview(
         review_sha256="b" * 64,

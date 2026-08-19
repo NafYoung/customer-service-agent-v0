@@ -6,7 +6,7 @@ import pytest
 
 from evals.paid_attempt_binding import require_paid_attempt_bindings
 
-VALID_UNTIL = datetime(2026, 8, 6, 17, 20, 0, tzinfo=UTC)
+VALID_UNTIL = datetime(2026, 8, 26, 3, 15, 0, tzinfo=UTC)
 
 
 def _call(

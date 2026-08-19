@@ -40,7 +40,7 @@ from evals.readonly_reporting import (
 
 RUN_ID = "eval-20260729-diagnostic-evidence"
 REQUESTED_MODEL = "deepseek-v4-flash"
-STARTED = datetime(2026, 8, 1, 12, tzinfo=UTC)
+STARTED = datetime(2026, 8, 20, 12, tzinfo=UTC)
 COMPLETED = STARTED + timedelta(minutes=5)
 USAGE = {
     "prompt_tokens": 8,
@@ -98,7 +98,7 @@ def _success_call(
     return ModelCallEvidence(
         sequence=sequence,
         status="success",
-        started_at="2026-08-01T12:00:00+00:00",
+        started_at="2026-08-20T12:00:00+00:00",
         latency_ms=1,
         message_count=2,
         tool_contract_count=6,
@@ -121,7 +121,7 @@ def _error_call(
     return ModelCallEvidence(
         sequence=sequence,
         status="error",
-        started_at="2026-08-01T12:00:00+00:00",
+        started_at="2026-08-20T12:00:00+00:00",
         latency_ms=1,
         message_count=2,
         tool_contract_count=6,
@@ -162,8 +162,8 @@ def _result(
         case_run_id=case_run_id,
         input_sha256="0" * 64,
         passed=not failed,
-        started_at="2026-08-01T12:00:00+00:00",
-        completed_at="2026-08-01T12:00:01+00:00",
+        started_at="2026-08-20T12:00:00+00:00",
+        completed_at="2026-08-20T12:00:01+00:00",
         duration_ms=1,
         checks=[check.message for check in checks if check.passed],
         failures=[check.message for check in checks if not check.passed],
@@ -330,12 +330,12 @@ def test_paid_budget_identity_cannot_start_before_price_window() -> None:
     ("identity_started_at", "identity_completed_at"),
     [
         (
-            "2026-08-01T09:00:00+00:00",
-            "2026-08-01T11:59:59+00:00",
+            "2026-08-20T09:00:00+00:00",
+            "2026-08-20T11:59:59+00:00",
         ),
         (
-            "2026-08-01T12:00:00+00:00",
-            "2026-08-01T12:05:01+00:00",
+            "2026-08-20T12:00:00+00:00",
+            "2026-08-20T12:05:01+00:00",
         ),
     ],
 )
@@ -689,8 +689,11 @@ def _attack_success_without_settled(
     budget: dict,
 ) -> None:
     reservation = budget["reservation_cny_per_attempt"]
-    count = budget["run"]["attempt_count"]
-    committed = Decimal(reservation) * count
+    # 新费率下 10 次全量预留会超过 ¥18 执行上限；真实账本最多能保留
+    # floor(18/reservation) 次不确定预留。伪造预算只保留这个子集并保持
+    # 总额与桶证据对账一致，剩余成功调用缺 settled 证据，由绑定检查拒绝。
+    kept = int(Decimal("18") // Decimal(reservation))
+    committed = Decimal(reservation) * kept
     bucket = {
         "logical_call_sha256": "a" * 64,
         "status": "uncertain",
@@ -698,8 +701,8 @@ def _attack_success_without_settled(
         "reserved_cny": reservation,
         "known_cost_cny": None,
         "error_code": "MODEL_TRANSPORT_ERROR",
-        "completed_at": "2026-08-01T12:00:01+00:00",
-        "count": count,
+        "completed_at": "2026-08-20T12:00:01+00:00",
+        "count": kept,
     }
     for scope in ("run", "cumulative"):
         budget[scope].update(
@@ -710,8 +713,9 @@ def _attack_success_without_settled(
                     Decimal("18") - committed,
                     "f",
                 ),
+                "attempt_count": kept,
                 "reserved_count": 0,
-                "uncertain_count": count,
+                "uncertain_count": kept,
             }
         )
         budget["attempt_evidence"][scope] = [deepcopy(bucket)]
@@ -749,7 +753,7 @@ def _attack_extra_uncertain(
         "reserved_cny": reservation,
         "known_cost_cny": None,
         "error_code": "MODEL_TRANSPORT_ERROR",
-        "completed_at": "2026-08-01T12:00:01+00:00",
+        "completed_at": "2026-08-20T12:00:01+00:00",
         "count": 1,
     }
     for scope in ("run", "cumulative"):

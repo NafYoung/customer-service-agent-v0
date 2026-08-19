@@ -24,7 +24,7 @@ from app.tools.contracts import get_read_only_tool_contracts
 
 ROOT = Path(__file__).resolve().parents[1]
 PRICE_SNAPSHOT_PATH = (
-    ROOT / "pricing" / "deepseek-v4-flash-2026-07-30.json"
+    ROOT / "pricing" / "deepseek-v4-flash-2026-08-19.json"
 )
 
 
@@ -46,7 +46,7 @@ def _budget_guard(
         price_snapshot=snapshot,
         model="deepseek-v4-flash",
         max_output_tokens=1024,
-        now=datetime(2026, 8, 1, 12, tzinfo=UTC),
+        now=datetime(2026, 8, 20, 12, tzinfo=UTC),
     )
 
 
@@ -371,7 +371,7 @@ def test_budget_guard_fails_closed_on_first_transport_error(tmp_path):
     assert call_count == 1
     assert report["attempt_count"] == 1
     assert report["uncertain_count"] == 1
-    assert report["committed_cny"] == "1.002048"
+    assert report["committed_cny"] == "3.009216"
     assert report["settled_cny"] == "0"
 
 
@@ -428,7 +428,7 @@ def test_budget_guard_reserves_every_retry_and_settles_success(tmp_path):
     assert call_count == 2
     assert report["run"]["attempt_count"] == 2
     assert report["run"]["uncertain_count"] == 1
-    assert report["run"]["settled_cny"] == "0.0012"
+    assert report["run"]["settled_cny"] == "0.0039"
     assert turn.logical_call_sha256 is not None
     assert len(turn.logical_call_sha256) == 64
     assert {
@@ -448,7 +448,7 @@ def test_budget_guard_blocks_retry_before_second_http_attempt(tmp_path):
     guard = _budget_guard(
         tmp_path,
         run_id="eval-budget-block-0001",
-        execution_limit_cny="1.002048",
+        execution_limit_cny="3.009216",
     )
     client = OpenAICompatibleChatClient(
         api_key="fixture-key",
@@ -555,7 +555,7 @@ def test_budget_guard_retains_malformed_success_reservation(tmp_path):
     report = guard.snapshot()["run"]
     assert report["attempt_count"] == 1
     assert report["uncertain_count"] == 1
-    assert report["committed_cny"] == "1.002048"
+    assert report["committed_cny"] == "3.009216"
 
 
 def test_malformed_success_crossing_price_window_reports_expiry_first(
@@ -614,7 +614,7 @@ def test_malformed_success_crossing_price_window_reports_expiry_first(
         "logical_call_sha256": bucket["logical_call_sha256"],
         "status": "uncertain",
         "settlement_mode": None,
-        "reserved_cny": "1.002048",
+        "reserved_cny": "3.009216",
         "known_cost_cny": None,
         "error_code": "MODEL_PRICE_EXPIRED",
         "completed_at": bucket["completed_at"],

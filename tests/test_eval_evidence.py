@@ -157,7 +157,7 @@ def test_public_model_call_schema_rejects_provider_request_identity() -> None:
         ModelCallEvidence(
             sequence=1,
             status="success",
-            started_at="2026-08-01T12:00:00+00:00",
+            started_at="2026-08-20T12:00:00+00:00",
             latency_ms=1,
             message_count=2,
             tool_contract_count=0,
@@ -182,7 +182,7 @@ def test_public_model_call_schema_rejects_provider_response_identity() -> None:
         ModelCallEvidence(
             sequence=1,
             status="success",
-            started_at="2026-08-01T12:00:00+00:00",
+            started_at="2026-08-20T12:00:00+00:00",
             latency_ms=1,
             message_count=2,
             tool_contract_count=0,
