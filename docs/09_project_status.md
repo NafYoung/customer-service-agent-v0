@@ -36,6 +36,7 @@ holdout 失败后加固链：`9337e55`（prompt/回归）→ `84eca79` / `69030d
 | 转人工闭环（demo 宿主） | **updated** | reject / 会话限额 / live 预算耗尽 → 落 `SupportTicket` 并回传工单号（按原因去重）；Agent 保持精确 9 工具；live 预算 run_id 派生修复 |
 | 护栏分层（live demo） | **updated** | 每会话 attempt 软闸门（触发转人工）+ 模型路由预留（query/action 双模型，留空回退）；全局 ¥20/¥18 硬上限不变 |
 | 决策审计快照 | **updated** | 每次执行在同一事务写 `DecisionSnapshot`（规则版本/政策版本/资格输入/确认来源/结果；不含凭证）；幂等重放不重复写 |
+| 幂等与状态机硬闸 | **updated** | 退货/换货执行增加「仅已签收可发起」硬闸；退货/换货进行中申请增加 SQLite 部分唯一索引兜底；`DecisionSnapshot.approval_id` 唯一；并发执行冲突映射 409 |
 | 原子命题语义门 | **verified-current** | `atomic-claims-v4`；校准 **#4** @ `8884b1a` 49/49 |
 | DeepSeek 语义校准 | **passed** | #4：`eval-20260731t080100z-4d65de51789c` **49/49**；review GO |
 | 公开回归 7×4（holdout 绑定历史） | historical | `eval-20260731t080946z-dd64553ceb3e` **28/28** @ `8884b1a` |

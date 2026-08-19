@@ -16,7 +16,10 @@ from app.domain.rules import (
     check_exchange_eligibility,
     check_return_eligibility,
 )
-from app.domain.state_machine import assert_order_transition
+from app.domain.state_machine import (
+    assert_order_transition,
+    assert_request_allowed_from_order_status,
+)
 from app.enums import (
     ActionType,
     ApprovalStatus,
@@ -777,6 +780,7 @@ class ActionService:
             }
 
         elif action_type == ActionType.RETURN_ITEM:
+            assert_request_allowed_from_order_status(OrderStatus(order.status))
             return_request = ReturnRequest(
                 id=f"RET-{uuid.uuid4().hex[:12].upper()}",
                 customer_id=customer_id,
@@ -806,6 +810,7 @@ class ActionService:
             }
 
         elif action_type == ActionType.EXCHANGE_ITEM:
+            assert_request_allowed_from_order_status(OrderStatus(order.status))
             item = self._find_item(order.items, approval.order_item_id)
             target_size = prepared_request.target_size
             inventory = session.scalar(
@@ -867,7 +872,15 @@ class ActionService:
         approval.status = ApprovalStatus.EXECUTED.value
         approval.executed_at = now
         session.add(execution)
-        session.flush()
+        try:
+            session.flush()
+        except IntegrityError as exc:
+            # SQLite 无行锁：unique(approval_id) 是并发写穿透业务检查时的兜底。
+            raise ConflictError(
+                "CONCURRENT_EXECUTION_CONFLICT",
+                "该审批已由另一并发执行写入，请重放查询结果。",
+                status_code=409,
+            ) from exc
 
         snapshot = DecisionSnapshot(
             id=f"DEC-{uuid.uuid4().hex[:12].upper()}",

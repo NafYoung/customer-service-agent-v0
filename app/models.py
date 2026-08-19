@@ -8,10 +8,12 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -189,7 +191,7 @@ class DecisionSnapshot(Base):
 
     id: Mapped[str] = mapped_column(String(50), primary_key=True)
     customer_id: Mapped[str] = mapped_column(ForeignKey("customers.id"), index=True, nullable=False)
-    approval_id: Mapped[str] = mapped_column(String(50), index=True, nullable=False)
+    approval_id: Mapped[str] = mapped_column(String(50), index=True, unique=True, nullable=False)
     execution_id: Mapped[str | None] = mapped_column(String(50), nullable=True)
     confirmation_event_id: Mapped[str | None] = mapped_column(String(50), nullable=True)
     order_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
@@ -205,6 +207,17 @@ class DecisionSnapshot(Base):
 
 class ReturnRequest(Base):
     __tablename__ = "return_requests"
+    __table_args__ = (
+        # 兜底并发：同一商品只允许一条进行中的退货申请。
+        Index(
+            "uq_return_active_item",
+            "order_item_id",
+            unique=True,
+            sqlite_where=text(
+                "status IN ('REQUESTED', 'APPROVED', 'ITEM_RECEIVED')"
+            ),
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(50), primary_key=True)
     customer_id: Mapped[str] = mapped_column(ForeignKey("customers.id"), index=True, nullable=False)
@@ -218,6 +231,17 @@ class ReturnRequest(Base):
 
 class ExchangeRequest(Base):
     __tablename__ = "exchange_requests"
+    __table_args__ = (
+        # 兜底并发：同一商品只允许一条进行中的换货申请。
+        Index(
+            "uq_exchange_active_item",
+            "order_item_id",
+            unique=True,
+            sqlite_where=text(
+                "status IN ('REQUESTED', 'APPROVED', 'ITEM_RECEIVED')"
+            ),
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(50), primary_key=True)
     customer_id: Mapped[str] = mapped_column(ForeignKey("customers.id"), index=True, nullable=False)
