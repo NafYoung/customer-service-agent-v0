@@ -35,10 +35,12 @@
 | [BFCL](https://huggingface.co/datasets/gorilla-llm/Berkeley-Function-Calling-Leaderboard) | 缺参数、无相关工具、多轮和不可执行调用要分开测 | 保留现有 schema 失败关闭，并新增“不相关但允许的读工具”与缺失工具场景 |
 | [CRMArena](https://huggingface.co/datasets/Salesforce/CRMArena) | CRM 场景覆盖订单、case、知识和多轮交互 | 只借鉴覆盖维度；其 CC-BY-NC 数据不进入本项目训练集、公开测试集或商业内测数据 |
 
-X/Twitter 的一手信号用于风险校准，不作为效果证明：tau-bench 作者强调
-“达成目标”不能覆盖未获用户授权的中间操作；Klarna 等企业公开的自动化率和
-处理时长属于厂商自报，内测只能把它们转译为待观测指标，不能预先写成 RIVET
-的能力数字。
+X/Twitter 的一手信号用于风险和指标校准，不作为效果证明：
+[Cleanlab 的公开讨论](https://x.com/CleanlabAI/status/1996268802863206591)
+将多轮工具流程的失败归因于单次错误模型输出，支持在模型与写操作之间
+放置确定性闸门；[Klarna 相关公开帖子](https://x.com/sherwinwu/status/1762693893097972202)
+中的自动化率、处理时长和重复咨询降幅是厂商口径，内测只把它们转译为
+待观测指标，不预先写成 RIVET 的能力数字。
 
 ## 3. 首个实现切片
 
@@ -71,6 +73,9 @@ X/Twitter 的一手信号用于风险校准，不作为效果证明：tau-bench 
   模型自由文本不能创建工单。
 - 客户主动转人工走独立宿主端点，原因是封闭枚举，客户、会话和运行来源由
   宿主注入。
+- 接管在同一事务中取消该客户与会话下所有 `PREPARED`/`PRESENTED`/
+  `CONFIRMED` Approval；之后无论宿主还是旧内部 API，`prepare`/`present`/
+  `confirm`/`execute` 都返回 `CONVERSATION_MANUAL`。
 - 首版不自动从 manual 恢复 agent-owned；工单即使被标记 resolved，也需后续
   受信员工流程显式恢复。
 
@@ -97,10 +102,25 @@ X/Twitter 的一手信号用于风险校准，不作为效果证明：tau-bench 
 - 在 SQLite 上宣称并发库存安全；
 - 重跑 retired holdout v1，或绕过价格、预算、语义校准和独立审查门。
 
-## 6. 当前付费模型阻断
+## 6. 受控 live 准入
 
-DeepSeek 官方在 2026-08-16 起把 `deepseek-v4-flash` 调整为 USD 计价并按 UTC
-峰谷分档。当前仓库只支持单一 CNY 三费率快照，因此不能只延长旧 JSON 的
-`valid_until`。在预算模型支持“官方 USD 峰值费率 + 明示的保守换算上界”并
-完成同提交审查前，真实模型入口继续失败关闭；本切片只使用离线 scripted
-model 验证宿主安全合同。
+- `ENABLE_LIVE_PREPARATION_AGENT` 默认为 `false`；只有显式开启并提供
+  `DEEPSEEK_API_KEY` 时，宿主才构建真实模型客户端。
+- v2 价格政策固定官方峰时 USD 费率，用 `10 CNY/USD` 计算内部人民币
+  预算上界；原始文件 SHA-256、官方费率下限、模型和端点同时校验。
+- Host 和 Eval 固定共用项目根下的一个私有 SQLite 账本；环境变量不能为
+  Host 另开额度。账本的内部硬上限为 `¥20`，自动运行准入上限为 `¥18`。
+- 当前政策有效至 `2026-09-07T17:40:23Z`。过期、文件漂移、配置不符、
+  账本异常或下一次最坏预留超额时，都在 provider HTTP 之前失败关闭。
+- 本次交付没有读取 `.env` 或真实私有账本，也没有发起真实 DeepSeek 请求；
+  完成的是可离线验证、默认无网络出口的受控准入通道。
+
+这个人民币数字是本项目账本的保守内部上界，不是供应商最终账单，也不能
+限制其他程序使用同一 API Key。
+
+## 7. 本切片后的内测门
+
+真实业务内测不以“代替人工”为预设结论。先在合成、影子和有限员工流量中
+分别观测：无人为介入完成率、误执行/越权写入数、人工接管率、重复咨询率、P50/P95
+处理时长和人工复核工时。只有安全硬门为零违规、业务指标连续达标后，才能逐步
+扩大自动化范围。

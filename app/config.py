@@ -45,6 +45,10 @@ class Settings:
         os.getenv("DEEPSEEK_TEMPERATURE", "0")
     )
     deepseek_max_retries: int = int(os.getenv("DEEPSEEK_MAX_RETRIES", "2"))
+    enable_live_preparation_agent: bool = _env_bool(
+        "ENABLE_LIVE_PREPARATION_AGENT",
+        False,
+    )
     agent_max_tool_rounds: int = int(os.getenv("AGENT_MAX_TOOL_ROUNDS", "4"))
     agent_max_tool_calls: int = int(os.getenv("AGENT_MAX_TOOL_CALLS", "12"))
 

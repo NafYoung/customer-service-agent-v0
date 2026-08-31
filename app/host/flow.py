@@ -7,6 +7,7 @@ from datetime import datetime
 from pydantic import Field
 from sqlalchemy.orm import Session
 
+from app.agent.deepseek_budget import BudgetError
 from app.agent.openai_compatible import ChatModel, ModelAdapterError
 from app.agent.preparation import PreparationAgent
 from app.agent.readonly import AgentRunError, ToolTrace
@@ -70,11 +71,17 @@ class HostPilotFlow:
         *,
         tools: CustomerServiceTools,
         settings: Settings,
-        preparation_model_factory: Callable[[], ChatModel] | None,
+        preparation_model_factory: Callable[[str], ChatModel] | None,
     ):
         self._tools = tools
         self._settings = settings
         self._preparation_model_factory = preparation_model_factory
+
+    @property
+    def has_model_runtime(self) -> bool:
+        """Whether this flow can construct a preparation model for a turn."""
+
+        return self._preparation_model_factory is not None
 
     @staticmethod
     def _server_run_id() -> str:
@@ -213,47 +220,54 @@ class HostPilotFlow:
         )
         existing_handoff = None
         handoff_request = None
+        model: ChatModel | None = None
         try:
             with session.begin_nested() as host_run:
-                agent = PreparationAgent(
-                    model=self._preparation_model_factory(),
-                    tools=self._tools,
-                    max_tool_rounds=self._settings.agent_max_tool_rounds,
-                    max_tool_calls=self._settings.agent_max_tool_calls,
-                )
-                result = agent.run(
-                    session,
-                    user_text=text,
-                    context=context,
-                )
-
-                # A trusted handoff or deterministic human-review result wins
-                # over every model-side read or proposal from this run. Roll
-                # back the whole Agent savepoint before returning MANUAL so a
-                # mixed trace cannot leave an Approval behind.
-                existing_handoff = self._current_manual_handoff(
-                    session,
-                    customer_id=customer_id,
-                    conversation_id=conversation_id,
-                )
-                if existing_handoff is None:
-                    existing_handoff = (
-                        self._manual_handoff_after_agent_ownership_check(
-                            session,
-                            customer_id=customer_id,
-                            conversation_id=conversation_id,
-                        )
+                try:
+                    model = self._preparation_model_factory(server_run_id)
+                    agent = PreparationAgent(
+                        model=model,
+                        tools=self._tools,
+                        max_tool_rounds=self._settings.agent_max_tool_rounds,
+                        max_tool_calls=self._settings.agent_max_tool_calls,
                     )
-                handoff_request = self._human_review_handoff(result.tool_trace)
-                if existing_handoff is not None or handoff_request is not None:
-                    host_run.rollback()
+                    result = agent.run(
+                        session,
+                        user_text=text,
+                        context=context,
+                    )
+
+                    # A trusted handoff or deterministic human-review result wins
+                    # over every model-side read or proposal from this run. Roll
+                    # back the whole Agent savepoint before returning MANUAL so a
+                    # mixed trace cannot leave an Approval behind.
+                    existing_handoff = self._current_manual_handoff(
+                        session,
+                        customer_id=customer_id,
+                        conversation_id=conversation_id,
+                    )
+                    if existing_handoff is None:
+                        existing_handoff = (
+                            self._manual_handoff_after_agent_ownership_check(
+                                session,
+                                customer_id=customer_id,
+                                conversation_id=conversation_id,
+                            )
+                        )
+                    handoff_request = self._human_review_handoff(result.tool_trace)
+                    if existing_handoff is not None or handoff_request is not None:
+                        host_run.rollback()
+                finally:
+                    close = getattr(model, "close", None)
+                    if callable(close):
+                        close()
         except AgentRunError as exc:
             raise ServiceError(
                 "AGENT_RUN_REJECTED",
                 "本轮自动处理未完成，请稍后重试或申请人工协助。",
                 status_code=422,
             ) from exc
-        except ModelAdapterError as exc:
+        except (BudgetError, ModelAdapterError, ValueError) as exc:
             raise ServiceError(
                 "AGENT_RUNTIME_FAILED",
                 "自动处理服务暂时不可用，请稍后重试或申请人工协助。",

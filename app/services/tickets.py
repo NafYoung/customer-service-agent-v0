@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import Select, select
+from sqlalchemy import Select, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.enums import HandoffReason, TicketStatus
+from app.enums import ApprovalStatus, HandoffReason, TicketStatus
 from app.errors import ConflictError, ServiceError, ValidationError
-from app.models import SupportTicket
+from app.models import Approval, SupportTicket
 from app.schemas import (
     ManualHandoffRead,
     ManualHandoffRequest,
@@ -216,6 +216,22 @@ class TicketService:
             origin_server_run_id,
             field_name="运行标识",
             max_length=80,
+        )
+
+        session.execute(
+            update(Approval)
+            .where(
+                Approval.customer_id == customer_id,
+                Approval.conversation_id == conversation_id,
+                Approval.status.in_(
+                    {
+                        ApprovalStatus.PREPARED.value,
+                        ApprovalStatus.PRESENTED.value,
+                        ApprovalStatus.CONFIRMED.value,
+                    }
+                ),
+            )
+            .values(status=ApprovalStatus.CANCELLED.value)
         )
 
         existing = session.scalar(

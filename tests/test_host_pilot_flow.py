@@ -479,6 +479,73 @@ def test_explicit_handoff_is_idempotent_and_internal_fields_are_forbidden():
     assert factory.calls == 0
 
 
+def test_manual_handoff_blocks_and_cancels_an_existing_approval():
+    model = ScriptedModel(
+        _tool_turn(
+            "prepare_cancel_order",
+            '{"order_id":"ORD-1001","user_note":"不再需要"}',
+            call_id="call-before-manual-handoff",
+        ),
+        _final_turn("已生成待确认操作。"),
+    )
+    app = _build_app(QueueModelFactory(model))
+
+    with TestClient(app) as client:
+        token = _authenticate(client)
+        headers = _host_headers(token, conversation_id="pilot-handoff-cancels-card")
+        prepared = client.post(
+            "/v1/host/messages",
+            headers=headers,
+            json={"text": "请取消 ORD-1001"},
+        )
+        assert prepared.status_code == 200, prepared.text
+        approval_id = prepared.json()["pending_approval_id"]
+
+        handed_off = client.post(
+            "/v1/host/handoffs",
+            headers=headers,
+            json={
+                "order_id": "ORD-1001",
+                "transfer_reason": "AUTOMATION_UNSAFE",
+                "summary": "客户要求人工继续处理。",
+                "priority": "NORMAL",
+            },
+        )
+        assert handed_off.status_code == 200, handed_off.text
+
+        presented = client.post(
+            f"/v1/host/approvals/{approval_id}/present",
+            headers=headers,
+        )
+        confirmed = client.post(
+            f"/v1/host/approvals/{approval_id}/confirm",
+            headers=headers,
+        )
+        legacy_prepare = client.post(
+            "/v1/actions/prepare",
+            headers={**headers, "X-Run-ID": "manual-mode-legacy-prepare"},
+            json={
+                "action_type": "CANCEL_ORDER",
+                "order_id": "ORD-1001",
+            },
+        )
+        assert presented.status_code == 409
+        assert presented.json()["error"]["code"] == "CONVERSATION_MANUAL"
+        assert confirmed.status_code == 409
+        assert confirmed.json()["error"]["code"] == "CONVERSATION_MANUAL"
+        assert legacy_prepare.status_code == 409
+        assert legacy_prepare.json()["error"]["code"] == "CONVERSATION_MANUAL"
+
+        with app.state.database.session() as session:
+            approval = session.get(Approval, approval_id)
+            order = session.get(Order, "ORD-1001")
+            assert approval is not None and approval.status == "CANCELLED"
+            assert order is not None and order.status == "PAID"
+            assert session.scalar(select(func.count()).select_from(Approval)) == 1
+            assert session.scalar(select(func.count()).select_from(ConfirmationEvent)) == 0
+            assert session.scalar(select(func.count()).select_from(ActionExecution)) == 0
+
+
 def test_host_routes_require_trusted_host_and_runtime_fails_closed():
     app = _build_app()
     with TestClient(app) as client:

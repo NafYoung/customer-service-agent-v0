@@ -1,8 +1,14 @@
 # RIVET Customer Service Agent v0
 
-一个面向求职作品的鞋服电商售后项目。当前版本是**确定性交易后端原型 + 分阶段有界单 Agent 核心**，已经具备 DeepSeek 的 OpenAI-compatible 适配，但不是已经闭合全部安全边界的端到端客服 Agent。
+一个面向求职作品的鞋服电商售后项目。当前版本是**确定性交易后端原型 +
+受控业务内测宿主 + 分阶段有界单 Agent**。它已经串通合成环境中的消息、
+待确认卡、可信按钮执行和人工接管，也提供默认关闭的 DeepSeek live 入口；
+它仍不是生产系统，也没有证据证明可以无人值守替代真人客服。
 
-它把语言理解与交易执行分开：只读 Agent 仍固定使用 6 个查询与资格工具；独立 Preparation Agent 核心可使用这 6 个工具和 3 个明确的 `prepare_*` 工具，但不能认证、转人工、展示、确认或执行。公开宿主 UI 尚未接入该核心。当前保存的是用于开发和评测的工具调试轨迹，不是安全审计日志。
+它把语言理解与交易执行分开：Preparation Agent 只能使用 6 个查询/资格工具
+和 3 个明确的 `prepare_*` 工具；认证、人工接管、展示、确认和执行都在可信
+宿主与确定性服务中完成。当前仍没有 Web 聊天界面，保存的工具轨迹是开发和
+评测证据，不是生产安全审计日志。
 
 所有品牌、客户、订单、物流和政策均为合成数据，不包含真实公司或客户资料。
 
@@ -26,14 +32,19 @@
 - 独立 Preparation Agent 核心：精确 9 工具白名单，每次运行最多创建
   1 个 Approval，来源绑定服务端运行与结构化 tool call；
 - prepare 成功后禁止继续调用工具；违规时整个 Agent 事务回滚；
+- 受信宿主消息入口、服务端 canonical card、空 body 按钮确认和幂等执行；
+- 持久 manual mode：转人工会取消同会话未完成 Approval，后续自动消息、
+  prepare、展示、确认和执行均失败关闭；
+- 默认关闭的 live Preparation Agent；显式启用时强制使用当前已审查价格文件、
+  官方端点和与 Eval 共用的全局持久预算账本；
 - 工具名白名单、参数二次校验、敏感上下文隔离，以及最多 4 轮/12 次工具调用；
 - 10 个不向模型泄露期望结果的只读自然语言 Agent Eval 案例；
 - 真实 Prompt A/B：本次同一 harness 的单次观察中，严格口径从 7/10 提升到 10/10，工具调用从 25 次降到 12 次；两组各 10 条案例均未新增审批、确认、执行或工单记录。
 - 可独立验证的 Eval bundle：运行/源码/Prompt/工具/政策/scorer 指纹、
   脱敏逐 trial 轨迹、完整业务状态哈希、Token、延迟、费用和 SHA-256
   完整性索引；
-- DeepSeek 每次 HTTP attempt 前的持久预算闸门：¥20 硬上限、¥18 自动执行
-  上限、异常请求保留最坏预留；
+- DeepSeek 每次 HTTP attempt 前的持久预算闸门：项目共享账本的¥20
+  内部硬上限、¥18 自动运行准入上限、异常请求保留最坏预留；
 - 开发集正式 `10 cases × 4 trials`：40/40，`pass^4=1.00`，安全断言
   40/40，业务状态变化 0；
 - 只读 holdout v1 已按预声明协议唯一运行并如实退役：46/80，
@@ -56,7 +67,7 @@
   holdout v2 唯一正式运行；
 - 向量或混合检索；
 - Web 聊天界面；
-- Preparation Agent 与规范化确认卡之间的宿主控制流；
+- 当前提交上的真实 DeepSeek 小流量 smoke test 与业务指标基线；
 - PostgreSQL 高并发库存控制；
 - 完整安全审计与生产身份系统；
 - 真实电商、ERP、物流和支付接口。
@@ -68,7 +79,7 @@ flowchart TD
     U[Customer] --> H[Host application / future chat UI]
     H --> AUTH[Authentication outside Agent schema]
     H --> RO[Read-only Agent: 6 tools]
-    H -. host integration pending .-> PA[Preparation Agent: exact 9 tools]
+    H --> PA[Preparation Agent: exact 9 tools]
     RO --> LLM[DeepSeek OpenAI-compatible API]
     PA --> LLM
     RO --> T[Read and eligibility tools]
@@ -77,7 +88,7 @@ flowchart TD
     T --> ORD[Order and shipment service]
     T --> POL[Versioned policy search]
     T --> RULES[Deterministic eligibility rules]
-    H -. future .-> HANDOFF[Human handoff flow]
+    H --> HANDOFF[Persistent manual handoff]
     PREP --> CONF[Trusted presentation and confirmation]
     CONF --> ACT[Deterministic execution]
     AUTH --> DB[(SQLite / future PostgreSQL)]
@@ -100,14 +111,39 @@ python -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements-dev.txt
 test -f .env || cp .env.example .env
-# Set HOST_CONFIRMATION_TOKEN. Add DEEPSEEK_API_KEY only for the live Agent Eval.
+# 默认不调用模型。先设置 HOST_CONFIRMATION_TOKEN。
+# 仅在受控 live 内测时，再设置 DEEPSEEK_API_KEY 和
+# ENABLE_LIVE_PREPARATION_AGENT=true。
 python -m uvicorn app.main:app --reload --env-file .env
 ```
+
+live 入口固定使用项目根目录下与 Eval 共用的私有预算账本，不能通过环境变量
+另开额度。当前 v2 价格策略有效至 `2026-09-07T17:40:23Z`；过期、文件身份
+变化、模型/端点不符或预算不足都会在 provider HTTP 前失败关闭。该账本按
+“官方峰时 USD 费率 × 10 CNY/USD”计算内部人民币上界，不等同于供应商最终
+账单，也不能约束其他程序对同一 API Key 的使用。
 
 打开：
 
 - API 文档：`http://127.0.0.1:8000/docs`
 - 健康检查：`http://127.0.0.1:8000/health`
+
+### 受控宿主合同
+
+受信宿主请求同时携带 `Authorization: Bearer <access_token>`、
+`X-Conversation-ID` 和 `X-Host-Confirmation-Token`：
+
+1. `POST /v1/host/messages`，body 只含 `{"text":"..."}`；返回安全提示、
+   `server_run_id` 以及可选 `pending_approval_id` 或 handoff。
+2. 有待确认操作时，`POST /v1/host/approvals/{id}/present`，请求体必须为空；
+   页面只渲染返回的 canonical card。
+3. 用户点击卡片按钮后，`POST /v1/host/approvals/{id}/confirm`，请求体仍为空；
+   服务端记录结构化确认并幂等执行。
+4. 客户要求人工时，`POST /v1/host/handoffs`；成功后同会话自动操作
+   永久失败关闭，直到后续受信员工流程显式恢复。
+
+完整的请求/响应 Schema 以 `/docs` 的 `trusted-host` 分组为准。默认未开启
+live runtime 时，消息入口返回 `AGENT_RUNTIME_UNAVAILABLE`，不会隐式连网。
 
 演示身份：
 
@@ -126,7 +162,7 @@ docker compose up --build
 
 P0 修改了 SQLite 表结构，而 SQLAlchemy `create_all()` 不会迁移已有表。若此前运行过旧版本，请先备份并重命名根目录的 `customer_service.db` 或 Docker 的 `data/`，再由当前版本创建新数据库；不要让有价值的数据依赖此原型迁移方式。
 
-## 一次完整取消流程
+## 底层内部兼容 API 的取消流程
 
 ### 1. 验证身份
 

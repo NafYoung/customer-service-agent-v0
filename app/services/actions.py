@@ -33,6 +33,7 @@ from app.models import (
     Inventory,
     OrderItem,
     ReturnRequest,
+    SupportTicket,
 )
 from app.schemas import (
     ConfirmActionRequest,
@@ -288,6 +289,11 @@ class ActionService:
         now: datetime | None = None,
     ) -> PrepareActionResponse:
         now = now or utcnow()
+        self._assert_conversation_agent_owned(
+            session,
+            customer_id=customer_id,
+            conversation_id=conversation_id,
+        )
         self._assert_origin_pair(
             origin_server_run_id=origin_server_run_id,
             origin_tool_call_id=origin_tool_call_id,
@@ -411,6 +417,27 @@ class ActionService:
         return self._prepare_response(approval)
 
     @staticmethod
+    def _assert_conversation_agent_owned(
+        session: Session,
+        *,
+        customer_id: str,
+        conversation_id: str,
+    ) -> None:
+        manual_ticket_id = session.scalar(
+            select(SupportTicket.id).where(
+                SupportTicket.customer_id == customer_id,
+                SupportTicket.conversation_id == conversation_id,
+                SupportTicket.transfer_reason.is_not(None),
+            ).limit(1)
+        )
+        if manual_ticket_id is not None:
+            raise ConflictError(
+                "CONVERSATION_MANUAL",
+                "该会话已转人工，不能继续执行自动操作。",
+                status_code=409,
+            )
+
+    @staticmethod
     def _owned_approval(
         session: Session,
         *,
@@ -496,6 +523,11 @@ class ActionService:
         now: datetime | None = None,
     ) -> PresentApprovalResponse:
         now = now or utcnow()
+        self._assert_conversation_agent_owned(
+            session,
+            customer_id=customer_id,
+            conversation_id=conversation_id,
+        )
         approval = self._owned_approval(
             session,
             customer_id=customer_id,
@@ -604,6 +636,11 @@ class ActionService:
         now: datetime | None = None,
     ) -> ConfirmationRecorded:
         now = now or utcnow()
+        self._assert_conversation_agent_owned(
+            session,
+            customer_id=customer_id,
+            conversation_id=conversation_id,
+        )
         approval = self._owned_approval(
             session,
             customer_id=customer_id,
@@ -723,6 +760,11 @@ class ActionService:
         now: datetime | None = None,
     ) -> ExecuteActionResponse:
         now = now or utcnow()
+        self._assert_conversation_agent_owned(
+            session,
+            customer_id=customer_id,
+            conversation_id=conversation_id,
+        )
         approval = self._owned_approval(
             session,
             customer_id=customer_id,

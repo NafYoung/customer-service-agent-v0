@@ -95,6 +95,7 @@ def test_paid_purpose_allowlist_is_closed_and_canonical() -> None:
     assert PAID_PURPOSES == {
         "diagnostic",
         "dev_repeat",
+        "host_pilot",
         "holdout_formal",
         "semantic_judge_calibration",
     }

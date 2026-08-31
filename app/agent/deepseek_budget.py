@@ -24,6 +24,7 @@ PAID_PURPOSES = frozenset(
     {
         "diagnostic",
         "dev_repeat",
+        "host_pilot",
         "holdout_formal",
         "semantic_judge_calibration",
     }
@@ -32,6 +33,7 @@ PRICE_WINDOW_SAFETY_MARGIN_SECONDS = 2.0
 PaidPurpose = Literal[
     "diagnostic",
     "dev_repeat",
+    "host_pilot",
     "holdout_formal",
     "semantic_judge_calibration",
 ]
@@ -76,9 +78,71 @@ class PriceRates(_StrictModel):
         return value
 
 
+class UsdPriceRates(_StrictModel):
+    """Official provider USD rates, before conversion into the CNY ledger."""
+
+    prompt_cache_hit: str
+    prompt_cache_miss: str
+    completion: str
+
+    @field_validator("*")
+    @classmethod
+    def validate_decimal_rate(cls, value: str) -> str:
+        amount = _parse_decimal(value, field_name="USD price rate")
+        if amount <= 0:
+            raise ValueError("USD price rates must be positive")
+        return value
+
+
 class ModelLimits(_StrictModel):
     context_tokens: int = Field(ge=1)
     max_output_tokens: int = Field(ge=1)
+
+
+_WEEKDAY_INDEX = {
+    "monday": 0,
+    "tuesday": 1,
+    "wednesday": 2,
+    "thursday": 3,
+    "friday": 4,
+    "saturday": 5,
+    "sunday": 6,
+}
+_UTC_TIME_PATTERN = re.compile(r"^(?:[01][0-9]|2[0-3]):[0-5][0-9]$")
+
+
+class ProviderPeakWindowUtc(_StrictModel):
+    """One provider-published peak-rate window expressed in UTC."""
+
+    days: str
+    start: str
+    end: str
+
+    @field_validator("days")
+    @classmethod
+    def validate_day_range(cls, value: str) -> str:
+        start_day, separator, end_day = value.partition("-")
+        if (
+            not separator
+            or start_day not in _WEEKDAY_INDEX
+            or end_day not in _WEEKDAY_INDEX
+            or _WEEKDAY_INDEX[start_day] > _WEEKDAY_INDEX[end_day]
+        ):
+            raise ValueError("Provider peak window days must be an ordered weekday range")
+        return value
+
+    @field_validator("start", "end")
+    @classmethod
+    def validate_utc_time(cls, value: str) -> str:
+        if not _UTC_TIME_PATTERN.fullmatch(value):
+            raise ValueError("Provider peak window times must use HH:MM UTC")
+        return value
+
+    @model_validator(mode="after")
+    def validate_time_range(self) -> ProviderPeakWindowUtc:
+        if self.start >= self.end:
+            raise ValueError("Provider peak window start must precede end")
+        return self
 
 
 class DeepSeekPriceSnapshot(_StrictModel):
@@ -150,6 +214,59 @@ class DeepSeekPriceSnapshot(_StrictModel):
             raise BudgetPriceWindowError(
                 "Pricing snapshot validity is too short for a paid request."
             )
+
+
+class DeepSeekHostPriceSnapshot(DeepSeekPriceSnapshot):
+    """Host-pilot policy that preserves a conservative CNY ledger upper bound."""
+
+    schema_version: Literal["2.0"]  # type: ignore[assignment]
+    billing_currency: Literal["USD"]
+    pricing_tier_policy: Literal["always_peak"]
+    peak_rates_usd: UsdPriceRates
+    cny_per_usd_upper_bound: str
+    provider_peak_windows_utc: list[ProviderPeakWindowUtc] = Field(min_length=1)
+
+    @field_validator("cny_per_usd_upper_bound")
+    @classmethod
+    def validate_cny_per_usd_upper_bound(cls, value: str) -> str:
+        upper_bound = _parse_decimal(value, field_name="CNY per USD upper bound")
+        if upper_bound < Decimal("10"):
+            raise ValueError(
+                "CNY per USD policy upper bound cannot be below the approved floor"
+            )
+        return value
+
+    @model_validator(mode="after")
+    def validate_derived_cny_rates(self) -> DeepSeekHostPriceSnapshot:
+        official_rate_floors = {
+            "prompt_cache_hit": Decimal("0.014"),
+            "prompt_cache_miss": Decimal("0.44"),
+            "completion": Decimal("1.32"),
+        }
+        upper_bound = _parse_decimal(
+            self.cny_per_usd_upper_bound,
+            field_name="CNY per USD upper bound",
+        )
+        for field in ("prompt_cache_hit", "prompt_cache_miss", "completion"):
+            official_usd_rate = _parse_decimal(
+                getattr(self.peak_rates_usd, field),
+                field_name=f"USD {field} rate",
+            )
+            if official_usd_rate < official_rate_floors[field]:
+                raise ValueError(
+                    "USD peak rates cannot be below the approved official floor"
+                )
+            expected_cny_rate = official_usd_rate * upper_bound
+            actual_cny_rate = _parse_decimal(
+                getattr(self.rates_cny, field),
+                field_name=f"CNY {field} rate",
+            )
+            if actual_cny_rate != expected_cny_rate:
+                raise ValueError(
+                    "CNY rates must exactly match USD peak rates derived with "
+                    "the FX upper bound"
+                )
+        return self
 
 
 @dataclass(frozen=True)
@@ -392,6 +509,21 @@ def load_price_snapshot(path: Path) -> DeepSeekPriceSnapshot:
     except ValueError as exc:
         raise BudgetInvariantError(
             "The versioned DeepSeek pricing snapshot is invalid."
+        ) from exc
+
+
+def load_host_price_snapshot(path: Path) -> DeepSeekHostPriceSnapshot:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise BudgetInvariantError(
+            "Unable to load the versioned host DeepSeek pricing snapshot."
+        ) from exc
+    try:
+        return DeepSeekHostPriceSnapshot.model_validate(payload)
+    except ValueError as exc:
+        raise BudgetInvariantError(
+            "The versioned host DeepSeek pricing snapshot is invalid."
         ) from exc
 
 
@@ -1318,6 +1450,14 @@ class DeepSeekBudgetGuard:
         minimum_price_validity_seconds: float = 0,
     ):
         canonical_purpose = require_paid_purpose(purpose)
+        is_host_price = isinstance(
+            price_snapshot,
+            DeepSeekHostPriceSnapshot,
+        )
+        if (canonical_purpose == "host_pilot") != is_host_price:
+            raise BudgetInvariantError(
+                "host_pilot purpose and host pricing policy must be used together."
+            )
         self._now_provider = now_provider or (lambda: datetime.now(UTC))
         self._minimum_price_validity_seconds = _require_nonnegative_seconds(
             minimum_price_validity_seconds,
@@ -1337,12 +1477,17 @@ class DeepSeekBudgetGuard:
             max_output_tokens=max_output_tokens,
         )
         self._closed = False
-        self._ledger.start_run(
-            run_id=run_id,
-            purpose=canonical_purpose,
-            price_snapshot=price_snapshot,
-            now=started_at,
-        )
+        try:
+            self._ledger.start_run(
+                run_id=run_id,
+                purpose=canonical_purpose,
+                price_snapshot=price_snapshot,
+                now=started_at,
+            )
+        except sqlite3.Error as exc:
+            raise BudgetInvariantError(
+                "Persistent budget ledger is unavailable."
+            ) from exc
 
     def bind_request_timeout(self, *, timeout_seconds: float) -> None:
         """Bind the provider's maximum request duration before any HTTP call."""
@@ -1382,14 +1527,19 @@ class DeepSeekBudgetGuard:
                 seconds=self._minimum_price_validity_seconds
             ),
         )
-        return self._ledger.reserve_attempt(
-            run_id=self._run_id,
-            logical_call_id=logical_call_id,
-            attempt_number=attempt_number,
-            model=self._model,
-            reserved_units=self._reservation_cost.units,
-            now=checked_at,
-        )
+        try:
+            return self._ledger.reserve_attempt(
+                run_id=self._run_id,
+                logical_call_id=logical_call_id,
+                attempt_number=attempt_number,
+                model=self._model,
+                reserved_units=self._reservation_cost.units,
+                now=checked_at,
+            )
+        except sqlite3.Error as exc:
+            raise BudgetInvariantError(
+                "Persistent budget ledger is unavailable."
+            ) from exc
 
     def settle_attempt(
         self,
@@ -1408,12 +1558,21 @@ class DeepSeekBudgetGuard:
                 now=settled_at,
             )
         except BudgetUsageError:
-            self._ledger.mark_uncertain(
-                reservation=reservation,
-                error_code="INVALID_PROVIDER_USAGE",
-                now=settled_at,
-            )
+            try:
+                self._ledger.mark_uncertain(
+                    reservation=reservation,
+                    error_code="INVALID_PROVIDER_USAGE",
+                    now=settled_at,
+                )
+            except sqlite3.Error as exc:
+                raise BudgetInvariantError(
+                    "Persistent budget ledger is unavailable."
+                ) from exc
             raise
+        except sqlite3.Error as exc:
+            raise BudgetInvariantError(
+                "Persistent budget ledger is unavailable."
+            ) from exc
 
     def ensure_response_in_price_window(
         self,
@@ -1431,16 +1590,21 @@ class DeepSeekBudgetGuard:
                 now=checked_at,
             )
         except BudgetPriceWindowError:
-            self._ledger.mark_uncertain(
-                reservation=reservation,
-                error_code="MODEL_PRICE_EXPIRED",
-                price_snapshot=(
-                    self._price_snapshot if usage is not None else None
-                ),
-                usage=usage,
-                provider_request_id=provider_request_id,
-                now=checked_at,
-            )
+            try:
+                self._ledger.mark_uncertain(
+                    reservation=reservation,
+                    error_code="MODEL_PRICE_EXPIRED",
+                    price_snapshot=(
+                        self._price_snapshot if usage is not None else None
+                    ),
+                    usage=usage,
+                    provider_request_id=provider_request_id,
+                    now=checked_at,
+                )
+            except sqlite3.Error as exc:
+                raise BudgetInvariantError(
+                    "Persistent budget ledger is unavailable."
+                ) from exc
             raise
 
     def mark_uncertain(
@@ -1449,36 +1613,61 @@ class DeepSeekBudgetGuard:
         reservation: BudgetReservation,
         error_code: str,
     ) -> None:
-        self._ledger.mark_uncertain(
-            reservation=reservation,
-            error_code=error_code,
-            now=self._now_provider(),
-        )
+        try:
+            self._ledger.mark_uncertain(
+                reservation=reservation,
+                error_code=error_code,
+                now=self._now_provider(),
+            )
+        except sqlite3.Error as exc:
+            raise BudgetInvariantError(
+                "Persistent budget ledger is unavailable."
+            ) from exc
 
     def snapshot(self) -> dict[str, Any]:
-        ledger_snapshot = self._ledger.evidence_snapshot(
-            run_id=self._run_id,
-        )
+        try:
+            ledger_snapshot = self._ledger.evidence_snapshot(
+                run_id=self._run_id,
+            )
+        except sqlite3.Error as exc:
+            raise BudgetInvariantError(
+                "Persistent budget ledger is unavailable."
+            ) from exc
         run_identity = ledger_snapshot["run_identity"]
+        price_payload: dict[str, Any] = {
+            "provider": self._price_snapshot.provider,
+            "model": self._price_snapshot.model,
+            "currency": self._price_snapshot.currency,
+            "snapshot_sha256": self._price_snapshot.sha256,
+            "source_url": self._price_snapshot.source_url,
+            "usage_source_url": self._price_snapshot.usage_source_url,
+            "captured_at": self._price_snapshot.captured_at.isoformat(),
+            "valid_until": self._price_snapshot.valid_until.isoformat(),
+            "rates_cny": self._price_snapshot.rates_cny.model_dump(),
+            "tokens_per_price_unit": self._price_snapshot.tokens_per_price_unit,
+        }
+        if isinstance(self._price_snapshot, DeepSeekHostPriceSnapshot):
+            price_payload.update(
+                {
+                    "schema_version": self._price_snapshot.schema_version,
+                    "billing_currency": self._price_snapshot.billing_currency,
+                    "pricing_tier_policy": self._price_snapshot.pricing_tier_policy,
+                    "peak_rates_usd": self._price_snapshot.peak_rates_usd.model_dump(),
+                    "cny_per_usd_upper_bound": (
+                        self._price_snapshot.cny_per_usd_upper_bound
+                    ),
+                    "provider_peak_windows_utc": [
+                        window.model_dump()
+                        for window in self._price_snapshot.provider_peak_windows_utc
+                    ],
+                }
+            )
         return {
-            "schema_version": "1.0",
+            "schema_version": self._price_snapshot.schema_version,
             "enforcement_mode": "persistent_sqlite",
             "run_status": run_identity["status"],
             "run_identity": run_identity,
-            "price": {
-                "provider": self._price_snapshot.provider,
-                "model": self._price_snapshot.model,
-                "currency": self._price_snapshot.currency,
-                "snapshot_sha256": self._price_snapshot.sha256,
-                "source_url": self._price_snapshot.source_url,
-                "usage_source_url": self._price_snapshot.usage_source_url,
-                "captured_at": self._price_snapshot.captured_at.isoformat(),
-                "valid_until": self._price_snapshot.valid_until.isoformat(),
-                "rates_cny": self._price_snapshot.rates_cny.model_dump(),
-                "tokens_per_price_unit": (
-                    self._price_snapshot.tokens_per_price_unit
-                ),
-            },
+            "price": price_payload,
             "reservation_cny_per_attempt": format_cny(
                 self._reservation_cost.units
             ),
@@ -1492,8 +1681,13 @@ class DeepSeekBudgetGuard:
     def close(self) -> None:
         if self._closed:
             return
-        self._ledger.complete_run(
-            self._run_id,
-            now=self._now_provider(),
-        )
+        try:
+            self._ledger.complete_run(
+                self._run_id,
+                now=self._now_provider(),
+            )
+        except sqlite3.Error as exc:
+            raise BudgetInvariantError(
+                "Persistent budget ledger is unavailable."
+            ) from exc
         self._closed = True

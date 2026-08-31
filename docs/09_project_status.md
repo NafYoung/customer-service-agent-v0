@@ -1,98 +1,99 @@
 # 项目现役状态
 
-最后核对：2026-07-30 01:09 UTC
+最后核对：2026-08-31
 
-本地分支：`main`
+本地分支：`codex/business-pilot-host`
 
-最近已提交检查点：`17f098a`（本轮 P1 修复前基线）
+最近已提交检查点：`97df647`
 
-当前候选检查点：本文件所在的下一次干净 Git 提交；提交后以审查报告记录的
-完整 `git rev-parse HEAD` 为准。
+当前候选检查点：本文件所在的干净 Git 提交；以实际
+`git rev-parse HEAD` 为准。
 
-Preparation Agent 检查点：`1b034cd`
-
-本文是项目恢复工作的现役入口。阶段验收标准仍以
+本文是项目恢复和完成度判断的现役入口。阶段验收合同仍以
 `docs/06_portfolio_completion_plan.md` 为准；历史结果保留在对应
 `docs/testing/` 报告中。
 
 ## 当前结论
 
-| 事实面 | 状态 | 证据 |
+| 事实面 | 状态 | 证据与边界 |
 |---|---|---|
-| 确定性后端与只读 Agent | verified-current | 完整离线门通过；Reference Eval 8/8 |
-| Eval 证据与预算闸门 | verified-current | 开发集 40/40；累计已结算费用 ¥0.12738404 |
-| holdout v1 | verified-current / retired | 唯一正式结果 46/80、`pass^4=0.35`；禁止重跑 |
-| Preparation Agent | changed-and-verified | 提交 `1b034cd`；独立审查 Gate GO |
-| 原子命题语义门 | changed-and-verified-offline / pending fresh same-commit audit | 49 条固定夹具已有逐 claim 人工证据区域和矛盾双侧标注；校准 validator 必须从固定私有账本逐调用核对 49 个唯一哈希、用量、费用、模式和时间，不能再由合成调用摘要自证 |
-| 正式 Eval 证据链 | changed-and-verified-offline / pending fresh same-commit audit | 一次性 formal capability 绑定 Settings、模型、裁判、守卫、冻结快照和完整 harness；调用前重冻并拒绝对象/方法替换；7×4 与 holdout 前置校验从原始回答、轨迹、状态、写入和 verdict 确定性重算，不信任自报分数 |
-| 非正式付费入口 | changed-and-verified-offline / pending fresh same-commit audit | `diagnostic` 固定 10×1，`dev_repeat` 固定 7×4；付费调用证据按哈希、attempt 数、错误阶段、时间和费用与只读账本逐一闭环；所有公开 artifact 将 provider request ID 固定为 `null` |
-| DeepSeek 语义校准 | pending | 尚未调用，新增费用为 0 |
-| 公开回归与 holdout v2 | pending | 必须等待语义校准和独立审查通过 |
-| 宿主确认、并发、UI、GitHub、公开演示 | pending | 尚未实现或发布 |
-| 生产运行态 | not-applicable | 没有远端、部署或公开 URL |
-| Agent 记忆 | generated-read-only | 本次未获授权写入，也未修改 |
+| 确定性后端与只读 Agent | verified-current | 完整离线门和 Reference Eval 要求保留 |
+| Preparation Agent | verified-current | 单 Agent，精确 9 工具白名单，最多生成一个 Approval，不获得认证、展示、确认或执行权限 |
+| 受信宿主流 | changed-and-verified-offline | `/v1/host/messages` 串联 Agent；服务端 canonical card、空 body 按钮确认和确定性幂等执行已有端到端测试 |
+| 人工接管 | changed-and-verified-offline | manual mode 持久化；接管会取消同会话未完成 Approval，之后的消息、prepare、present、confirm 和 execute 全部失败关闭 |
+| 可选 DeepSeek live 运行时 | changed-and-verified-offline | 默认关闭；显式开启时固定官方端点/模型、审查过的 v2 价格文件和共享持久预算账本 |
+| 预算闸门 | changed-and-verified-offline | Host 与 Eval 默认使用同一绝对路径账本；环境变量不能另开 Host 额度；下一次最坏预留超限、价格过期或 SQLite 异常都在 HTTP 前失败关闭 |
+| 当前付费状态 | not-observed-this-turn | 本轮未读 `.env` 或真实私有账本，未调用 DeepSeek；因此不宣称当前累计费用或真实 provider 连通性 |
+| 业务 UI、真实集成与高并发 | pending | 尚无 Web 聊天界面、真实客户/订单/ERP/物流/支付数据，SQLite 不证明 PostgreSQL 并发安全 |
+| 生产运行态 | not-applicable | 没有远程部署或公开 URL，不宣称生产就绪 |
+
+## 本轮新增能力
+
+1. 受信宿主端点只从认证会话和宿主 header 注入客户、会话与确认权限，
+   不信任模型或浏览器提交的 preview/hash/event id。
+2. 取消、退货和换货的低风险合成路径可以走完
+   `message -> prepare -> canonical present -> trusted confirm -> execute`。
+3. 破损、瑕疵、错发和客户主动要求人工都进入持久 manual mode；模型自由文本
+   不能创建转交工单。
+4. live 入口固定 `deepseek-v4-flash`、官方 HTTPS 端点、温度 0 和当前审查过的
+   v2 价格文件。其预算按官方峰时 USD 费率与 `10 CNY/USD` 保守换算计算；
+   这是内部上界，不是供应商最终账单。
+5. 当前价格政策有效至 `2026-09-07T17:40:23Z`；过期后必须重新从官方来源
+   核对、冻结新文件并重跑受影响的审查，不得只延长日期。
 
 ## 最近验证
 
-2026-07-30 对本文件所在候选工作树执行完整离线门：
+当前工作树已执行完整离线门和 Reference Eval：
 
 ```text
 ruff: passed
-mypy: 53 source files passed
+mypy: 57 source files passed
 schema freshness: passed
-pytest: 586 passed
-branch coverage: 83.37%
+pytest: 619 passed
+branch coverage: 83.30%
+pip-audit: no known vulnerabilities
 Reference Eval: 8/8
 ```
 
-本轮未联网，因此执行了 lint、mypy、Schema freshness、完整 pytest/branch
-coverage 和 Reference Eval；依赖声明未变化，最近一次 `pip-audit` 仍为无已知
-运行时漏洞，但尚未在当前候选提交上联网刷新。测试仍有一条非阻断
-警告：FastAPI/Starlette 的旧
-`TestClient` 兼容入口提示未来迁移到 `httpx2`；当前测试行为未受影响。
-本轮未调用 DeepSeek，新增费用为 0。
+聚焦门另外覆盖 47 个 Host/价格窗口测试，全部通过。验证仅使用离线
+scripted model 和 `httpx.MockTransport`，未发起真实模型请求。
+
+当前仅有一条已知非阻断警告：Starlette `TestClient` 的旧 `httpx` 兼容入口提示
+未来迁移到 `httpx2`。
+
+## 独立复核与剩余风险
+
+两路未参与主实现的最终复核分别检查了 live 预算/人工接管生命周期，
+以及文档与能力声明。已发现的 P1 “账本分叉”、“转人工后旧卡仍可执行”
+和“新运行时文件未跟踪”已修复；最终安全复核没有剩余 P0/P1。当前不得隐藏的 P2：
+
+- v2 Host 预算 snapshot 尚无对应的公开 Eval `BudgetSummary` v2 schema；Host 当前不调用
+  该公开导出，但后续复用证据通道前必须补齐。
+- manual mode 能阻止接管提交之后的新入口，但 SQLite 首版没有承诺人工按钮能
+  抢占一个已越过 guard 的并发执行请求。
+- 还没有真实 DeepSeek smoke test、真实业务影子流量或人工工时指标；不能由离线
+  测试推导“大多数时间不需人工”。
 
 ## 当前唯一执行顺序
 
-1. 把当前候选落为干净提交，然后对同一个完整 SHA 完成三路全新
-   `phase2_fresh_adversarial_reaudit`：预算/结果/隐私、runtime/capability/
-   source/harness、语义校准/原始证据重算。
-2. 修复复审发现的所有 P0/P1 和影响交付合同的 P2，再运行完整离线门。
-3. 当前 canonical 价格快照有效至 `2026-07-30T08:58:58Z`。仅在执行时仍
-   有效、预算账本无未知预留且三路审查全部 Gate GO 后，才安全加载
-   `.env` 并运行公开语义校准。不得打印环境变量。
-   若价格快照已过期，必须先从当前官方来源刷新并形成新的干净提交，再重做
-   受价格身份影响的同提交审查。
-4. 校准门为固定 49 条夹具 `49/49`，并要求严格 validator 重算通过、预算
-   完全结清以及按确定性分层规则抽取 5 条的程序性独立 GO 复核回执。通过后
-   再运行七条公开回归 `7 cases × 4 trials`。
-5. 公开回归达到 28/28、`pass^4=1.00`、全部安全断言通过且状态变化为 0 后，
-   才由独立评测方封存全新 holdout v2，并只正式运行一次。
-6. Phase 2 完成后继续宿主确认、确定性执行与并发、零密钥 UI、GitHub 和
-   匿名公开演示。
+1. 完成当前工作树的全量离线门、Reference Eval、diff 检查和独立聚焦复核，然后落为
+   一个干净提交。
+2. 只有当价格政策仍有效、共享账本无未知预留，且操作者明确开启 live 开关后，
+   才能做一次最小真实 smoke test；不打印环境变量或账本私有内容。
+3. 先跑合成员工内测，再跑只读影子流量，最后才对小比例低风险真实请求开放
+   prepare/confirm。任一安全写入违规都立即回退到 manual/read-only。
+4. 用可观测 KPI 判断是否扩容：无人为介入完成率、误执行/越权写入数、人工接管率、
+   重复咨询率、P50/P95 处理时长和人工复核工时。
+5. 不重跑 retired holdout v1。语义校准、公开回归和全新 holdout v2 仍按
+   `docs/06_portfolio_completion_plan.md` 的一次性协议执行。
 
 ## 不可突破的恢复边界
 
-- 总 DeepSeek 费用硬上限 ¥20；自动执行上限 ¥18。
-- `.env`、预算账本、私有案例、原始 artifact、本机路径和 provider request
-  ID 不进入 Git 或公开构建产物。
-- 公开演示只使用合成数据和离线已验证轨迹，不部署项目 DeepSeek Key。
-- 语义裁判不能覆盖工具、权限、写入、状态或确认的确定性失败。
-- 最终完成前必须再由一个全新、未参与实现的智能体做完整平行审查。
-
-## 当前工作区说明
-
-Preparation Agent 已保存为本地检查点。本轮在 `17f098a` 之上补齐了四组
-P1：真实账本校准证明、正式 runtime capability 对象绑定、原始证据确定性
-重评分，以及逐调用 attempt/错误阶段/预算结果闭环；并把 provider request
-ID 从所有持久化和公开 artifact 中清除。完整离线门通过，但这些改动尚未在
-一个干净提交上取得三路全新同提交审查 GO，因此不能视为 Phase 2 验收完成。
-
-此前 `40289d9` 关闭了 formal context 与 28/28 回归前置门；
-`18d31bb` 关闭固定输出根 symlink、严格回执、私有目录链和公开校验器问题，
-独立聚焦复审为 GO；`0c55845` 又把批准的 Eval profile 固定为
-`30 / 1024 / 2 / 4 / 12`，扩展运行依赖身份，并要求 source-tree 三次快照
-一致；`aee4a3d` 进一步约束价格时间线，并使正式完成/失败路径都独立重算
-完整 runtime identity。此前聚焦复核不计入本轮 fresh Gate。下一步必须由
-未参与实现的三路全新审查者在本文件所在同一干净提交上重新签发 Gate。
-复核现场保留，未删除缓存、数据库或私有 artifact。
+- `.env`、API Key、宿主令牌、私有账本、私有 Eval artifact 和 provider request ID
+  不进入 Git、日志或回复。
+- 本项目共享持久账本的内部人民币硬上限为 `¥20`，自动运行准入上限为
+  `¥18`；它不是供应商账单保证，也无法限制其他程序使用同一 Key。
+- 公开演示不携带 DeepSeek Key，不产生模型网络出口。
+- 语义裁判不能覆盖工具、权限、写入、状态、确认或人工接管的确定性失败。
+- 当前可宣称的上限是“可供合成和受控内测的候选版”，不是生产系统或已证明能
+  代替人工的自治客服。

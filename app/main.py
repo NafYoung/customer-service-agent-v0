@@ -8,6 +8,7 @@ from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
+from app.agent.host_runtime import build_host_preparation_model_factory
 from app.agent.openai_compatible import ChatModel
 from app.api.host_routes import host_router
 from app.api.routes import debug_router, router
@@ -27,7 +28,7 @@ def create_app(
     settings: Settings | None = None,
     database_url: str | None = None,
     seed_demo: bool = True,
-    preparation_model_factory: Callable[[], ChatModel] | None = None,
+    preparation_model_factory: Callable[[str], ChatModel] | None = None,
 ) -> FastAPI:
     runtime_settings = settings or default_settings
     if database_url is not None:
@@ -36,6 +37,9 @@ def create_app(
         raise ValueError(
             "DEBUG_ADMIN_TOKEN must be configured when ENABLE_DEBUG_ROUTES is true"
         )
+    model_factory = preparation_model_factory
+    if model_factory is None and runtime_settings.enable_live_preparation_agent:
+        model_factory = build_host_preparation_model_factory(runtime_settings)
 
     database = Database(runtime_settings.database_url)
 
@@ -64,7 +68,7 @@ def create_app(
     app.state.host_flow = HostPilotFlow(
         tools=app.state.tools,
         settings=runtime_settings,
-        preparation_model_factory=preparation_model_factory,
+        preparation_model_factory=model_factory,
     )
     app.include_router(router)
     app.include_router(host_router)
