@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from copy import deepcopy
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
@@ -16,7 +17,6 @@ from app.models import (
     Order,
     SupportTicket,
 )
-
 
 HOST_TOKEN = "pytest-pilot-host-token"
 
@@ -179,6 +179,131 @@ def test_host_cancel_flow_uses_canonical_card_and_empty_body_confirmation():
     assert HOST_TOKEN not in exposed
     assert "pilot-cancel" not in exposed
     assert "customer_id" not in exposed
+    assert factory.calls == 1
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "arguments", "expected_outcome"),
+    [
+        (
+            "prepare_return",
+            (
+                '{"order_id":"ORD-1003","order_item_id":"ITEM-1003-A",'
+                '"declared_condition":"NEW_UNWORN","issue_type":"CHANGED_MIND",'
+                '"user_note":"尺码不合适"}'
+            ),
+            "RETURN_REQUEST_CREATED",
+        ),
+        (
+            "prepare_exchange",
+            (
+                '{"order_id":"ORD-1003","order_item_id":"ITEM-1003-A",'
+                '"target_size":"43","declared_condition":"NEW_UNWORN",'
+                '"issue_type":"SIZE_MISMATCH","user_note":"想换 43 码"}'
+            ),
+            "EXCHANGE_REQUEST_CREATED",
+        ),
+    ],
+)
+def test_host_low_risk_return_and_exchange_flows_execute_after_empty_body_confirm(
+    tool_name: str,
+    arguments: str,
+    expected_outcome: str,
+):
+    model = ScriptedModel(
+        _tool_turn(tool_name, arguments, call_id=f"call-{tool_name}"),
+        _final_turn("已生成待确认操作。"),
+    )
+    app = _build_app(QueueModelFactory(model))
+
+    with TestClient(app) as client:
+        token = _authenticate(client)
+        headers = _host_headers(token, conversation_id=f"pilot-{tool_name}")
+        message = client.post(
+            "/v1/host/messages",
+            headers=headers,
+            json={"text": "请处理这个售后请求"},
+        )
+        assert message.status_code == 200, message.text
+        approval_id = message.json()["pending_approval_id"]
+        assert approval_id
+
+        presented = client.post(
+            f"/v1/host/approvals/{approval_id}/present",
+            headers=headers,
+        )
+        assert presented.status_code == 200, presented.text
+        assert "preview_hash" not in presented.json()
+
+        confirmed = client.post(
+            f"/v1/host/approvals/{approval_id}/confirm",
+            headers=headers,
+        )
+        assert confirmed.status_code == 200, confirmed.text
+        assert confirmed.json()["result"]["outcome"] == expected_outcome
+
+
+def test_host_approval_card_is_scoped_to_customer_and_conversation():
+    model = ScriptedModel(
+        _tool_turn(
+            "prepare_cancel_order",
+            '{"order_id":"ORD-1001","user_note":null}',
+            call_id="call-scoped-card",
+        ),
+        _final_turn("已生成待确认操作。"),
+    )
+    app = _build_app(QueueModelFactory(model))
+
+    with TestClient(app) as client:
+        owner_token = _authenticate(client)
+        owner_headers = _host_headers(owner_token, conversation_id="pilot-owner")
+        prepared = client.post(
+            "/v1/host/messages",
+            headers=owner_headers,
+            json={"text": "取消 ORD-1001"},
+        )
+        approval_id = prepared.json()["pending_approval_id"]
+
+        wrong_conversation = client.post(
+            f"/v1/host/approvals/{approval_id}/present",
+            headers=_host_headers(owner_token, conversation_id="pilot-other-conversation"),
+        )
+        other_customer_token = _authenticate(client, email="chencheng@example.com")
+        wrong_customer = client.post(
+            f"/v1/host/approvals/{approval_id}/present",
+            headers=_host_headers(other_customer_token, conversation_id="pilot-owner"),
+        )
+        assert wrong_conversation.status_code == 404
+        assert wrong_conversation.json()["error"]["code"] == "APPROVAL_NOT_FOUND"
+        assert wrong_customer.status_code == 404
+        assert wrong_customer.json()["error"]["code"] == "APPROVAL_NOT_FOUND"
+
+        owner = client.post(
+            f"/v1/host/approvals/{approval_id}/present",
+            headers=owner_headers,
+        )
+        assert owner.status_code == 200, owner.text
+
+
+def test_model_handoff_claim_without_deterministic_trace_cannot_create_ticket():
+    model = ScriptedModel(_final_turn("已经为你转接人工客服。"))
+    factory = QueueModelFactory(model)
+    app = _build_app(factory)
+
+    with TestClient(app) as client:
+        token = _authenticate(client)
+        response = client.post(
+            "/v1/host/messages",
+            headers=_host_headers(token, conversation_id="pilot-false-handoff"),
+            json={"text": "我要人工客服"},
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["mode"] == "AGENT"
+        assert response.json()["handoff"] is None
+        assert "没有执行" in response.json()["safety_notice"]
+        with app.state.database.session() as session:
+            assert session.scalar(select(func.count()).select_from(SupportTicket)) == 0
+
     assert factory.calls == 1
 
 

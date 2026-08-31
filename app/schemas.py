@@ -10,6 +10,7 @@ from app.enums import (
     ApprovalStatus,
     ConfirmationSource,
     EligibilityReason,
+    HandoffReason,
     IssueType,
     ItemCondition,
     OrderStatus,
@@ -151,6 +152,20 @@ class TicketRead(APIModel):
     summary: str
     status: str
     created_at: datetime
+
+
+class ManualHandoffRequest(APIModel):
+    order_id: str | None = None
+    transfer_reason: HandoffReason
+    summary: str = Field(min_length=5, max_length=1000)
+    priority: TicketPriority = TicketPriority.NORMAL
+
+
+class ManualHandoffRead(TicketRead):
+    conversation_id: str
+    origin_server_run_id: str
+    transfer_reason: HandoffReason
+    idempotent_replay: bool = False
 
 
 class PolicySearchRequest(APIModel):

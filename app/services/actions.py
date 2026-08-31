@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from sqlalchemy import select
@@ -82,6 +83,16 @@ def _approval_preview_hash(approval: Approval) -> str:
         sort_keys=True,
     ).encode("utf-8")
     return hashlib.sha256(canonical).hexdigest()
+
+
+@dataclass(frozen=True)
+class HostApprovalPresentation:
+    """Canonical approval card returned only through the trusted host flow."""
+
+    approval_id: str
+    status: ApprovalStatus
+    preview: dict[str, object]
+    presented_at: datetime
 
 
 class ActionService:
@@ -518,6 +529,68 @@ class ActionService:
             status=ApprovalStatus.PRESENTED,
             preview_hash=approval.preview_hash,
             presented_at=now,
+        )
+
+    def present_host_approval(
+        self,
+        session: Session,
+        *,
+        customer_id: str,
+        conversation_id: str,
+        approval_id: str,
+        now: datetime | None = None,
+    ) -> HostApprovalPresentation:
+        """Present an owned approval using its server-side canonical hash."""
+
+        approval = self._owned_approval(
+            session,
+            customer_id=customer_id,
+            conversation_id=conversation_id,
+            approval_id=approval_id,
+        )
+        response = self.present_action(
+            session,
+            customer_id=customer_id,
+            conversation_id=conversation_id,
+            approval_id=approval_id,
+            request=PresentApprovalRequest(preview_hash=approval.preview_hash),
+            now=now,
+        )
+        return HostApprovalPresentation(
+            approval_id=response.approval_id,
+            status=ApprovalStatus(response.status),
+            preview=approval.preview,
+            presented_at=response.presented_at,
+        )
+
+    def record_host_confirmation(
+        self,
+        session: Session,
+        *,
+        customer_id: str,
+        conversation_id: str,
+        approval_id: str,
+        now: datetime | None = None,
+    ) -> ConfirmationRecorded:
+        """Record the one stable trusted-host button event for an approval."""
+
+        approval = self._owned_approval(
+            session,
+            customer_id=customer_id,
+            conversation_id=conversation_id,
+            approval_id=approval_id,
+        )
+        return self.record_confirmation(
+            session,
+            customer_id=customer_id,
+            conversation_id=conversation_id,
+            approval_id=approval_id,
+            request=ConfirmActionRequest(
+                preview_hash=approval.preview_hash,
+                ui_event_id=f"host-button:{approval_id}",
+                confirmation_source=ConfirmationSource.BUTTON,
+            ),
+            now=now,
         )
 
     def record_confirmation(

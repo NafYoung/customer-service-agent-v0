@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from pathlib import Path
@@ -8,11 +8,14 @@ from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
+from app.agent.openai_compatible import ChatModel
+from app.api.host_routes import host_router
 from app.api.routes import debug_router, router
 from app.config import Settings
 from app.config import settings as default_settings
 from app.database import Database
 from app.errors import ServiceError
+from app.host.flow import HostPilotFlow
 from app.seed import seed_demo_data
 from app.tools.factory import build_tools
 
@@ -24,6 +27,7 @@ def create_app(
     settings: Settings | None = None,
     database_url: str | None = None,
     seed_demo: bool = True,
+    preparation_model_factory: Callable[[], ChatModel] | None = None,
 ) -> FastAPI:
     runtime_settings = settings or default_settings
     if database_url is not None:
@@ -57,7 +61,13 @@ def create_app(
     app.state.database = database
     app.state.settings = runtime_settings
     app.state.tools = build_tools(runtime_settings, policy_dir=PROJECT_ROOT / "policies")
+    app.state.host_flow = HostPilotFlow(
+        tools=app.state.tools,
+        settings=runtime_settings,
+        preparation_model_factory=preparation_model_factory,
+    )
     app.include_router(router)
+    app.include_router(host_router)
     if runtime_settings.enable_debug_routes:
         app.include_router(debug_router)
 

@@ -85,3 +85,16 @@ class TicketStatus(StrEnum):
 class TicketPriority(StrEnum):
     NORMAL = "NORMAL"
     HIGH = "HIGH"
+
+
+class ConversationMode(StrEnum):
+    AGENT = "AGENT"
+    MANUAL = "MANUAL"
+
+
+class HandoffReason(StrEnum):
+    DEFECTIVE_ITEM = "DEFECTIVE_ITEM"
+    WRONG_ITEM = "WRONG_ITEM"
+    DAMAGED_IN_TRANSIT = "DAMAGED_IN_TRANSIT"
+    POLICY_AMBIGUITY = "POLICY_AMBIGUITY"
+    AUTOMATION_UNSAFE = "AUTOMATION_UNSAFE"

@@ -737,6 +737,304 @@
         }
       }
     },
+    "/v1/host/messages": {
+      "post": {
+        "tags": [
+          "trusted-host"
+        ],
+        "summary": "Send Host Message",
+        "operationId": "send_host_message_v1_host_messages_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "x-conversation-id",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 120,
+              "title": "X-Conversation-Id"
+            }
+          },
+          {
+            "name": "x-host-confirmation-token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Host-Confirmation-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HostMessageRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostMessageResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/host/handoffs": {
+      "post": {
+        "tags": [
+          "trusted-host"
+        ],
+        "summary": "Create Host Handoff",
+        "operationId": "create_host_handoff_v1_host_handoffs_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "x-conversation-id",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 120,
+              "title": "X-Conversation-Id"
+            }
+          },
+          {
+            "name": "x-host-confirmation-token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Host-Confirmation-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ManualHandoffRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManualHandoffRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/host/approvals/{approval_id}/present": {
+      "post": {
+        "tags": [
+          "trusted-host"
+        ],
+        "summary": "Present Host Approval",
+        "operationId": "present_host_approval_v1_host_approvals__approval_id__present_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "approval_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Approval Id"
+            }
+          },
+          {
+            "name": "x-conversation-id",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 120,
+              "title": "X-Conversation-Id"
+            }
+          },
+          {
+            "name": "x-host-confirmation-token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Host-Confirmation-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostApprovalCard"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/host/approvals/{approval_id}/confirm": {
+      "post": {
+        "tags": [
+          "trusted-host"
+        ],
+        "summary": "Confirm Host Approval",
+        "operationId": "confirm_host_approval_v1_host_approvals__approval_id__confirm_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "approval_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Approval Id"
+            }
+          },
+          {
+            "name": "x-conversation-id",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 120,
+              "title": "X-Conversation-Id"
+            }
+          },
+          {
+            "name": "x-host-confirmation-token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Host-Confirmation-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExecuteActionResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/health": {
       "get": {
         "tags": [
@@ -874,6 +1172,14 @@
           "EXACT_TEXT"
         ],
         "title": "ConfirmationSource"
+      },
+      "ConversationMode": {
+        "type": "string",
+        "enum": [
+          "AGENT",
+          "MANUAL"
+        ],
+        "title": "ConversationMode"
       },
       "EligibilityReason": {
         "type": "string",
@@ -1026,6 +1332,112 @@
         "type": "object",
         "title": "HTTPValidationError"
       },
+      "HandoffReason": {
+        "type": "string",
+        "enum": [
+          "DEFECTIVE_ITEM",
+          "WRONG_ITEM",
+          "DAMAGED_IN_TRANSIT",
+          "POLICY_AMBIGUITY",
+          "AUTOMATION_UNSAFE"
+        ],
+        "title": "HandoffReason"
+      },
+      "HostApprovalCard": {
+        "properties": {
+          "approval_id": {
+            "type": "string",
+            "title": "Approval Id"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ApprovalStatus"
+          },
+          "preview": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Preview"
+          },
+          "presented_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Presented At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "approval_id",
+          "status",
+          "preview",
+          "presented_at"
+        ],
+        "title": "HostApprovalCard"
+      },
+      "HostMessageRequest": {
+        "properties": {
+          "text": {
+            "type": "string",
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Text"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "text"
+        ],
+        "title": "HostMessageRequest"
+      },
+      "HostMessageResponse": {
+        "properties": {
+          "mode": {
+            "$ref": "#/components/schemas/ConversationMode"
+          },
+          "reply": {
+            "type": "string",
+            "title": "Reply"
+          },
+          "server_run_id": {
+            "type": "string",
+            "title": "Server Run Id"
+          },
+          "pending_approval_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pending Approval Id"
+          },
+          "handoff": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ManualHandoffRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "safety_notice": {
+            "type": "string",
+            "title": "Safety Notice"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "mode",
+          "reply",
+          "server_run_id",
+          "safety_notice"
+        ],
+        "title": "HostMessageResponse"
+      },
       "InventoryRead": {
         "properties": {
           "sku": {
@@ -1076,6 +1488,112 @@
           "DAMAGED"
         ],
         "title": "ItemCondition"
+      },
+      "ManualHandoffRead": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "order_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Order Id"
+          },
+          "category": {
+            "type": "string",
+            "title": "Category"
+          },
+          "priority": {
+            "type": "string",
+            "title": "Priority"
+          },
+          "summary": {
+            "type": "string",
+            "title": "Summary"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "conversation_id": {
+            "type": "string",
+            "title": "Conversation Id"
+          },
+          "origin_server_run_id": {
+            "type": "string",
+            "title": "Origin Server Run Id"
+          },
+          "transfer_reason": {
+            "$ref": "#/components/schemas/HandoffReason"
+          },
+          "idempotent_replay": {
+            "type": "boolean",
+            "title": "Idempotent Replay",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "order_id",
+          "category",
+          "priority",
+          "summary",
+          "status",
+          "created_at",
+          "conversation_id",
+          "origin_server_run_id",
+          "transfer_reason"
+        ],
+        "title": "ManualHandoffRead"
+      },
+      "ManualHandoffRequest": {
+        "properties": {
+          "order_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Order Id"
+          },
+          "transfer_reason": {
+            "$ref": "#/components/schemas/HandoffReason"
+          },
+          "summary": {
+            "type": "string",
+            "maxLength": 1000,
+            "minLength": 5,
+            "title": "Summary"
+          },
+          "priority": {
+            "$ref": "#/components/schemas/TicketPriority",
+            "default": "NORMAL"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "transfer_reason",
+          "summary"
+        ],
+        "title": "ManualHandoffRequest"
       },
       "OrderItemRead": {
         "properties": {

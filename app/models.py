@@ -207,11 +207,29 @@ class ExchangeRequest(Base):
 
 class SupportTicket(Base):
     __tablename__ = "support_tickets"
+    __table_args__ = (
+        UniqueConstraint(
+            "customer_id",
+            "conversation_id",
+            name="uq_support_ticket_customer_conversation",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(50), primary_key=True)
     customer_id: Mapped[str] = mapped_column(ForeignKey("customers.id"), index=True, nullable=False)
+    conversation_id: Mapped[str | None] = mapped_column(
+        String(120),
+        index=True,
+        nullable=True,
+    )
+    origin_server_run_id: Mapped[str | None] = mapped_column(
+        String(80),
+        index=True,
+        nullable=True,
+    )
     order_id: Mapped[str | None] = mapped_column(ForeignKey("orders.id"), nullable=True)
     category: Mapped[str] = mapped_column(String(60), nullable=False)
+    transfer_reason: Mapped[str | None] = mapped_column(String(60), nullable=True)
     priority: Mapped[str] = mapped_column(String(20), nullable=False)
     summary: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(String(24), nullable=False)
