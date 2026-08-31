@@ -40,6 +40,7 @@ from evals.readonly_reporting import (
 PRICE_SNAPSHOT_PATH = (
     readonly_reporting.ROOT / "pricing" / "deepseek-v4-flash-2026-07-29.json"
 )
+HISTORICAL_PRICE_NOW = datetime(2026, 7, 29, 12, tzinfo=UTC)
 
 
 def test_source_snapshot_captures_runtime_dependency_closure() -> None:
@@ -466,7 +467,7 @@ def test_manifest_fingerprints_harness_and_never_serializes_secret_or_holdout_id
         for trial in range(1, 5)
         for case in cases
     ]
-    started = datetime.now(UTC)
+    started = HISTORICAL_PRICE_NOW
     completed = started + timedelta(seconds=2)
 
     manifest = build_readonly_manifest(
@@ -583,7 +584,7 @@ def test_manifest_fingerprints_harness_and_never_serializes_secret_or_holdout_id
 def test_formal_manifest_requires_bound_calibration_attestations():
     settings = Settings()
     cases = load_cases()[:1]
-    started = datetime.now(UTC)
+    started = HISTORICAL_PRICE_NOW
 
     try:
         build_readonly_manifest(
@@ -617,7 +618,7 @@ def test_formal_manifest_rejects_unsettled_budget_and_model_drift():
         for trial in range(1, 5)
         for case in cases
     ]
-    started = datetime.now(UTC)
+    started = HISTORICAL_PRICE_NOW
     common = {
         "run_id": "eval-20260729-formal-gates",
         "purpose": "holdout_formal",
@@ -684,7 +685,7 @@ def test_formal_manifest_recomputes_exact_cost_from_every_model_call():
         for trial in range(1, 5)
         for case in cases
     ]
-    started = datetime.now(UTC)
+    started = HISTORICAL_PRICE_NOW
     common = {
         "run_id": "eval-20260729-formal-cost",
         "purpose": "holdout_formal",
@@ -783,7 +784,7 @@ def test_formal_manifest_binds_calls_to_each_completed_trial(
             ),
         )
     run_id = "eval-20260729-formal-call-binding"
-    started = datetime.now(UTC)
+    started = HISTORICAL_PRICE_NOW
 
     with pytest.raises(
         ValueError,
@@ -826,7 +827,7 @@ def test_completed_paid_manifest_allows_a_scored_trial_to_fail() -> None:
         for case in cases
     ]
     run_id = "eval-20260729-formal-scored-failure"
-    started = datetime.now(UTC)
+    started = HISTORICAL_PRICE_NOW
 
     manifest = build_readonly_manifest(
         run_id=run_id,
@@ -876,7 +877,7 @@ def test_formal_manifest_rejects_noncanonical_budget_contract(
         for trial in range(1, 5)
         for case in cases
     ]
-    started = datetime.now(UTC)
+    started = HISTORICAL_PRICE_NOW
     budget = _budget_report(
         _attempt_count(results),
         run_id="eval-20260729-formal-canonical-price",
@@ -948,7 +949,7 @@ def test_formal_manifest_rejects_a_settled_execution_overrun() -> None:
         ),
         *results[0].model_calls[1:],
     )
-    started = datetime.now(UTC)
+    started = HISTORICAL_PRICE_NOW
     budget = _budget_report(
         _attempt_count(results),
         run_id="eval-20260729-formal-overrun",
@@ -986,7 +987,7 @@ def test_formal_bundle_schema_recomputes_cost_instead_of_trusting_summary():
         for trial in range(1, 5)
         for case in cases
     ]
-    started = datetime.now(UTC)
+    started = HISTORICAL_PRICE_NOW
     budget = _budget_report(
         _attempt_count(results),
         run_id="eval-20260729-formal-schema-cost",

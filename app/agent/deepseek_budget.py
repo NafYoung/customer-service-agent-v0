@@ -179,6 +179,13 @@ def _parse_decimal(value: str | Decimal, *, field_name: str) -> Decimal:
     return amount
 
 
+def _budget_event_timestamp(now: datetime | None = None) -> str:
+    occurred_at = now or datetime.now(UTC)
+    if occurred_at.tzinfo is None:
+        raise BudgetInvariantError("Budget event time must be timezone-aware.")
+    return occurred_at.astimezone(UTC).isoformat()
+
+
 def cny_to_units(amount: Decimal) -> int:
     if amount < 0:
         raise ValueError("CNY amount cannot be negative")
@@ -505,6 +512,7 @@ class SQLiteBudgetLedger:
         run_id: str,
         purpose: object,
         price_snapshot: DeepSeekPriceSnapshot,
+        now: datetime | None = None,
     ) -> None:
         if not _RUN_ID_PATTERN.fullmatch(run_id):
             raise BudgetInvariantError("Budget run_id is invalid.")
@@ -523,7 +531,7 @@ class SQLiteBudgetLedger:
                     canonical_purpose,
                     price_snapshot.model,
                     price_snapshot.sha256,
-                    datetime.now(UTC).isoformat(),
+                    _budget_event_timestamp(now),
                 ),
             )
             connection.execute("COMMIT")
@@ -584,6 +592,7 @@ class SQLiteBudgetLedger:
         attempt_number: int,
         model: str,
         reserved_units: int,
+        now: datetime | None = None,
     ) -> BudgetReservation:
         if attempt_number < 1 or reserved_units < 1:
             raise BudgetInvariantError("Attempt reservation is invalid.")
@@ -632,7 +641,7 @@ class SQLiteBudgetLedger:
                     "Paid model request blocked by the local CNY budget limit."
                 )
             attempt_id = f"budget-attempt-{uuid.uuid4().hex}"
-            created_at = datetime.now(UTC).isoformat()
+            created_at = _budget_event_timestamp(now)
             connection.execute(
                 """
                 INSERT INTO budget_attempts(
@@ -679,6 +688,7 @@ class SQLiteBudgetLedger:
         price_snapshot: DeepSeekPriceSnapshot,
         usage: Mapping[str, Any],
         provider_request_id: str | None,
+        now: datetime | None = None,
     ) -> UsageCost:
         cost = calculate_usage_cost(price_snapshot, usage)
         safe_usage = {
@@ -729,7 +739,7 @@ class SQLiteBudgetLedger:
                         cost.mode,
                         json.dumps(safe_usage, sort_keys=True),
                         provider_request_id,
-                        datetime.now(UTC).isoformat(),
+                        _budget_event_timestamp(now),
                         reservation.attempt_id,
                     ),
                 )
@@ -759,7 +769,7 @@ class SQLiteBudgetLedger:
                     cost.mode,
                     json.dumps(safe_usage, sort_keys=True),
                     provider_request_id,
-                    datetime.now(UTC).isoformat(),
+                    _budget_event_timestamp(now),
                     reservation.attempt_id,
                 ),
             )
@@ -780,6 +790,7 @@ class SQLiteBudgetLedger:
         price_snapshot: DeepSeekPriceSnapshot | None = None,
         usage: Mapping[str, Any] | None = None,
         provider_request_id: str | None = None,
+        now: datetime | None = None,
     ) -> None:
         if (price_snapshot is None) != (usage is None):
             raise BudgetInvariantError(
@@ -831,7 +842,7 @@ class SQLiteBudgetLedger:
                         ),
                         provider_request_id,
                         error_code,
-                        datetime.now(UTC).isoformat(),
+                        _budget_event_timestamp(now),
                         reservation.attempt_id,
                     ),
                 )
@@ -843,7 +854,12 @@ class SQLiteBudgetLedger:
         finally:
             connection.close()
 
-    def complete_run(self, run_id: str) -> None:
+    def complete_run(
+        self,
+        run_id: str,
+        *,
+        now: datetime | None = None,
+    ) -> None:
         connection = self._connect()
         try:
             connection.execute("BEGIN IMMEDIATE")
@@ -853,7 +869,7 @@ class SQLiteBudgetLedger:
                 SET status = 'completed', completed_at = ?
                 WHERE run_id = ? AND status = 'active'
                 """,
-                (datetime.now(UTC).isoformat(), run_id),
+                (_budget_event_timestamp(now), run_id),
             )
             if updated.rowcount != 1:
                 raise BudgetInvariantError("Budget run is missing or not active.")
@@ -1307,9 +1323,10 @@ class DeepSeekBudgetGuard:
             minimum_price_validity_seconds,
             field_name="Minimum pricing validity window",
         )
+        started_at = now or self._now_provider()
         price_snapshot.require_current(
             expected_model=model,
-            now=now or self._now_provider(),
+            now=started_at,
         )
         self._ledger = ledger
         self._run_id = run_id
@@ -1324,6 +1341,7 @@ class DeepSeekBudgetGuard:
             run_id=run_id,
             purpose=canonical_purpose,
             price_snapshot=price_snapshot,
+            now=started_at,
         )
 
     def bind_request_timeout(self, *, timeout_seconds: float) -> None:
@@ -1340,9 +1358,10 @@ class DeepSeekBudgetGuard:
             self._minimum_price_validity_seconds,
             required_window,
         )
+        checked_at = self._now_provider()
         self._price_snapshot.require_current(
             expected_model=self._model,
-            now=self._now_provider(),
+            now=checked_at,
             minimum_remaining=timedelta(seconds=bound_window),
         )
         self._minimum_price_validity_seconds = bound_window
@@ -1355,9 +1374,10 @@ class DeepSeekBudgetGuard:
     ) -> BudgetReservation:
         if self._closed:
             raise BudgetInvariantError("Budget guard is already closed.")
+        checked_at = self._now_provider()
         self._price_snapshot.require_current(
             expected_model=self._model,
-            now=self._now_provider(),
+            now=checked_at,
             minimum_remaining=timedelta(
                 seconds=self._minimum_price_validity_seconds
             ),
@@ -1368,6 +1388,7 @@ class DeepSeekBudgetGuard:
             attempt_number=attempt_number,
             model=self._model,
             reserved_units=self._reservation_cost.units,
+            now=checked_at,
         )
 
     def settle_attempt(
@@ -1377,17 +1398,20 @@ class DeepSeekBudgetGuard:
         usage: Mapping[str, Any],
         provider_request_id: str | None,
     ) -> UsageCost:
+        settled_at = self._now_provider()
         try:
             return self._ledger.settle_attempt(
                 reservation=reservation,
                 price_snapshot=self._price_snapshot,
                 usage=usage,
                 provider_request_id=provider_request_id,
+                now=settled_at,
             )
         except BudgetUsageError:
             self._ledger.mark_uncertain(
                 reservation=reservation,
                 error_code="INVALID_PROVIDER_USAGE",
+                now=settled_at,
             )
             raise
 
@@ -1400,10 +1424,11 @@ class DeepSeekBudgetGuard:
     ) -> None:
         """Fail closed if provider processing crossed the price validity edge."""
 
+        checked_at = self._now_provider()
         try:
             self._price_snapshot.require_current(
                 expected_model=self._model,
-                now=self._now_provider(),
+                now=checked_at,
             )
         except BudgetPriceWindowError:
             self._ledger.mark_uncertain(
@@ -1414,6 +1439,7 @@ class DeepSeekBudgetGuard:
                 ),
                 usage=usage,
                 provider_request_id=provider_request_id,
+                now=checked_at,
             )
             raise
 
@@ -1426,6 +1452,7 @@ class DeepSeekBudgetGuard:
         self._ledger.mark_uncertain(
             reservation=reservation,
             error_code=error_code,
+            now=self._now_provider(),
         )
 
     def snapshot(self) -> dict[str, Any]:
@@ -1465,5 +1492,8 @@ class DeepSeekBudgetGuard:
     def close(self) -> None:
         if self._closed:
             return
-        self._ledger.complete_run(self._run_id)
+        self._ledger.complete_run(
+            self._run_id,
+            now=self._now_provider(),
+        )
         self._closed = True

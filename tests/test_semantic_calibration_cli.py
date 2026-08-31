@@ -11,21 +11,32 @@ from app.agent.deepseek_budget import logical_call_sha256
 from app.agent.openai_compatible import AssistantTurn
 from evals import calibration_attestation as calibration_attestation_module
 from evals import run_semantic_judge_calibration as calibration_cli
+from evals import semantic_judge as semantic_judge_module
 from evals.calibration_attestation import validate_calibration_attestation
 from evals.canonical_pricing import canonical_budget_price_payload
 from evals.semantic_calibration import load_calibration_fixtures
+
+HISTORICAL_PRICE_NOW = datetime(2026, 7, 29, 12, tzinfo=UTC)
+
+
+class _HistoricalDateTime(datetime):
+    @classmethod
+    def now(cls, tz=None):
+        if tz is None:
+            return HISTORICAL_PRICE_NOW.replace(tzinfo=None)
+        return HISTORICAL_PRICE_NOW.astimezone(tz)
 
 
 class _ClosedBudgetGuard:
     def __init__(self, attempt_count: int):
         self.attempt_count = attempt_count
         self.closed = False
-        self.started_at = datetime.now(UTC)
+        self.started_at = HISTORICAL_PRICE_NOW
         self.completed_at: datetime | None = None
 
     def close(self) -> None:
         self.closed = True
-        self.completed_at = datetime.now(UTC)
+        self.completed_at = HISTORICAL_PRICE_NOW
 
     def snapshot(self) -> dict[str, object]:
         assert self.closed is True
@@ -203,6 +214,17 @@ def test_holdout_eligible_calibration_writes_a_validated_closed_report(
         calibration_cli,
         "PRIVATE_ARTIFACT_ROOT",
         tmp_path,
+    )
+    monkeypatch.setattr(calibration_cli, "datetime", _HistoricalDateTime)
+    monkeypatch.setattr(
+        calibration_attestation_module,
+        "datetime",
+        _HistoricalDateTime,
+    )
+    monkeypatch.setattr(
+        semantic_judge_module,
+        "datetime",
+        _HistoricalDateTime,
     )
 
     def require_clean_source(*, expected_commit=None):

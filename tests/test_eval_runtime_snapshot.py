@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import hashlib
+import sqlite3
 from dataclasses import replace
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
-from app.agent.deepseek_budget import PriceRates
+from app.agent.deepseek_budget import BudgetPriceWindowError, PriceRates
 from app.agent.openai_compatible import AssistantTurn
 from app.config import Settings
 from evals import (
@@ -155,6 +157,34 @@ def test_paid_guard_rejects_price_identity_split_before_ledger_start(
         )
 
     assert ledger_path.exists() is False
+
+
+def test_paid_guard_rejects_expired_canonical_price_before_ledger_start(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    frozen = readonly_reporting.freeze_readonly_harness(Settings())
+    assert datetime.now(UTC) >= frozen.canonical_price.price_snapshot.valid_until
+    ledger_path = tmp_path / "must-not-start-expired.sqlite3"
+    monkeypatch.setattr(
+        run_readonly_agent_evals,
+        "DEFAULT_BUDGET_LEDGER",
+        ledger_path,
+    )
+
+    with pytest.raises(BudgetPriceWindowError, match="expired"):
+        run_readonly_agent_evals.build_deepseek_budget_guard(
+            settings=Settings(),
+            run_id="eval-expired-canonical-price",
+            purpose="diagnostic",
+            frozen_harness=frozen,
+        )
+
+    assert ledger_path.exists() is True
+    with sqlite3.connect(ledger_path) as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM budget_runs"
+        ).fetchone() == (0,)
 
 
 class _CapturingFrozenModel:

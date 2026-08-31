@@ -26,6 +26,7 @@ ROOT = Path(__file__).resolve().parents[1]
 PRICE_SNAPSHOT_PATH = (
     ROOT / "pricing" / "deepseek-v4-flash-2026-07-29.json"
 )
+HISTORICAL_PRICE_NOW = datetime(2026, 7, 29, 12, tzinfo=UTC)
 
 
 def _budget_guard(
@@ -46,7 +47,8 @@ def _budget_guard(
         price_snapshot=snapshot,
         model="deepseek-v4-flash",
         max_output_tokens=1024,
-        now=datetime(2026, 7, 29, 12, tzinfo=UTC),
+        now=HISTORICAL_PRICE_NOW,
+        now_provider=lambda: HISTORICAL_PRICE_NOW,
     )
 
 

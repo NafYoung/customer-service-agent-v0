@@ -66,6 +66,7 @@ USAGE = {
     "completion_tokens": 2,
     "total_tokens": 10,
 }
+HISTORICAL_PRICE_NOW = datetime(2026, 7, 29, 12, tzinfo=UTC)
 
 
 def _settings() -> Settings:
@@ -497,6 +498,7 @@ def _formal_budget_guard(
         price_snapshot=load_canonical_price_snapshot(),
         model=settings.deepseek_model,
         max_output_tokens=settings.deepseek_max_tokens,
+        now_provider=lambda: HISTORICAL_PRICE_NOW,
     )
 
 
