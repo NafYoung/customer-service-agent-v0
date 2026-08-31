@@ -9,7 +9,13 @@ from sqlalchemy import func, select
 from app.agent.openai_compatible import AssistantTurn, ToolCall
 from app.config import Settings
 from app.main import create_app
-from app.models import ActionExecution, Approval, ConfirmationEvent, Order, SupportTicket
+from app.models import (
+    ActionExecution,
+    Approval,
+    ConfirmationEvent,
+    Order,
+    SupportTicket,
+)
 
 
 HOST_TOKEN = "pytest-pilot-host-token"
@@ -224,6 +230,47 @@ def test_human_review_trace_enters_manual_mode_and_stops_future_model_calls():
             assert tickets[0].origin_server_run_id == response["server_run_id"]
             assert tickets[0].transfer_reason == "DEFECTIVE_ITEM"
             assert session.scalar(select(func.count()).select_from(Approval)) == 0
+            assert session.scalar(select(func.count()).select_from(ActionExecution)) == 0
+
+    assert factory.calls == 1
+
+
+def test_human_review_wins_over_later_prepare_without_leaving_an_approval():
+    model = ScriptedModel(
+        _tool_turn(
+            "check_action_eligibility",
+            (
+                '{"action_type":"RETURN_ITEM","order_id":"ORD-1003",'
+                '"order_item_id":"ITEM-1003-A","declared_condition":"DAMAGED",'
+                '"issue_type":"DEFECTIVE"}'
+            ),
+            call_id="call-human-review-before-prepare",
+        ),
+        _tool_turn(
+            "prepare_cancel_order",
+            '{"order_id":"ORD-1001","user_note":"错误的后续提议"}',
+            call_id="call-prepare-after-human-review",
+        ),
+        _final_turn("已为另一个订单生成待确认操作。"),
+    )
+    factory = QueueModelFactory(model)
+    app = _build_app(factory)
+
+    with TestClient(app) as client:
+        token = _authenticate(client)
+        response = client.post(
+            "/v1/host/messages",
+            headers=_host_headers(token, conversation_id="pilot-handoff-wins"),
+            json={"text": "先处理开胶问题，再取消另一张订单"},
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["mode"] == "MANUAL"
+        assert response.json()["pending_approval_id"] is None
+
+        with app.state.database.session() as session:
+            assert session.scalar(select(func.count()).select_from(SupportTicket)) == 1
+            assert session.scalar(select(func.count()).select_from(Approval)) == 0
+            assert session.scalar(select(func.count()).select_from(ConfirmationEvent)) == 0
             assert session.scalar(select(func.count()).select_from(ActionExecution)) == 0
 
     assert factory.calls == 1
