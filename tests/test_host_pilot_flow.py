@@ -7,7 +7,11 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
-from app.agent.openai_compatible import AssistantTurn, ToolCall
+from app.agent.openai_compatible import (
+    AssistantTurn,
+    ModelAdapterError,
+    ToolCall,
+)
 from app.config import Settings
 from app.main import create_app
 from app.models import (
@@ -25,6 +29,7 @@ class ScriptedModel:
     def __init__(self, *turns: AssistantTurn):
         self.turns = list(turns)
         self.calls: list[dict[str, object]] = []
+        self.closed = False
 
     def complete(self, *, messages, tools):
         self.calls.append(
@@ -37,14 +42,24 @@ class ScriptedModel:
             raise AssertionError("scripted model ran out of turns")
         return self.turns.pop(0)
 
+    def close(self) -> None:
+        self.closed = True
+
+
+class FailingModel(ScriptedModel):
+    def complete(self, *, messages, tools):
+        raise ModelAdapterError("MODEL_DOWN", "synthetic provider failure")
+
 
 class QueueModelFactory:
     def __init__(self, *models: ScriptedModel):
         self.models = list(models)
         self.calls = 0
+        self.server_run_ids: list[str] = []
 
-    def __call__(self):
+    def __call__(self, server_run_id: str):
         self.calls += 1
+        self.server_run_ids.append(server_run_id)
         if not self.models:
             raise AssertionError("model factory must not be called again")
         return self.models.pop(0)
@@ -487,6 +502,34 @@ def test_host_routes_require_trusted_host_and_runtime_fails_closed():
         )
         assert unavailable.status_code == 503
         assert unavailable.json()["error"]["code"] == "AGENT_RUNTIME_UNAVAILABLE"
+
+
+def test_host_closes_model_after_success_and_runtime_failure():
+    successful = ScriptedModel(_final_turn("仍需确认。"))
+    failed = FailingModel()
+    factory = QueueModelFactory(successful, failed)
+    app = _build_app(factory)
+
+    with TestClient(app) as client:
+        token = _authenticate(client)
+        first = client.post(
+            "/v1/host/messages",
+            headers=_host_headers(token, conversation_id="pilot-close-success"),
+            json={"text": "查询订单"},
+        )
+        second = client.post(
+            "/v1/host/messages",
+            headers=_host_headers(token, conversation_id="pilot-close-failure"),
+            json={"text": "查询订单"},
+        )
+
+    assert first.status_code == 200
+    assert second.status_code == 503
+    assert second.json()["error"]["code"] == "AGENT_RUNTIME_FAILED"
+    assert successful.closed is True
+    assert failed.closed is True
+    assert len(factory.server_run_ids) == 2
+    assert all(run_id.startswith("RUN-") for run_id in factory.server_run_ids)
 
 
 def test_model_execution_claim_cannot_create_business_state():

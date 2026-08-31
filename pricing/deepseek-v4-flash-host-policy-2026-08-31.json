@@ -1,0 +1,40 @@
+{
+  "schema_version": "2.0",
+  "provider": "deepseek",
+  "model": "deepseek-v4-flash",
+  "currency": "CNY",
+  "billing_currency": "USD",
+  "pricing_tier_policy": "always_peak",
+  "tokens_per_price_unit": 1000000,
+  "peak_rates_usd": {
+    "prompt_cache_hit": "0.014",
+    "prompt_cache_miss": "0.44",
+    "completion": "1.32"
+  },
+  "cny_per_usd_upper_bound": "10",
+  "rates_cny": {
+    "prompt_cache_hit": "0.14",
+    "prompt_cache_miss": "4.4",
+    "completion": "13.2"
+  },
+  "provider_peak_windows_utc": [
+    {
+      "days": "monday-friday",
+      "start": "01:00",
+      "end": "04:00"
+    },
+    {
+      "days": "monday-friday",
+      "start": "06:00",
+      "end": "10:00"
+    }
+  ],
+  "limits": {
+    "context_tokens": 1000000,
+    "max_output_tokens": 384000
+  },
+  "source_url": "https://api-docs.deepseek.com/quick_start/pricing/",
+  "usage_source_url": "https://api-docs.deepseek.com/api/create-chat-completion/",
+  "captured_at": "2026-08-31T17:40:23Z",
+  "valid_until": "2026-09-07T17:40:23Z"
+}
