@@ -91,6 +91,22 @@
 - **后果**：价格/账单口径偏差时宁可失败关闭也不超支——作品原型可接受；
   公开演示因此不部署项目 Key，走 scripted/离线模式。
 
+## ADR-7：v0 并发证明以 SQLite 串行写为界（不迁 PostgreSQL）
+
+- **背景**：原 Phase 5 合同要求 PostgreSQL + Alembic、最后一件库存线性化与
+  故障半提交回滚。公开 Demo 与本地演示均为每会话临时 SQLite；`SELECT … FOR UPDATE`
+  在 SQLite 上基本是空操作。
+- **决策**（2026-09-02 选项 B）：作品集完成范围以 SQLite 可证项为验收门——幂等重放、
+  竞争 confirm 不双执行、唯一约束兜底。PostgreSQL 行锁 / 最后一件库存线性化
+  **不在作品集完成范围内**。
+- **判据**：演示路径与证明路径必须同一引擎；为面试另开测试专用 Postgres 会造成
+  「演示仍是 SQLite」的双引擎包袱。库级串行写足以支撑作品级幂等叙事；行锁是
+  生产化项，已列在 `docs/README_DETAILED.md`「生产化前必须修改」。
+- **被拒绝的方案**：Compose 加 Postgres 只跑两条库存竞争测试（选项 A）；把 Demo
+  迁到 Postgres。
+- **后果**：不得声称行锁、最后一件库存线性化或跨连接故障回滚矩阵。现役证据为
+  `tests/test_action_concurrency.py` 与 `docs/11_phase5_concurrency_plan.md`。
+
 ## 附：与行业定价语言的关系
 
 海外头部产品转向按「自动化解决」计费（Fin/Zendesk per-resolution、

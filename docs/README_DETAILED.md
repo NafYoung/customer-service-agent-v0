@@ -31,8 +31,8 @@
 - 公开 GitHub 与托管 Demo 已上线（https://github.com/NafYoung/customer-service-agent-v0 、
   https://rivet-public-demo.onrender.com/）；Phase 6 卫生清单见
   `docs/12_phase6_publish_checklist.md`。
-- PostgreSQL 高并发库存、完整故障注入与生产身份 / 审计系统（Phase 5 仍待拍板，
-  见 `docs/15_review_recommendations.md`）；
+- PostgreSQL 高并发库存、完整故障注入与生产身份 / 审计系统（**不在 v0 完成范围内**；
+  见 `docs/06_portfolio_completion_plan.md` §Phase 5 选项 B）；
 - 向量检索、真实电商 / ERP / 物流 / 支付接口；
 - **禁止**同题集重跑已退役的 holdout v1 / v2；新盲测需新题集与另授权。
 
@@ -420,12 +420,12 @@ provider request ID 或本机环境细节。
 - `docs/08_host_confirmation_public_demo.md`：宿主确认、零密钥公开演示和
   生产边界设计；
 - `docs/09_project_status.md`：当前完成度、验证证据和下次恢复顺序；
-- `docs/10_public_demo_status.md`：本地公开演示进度与 Phase 5 缺口；
-- `docs/11_phase5_concurrency_plan.md`：SQLite 可证边界与 Postgres 仍待项；
+- `docs/10_public_demo_status.md`：本地公开演示进度；
+- `docs/11_phase5_concurrency_plan.md`：SQLite 可证边界；PostgreSQL 不在 v0 完成范围；
 - `docs/12_phase6_publish_checklist.md`：公开 GitHub / 托管卫生清单（Demo 已部署）；
 - `docs/13_hosted_demo_render.md`：Render 托管步骤；
-- `docs/14_architecture_decisions.md`：架构决策记录（单 Agent、确定性后端、结构化政策、原子命题裁判、自研评测、预算闸门）；
-- `docs/15_review_recommendations.md`：2026-09-02 修改意见（收口，不改架构）；
+- `docs/14_architecture_decisions.md`：架构决策记录（单 Agent、确定性后端、结构化政策、原子命题裁判、自研评测、预算闸门、v0 SQLite 并发边界）；
+- `docs/15_review_recommendations.md`：2026-09-02 修改意见（含 Phase 5 选项 B）；
 - `docs/research/`：2026-08 品类调研快照（总报告 + 国内原始报告 + Canvas 面板）；
 - `docs/testing/readonly-holdout-v2-protocol.md`：v1 退役后的校准门、
   v2 封存和唯一正式运行协议；

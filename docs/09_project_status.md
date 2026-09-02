@@ -1,6 +1,6 @@
 # 项目现役状态
 
-最后核对：2026-09-02（文档现役入口对齐 + 修改意见 `docs/15_review_recommendations.md`；此前 2026-08-19 P1-2 live 每会话软闸门 + 模型路由预留）
+最后核对：2026-09-02（Phase 5 选项 B：v0 以 SQLite 串行写为边界；此前文档现役入口对齐 + 修改意见 `docs/15_review_recommendations.md`）
 
 本地分支：以当前 Git 为准
 
@@ -32,7 +32,7 @@ holdout 失败后加固链：`9337e55`（prompt/回归）→ `84eca79` / `69030d
 | Eval 证据与预算闸门 | verified-current | 开发集 40/40；live 账本可用 |
 | holdout v1 | verified-current / retired | 唯一正式结果 46/80、`pass^4=0.35`；禁止重跑 |
 | Preparation Agent | **verified-current** | 核心 `1b034cd`；公开 UI `preparation_scripted`；本地可选 `preparation_live` |
-| 宿主确认、并发、UI、公开演示 | **updated** | reject/tool_trace/补槽 + 浏览器手工验收；Demo https://rivet-public-demo.onrender.com/ （`preparation_scripted`）；Phase 5 Postgres 仍待拍板（见 `docs/15_review_recommendations.md`） |
+| 宿主确认、并发、UI、公开演示 | **verified-current** | reject/tool_trace/补槽 + 浏览器手工验收；Demo https://rivet-public-demo.onrender.com/ （`preparation_scripted`）；Phase 5 v0 以 SQLite 串行写为界（`tests/test_action_concurrency.py`）；PostgreSQL 不在作品集完成范围内 |
 | 转人工闭环（demo 宿主） | **updated** | reject / 会话限额 / live 预算耗尽 → 落 `SupportTicket` 并回传工单号（按原因去重）；Agent 保持精确 9 工具；live 预算 run_id 派生修复 |
 | 护栏分层（live demo） | **updated** | 每会话 attempt 软闸门（触发转人工）+ 模型路由预留（query/action 双模型，留空回退）；全局 ¥20/¥18 硬上限不变 |
 | 决策审计快照 | **updated** | 每次执行在同一事务写 `DecisionSnapshot`（规则版本/政策版本/资格输入/确认来源/结果；不含凭证）；幂等重放不重复写 |
@@ -46,7 +46,7 @@ holdout 失败后加固链：`9337e55`（prompt/回归）→ `84eca79` / `69030d
 | 公开回归 7×4（加固后现役） | **passed** | `eval-20260731t102036z-9be142ce84ec` **28/28** @ `f7f221a`；`pass^4=1.00`；业务写入 0 |
 | holdout v2 | **failed / retired** | 唯一正式跑 44/80、`pass^4=0.40`；禁止同题集重跑；见 `docs/testing/holdout-v2-postmortem.md` |
 | 作品集对外叙事 | **updated** | README 指标与 holdout FAIL→加固→复验对齐；README + `README_DETAILED` 行业对标章节；公开仓与 Demo URL 已回填；现役收口意见见 `docs/15_review_recommendations.md` |
-| 架构决策记录 | **updated** | `docs/14_architecture_decisions.md`：单 Agent / 确定性后端 / 结构化政策 / 原子命题裁判 / 自研评测 / 预算闸门 |
+| 架构决策记录 | **updated** | `docs/14_architecture_decisions.md`：单 Agent / 确定性后端 / 结构化政策 / 原子命题裁判 / 自研评测 / 预算闸门 / v0 SQLite 并发边界（ADR-7） |
 | 指标口径与合规叙事 | **updated** | README + `evals/README.md` 补充 resolution/deflection/handoff 口径定义与成本换算；演示 UI 增加「本回复由 AI 生成」标识；README 增 PIPL/PCI 声明 |
 | 公开 GitHub | **created** | https://github.com/NafYoung/customer-service-agent-v0 |
 | 生产运行态 | not-applicable | 托管演示为作品原型，非生产 |
@@ -139,7 +139,7 @@ holdout，需在干净树上重绑校准 + 同提交公开回归。
 4. ~~holdout 失败后 Prompt/回归/裁判加固 + 公开 7×4 复验。~~ **完成。**
 5. ~~作品集叙事收口（README + Phase 6 清单）。~~ **完成（本地）。**
 6. ~~Phase 6：公开仓 + 托管 Demo。~~ **完成**（GitHub + https://rivet-public-demo.onrender.com/ ，`preparation_scripted`）。卫生清单见 `docs/12_phase6_publish_checklist.md`。
-7. Phase 5 Postgres：仍待拍板（窄证明或正式降级，见 `docs/15_review_recommendations.md`）。未拍板前不扩并发测试面。
+7. ~~Phase 5 Postgres 拍板。~~ **选项 B（2026-09-02）**：v0 以 SQLite 库级串行写为验收门；PostgreSQL 行锁 / 最后一件库存线性化不在作品集完成范围内。证据：`docs/11_phase5_concurrency_plan.md` + `tests/test_action_concurrency.py`。
 8. 可选（需新授权）：新 holdout 题集（新 `case_set_sha256`，先重绑校准）；**禁止**同题集调参重跑。离线路由门变绿前不要开 v3。
 
 ## 不可突破的恢复边界
@@ -147,4 +147,4 @@ holdout，需在干净树上重绑校准 + 同提交公开回归。
 - 总 DeepSeek 费用硬上限 ¥20；自动执行上限 ¥18。
 - 模型永远不能获得认证、`present`、`confirm`、`execute`、debug 或任意 SQL/网络工具。
 - holdout v1 / v2 均已退役，禁止同题重跑。
-- 不为展示引入多 Agent、LangGraph、MCP 或完整 Eval 框架。
+- 不为展示引入多 Agent、LangGraph、MCP、完整 Eval 框架或 PostgreSQL 迁库。

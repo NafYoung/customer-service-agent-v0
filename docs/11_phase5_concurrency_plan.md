@@ -2,8 +2,9 @@
 
 ## 读者
 
-实现者。公开演示切片见 `docs/10_public_demo_status.md`；完整验收合同见
-`docs/06_portfolio_completion_plan.md` §Phase 5。
+实现者。公开演示切片见 `docs/10_public_demo_status.md`；v0 验收合同见
+`docs/06_portfolio_completion_plan.md` §Phase 5（2026-09-02 选项 B：SQLite
+可证项；PostgreSQL **不在作品集完成范围内**）。
 
 ## 目标
 
@@ -35,9 +36,10 @@
 - 库存条件更新在高并发下的线性化（需 PG 或等价）；
 - 故障注入半提交后的完整跨连接回滚矩阵。
 
-## 需要 PostgreSQL（后续）才闭合的部分
+## v0 明确不声称（生产化才需要）
 
-按作品集合同，完整 Phase 5 仍需：
+以下**不在作品集完成范围内**。需要 PostgreSQL 或等价引擎才能声称，列入
+「生产化前必须修改」，不阻塞 v0：
 
 1. PostgreSQL + Alembic 并发验证环境（当前 Dockerfile 未引入，**本骨架不迁**）。
 2. 库存 `UPDATE … WHERE available_qty > 0` 或可靠行锁；两审批抢最后一件只成一单。
@@ -81,8 +83,8 @@ prepare→present→confirm 助手。
 2. 双线程不同 `ui_event_id` 竞争 confirm → 恰好一胜（200）一负
    （409 `APPROVAL_ALREADY_CONFIRMED`）；库内仍 1/1，订单 version 只 +1。
 
-## 停止条件（本骨架）
+## 停止条件（v0）
 
 - 上表 SQLite 可证项有聚焦 pytest 锁定；
-- 本文写清与 PG 的边界；
-- **不**引入 Postgres 服务或 Alembic，除非后续明确开迁库切片。
+- 本文写清与 PG 的边界，且合同已把 PG 排除出作品集完成范围；
+- **不**引入 Postgres 服务或 Alembic，除非另开生产化迁库切片。

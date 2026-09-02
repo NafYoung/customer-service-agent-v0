@@ -21,6 +21,14 @@ _FORBIDDEN_PHRASES = (
     "托管演示 URL | **未部署**",
     "托管演示 URL |**未部署**",
     "托管仍见",
+    "仍待拍板",
+)
+
+_PHASE5_CONTRACT_DOCS = (
+    PROJECT_ROOT / "docs" / "06_portfolio_completion_plan.md",
+    PROJECT_ROOT / "docs" / "09_project_status.md",
+    PROJECT_ROOT / "docs" / "11_phase5_concurrency_plan.md",
+    PROJECT_ROOT / "docs" / "15_review_recommendations.md",
 )
 
 
@@ -50,3 +58,16 @@ def test_price_snapshot_expiry_is_documented_without_rewriting_rates() -> None:
         PROJECT_ROOT / "pricing" / "deepseek-v4-flash-2026-08-19.json"
     ).read_text(encoding="utf-8")
     assert '"valid_until": "2026-08-26T03:15:00Z"' in snapshot
+
+
+def test_phase5_v0_is_sqlite_bound_not_postgres() -> None:
+    for path in _PHASE5_CONTRACT_DOCS:
+        text = path.read_text(encoding="utf-8")
+        assert "不在作品集完成范围" in text, path
+        assert "仍待拍板" not in text, path
+
+    plan = (PROJECT_ROOT / "docs" / "06_portfolio_completion_plan.md").read_text(
+        encoding="utf-8"
+    )
+    assert "PostgreSQL + Alembic 作为并发验证环境" not in plan
+    assert "选项 B" in plan

@@ -14,7 +14,7 @@
         └─ 宿主确认令牌 → 确定性后端执行（幂等）
 ```
 
-- FastAPI + SQLAlchemy + SQLite；跨客户隔离  
+- FastAPI + SQLAlchemy + SQLite；跨客户隔离；v0 并发以库级串行写为界，不声称 PostgreSQL 行锁  
 - 取消 / 退货 / 换货：确定性资格规则 + 版本化政策  
 - Eval：开发集 / 公开回归 / holdout（含失败后归因复验）+ 持久预算闸门  
 - CI：`ruff` · `mypy` · 覆盖率 · Schema freshness · `pip-audit` · Gitleaks  

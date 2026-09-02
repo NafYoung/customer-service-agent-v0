@@ -9,14 +9,14 @@
 架构方向正确，不要改。卖点是「模型只能理解 / 查询 / prepare，写操作必须
 `prepare → 宿主展示 → 按钮确认 → 确定性 execute`」，不是聊天覆盖率。
 
-当前短板不在再加工具，而在三件事：
+当前短板不在再加工具，而在两件事：
 
-1. 对外文档互相打架，削弱「诚实证据」叙事（本轮已对齐现役入口）。
-2. Phase 5 合同仍要求 PostgreSQL 并发证明，作品集却已按 Phase 6 公开发布。
-3. 面试入口过重：`docs/` 约 50+ Markdown，面试官不会读完。
+1. 对外文档曾互相打架，削弱「诚实证据」叙事（现役入口已对齐）。
+2. 面试入口过重：`docs/` 约 50+ Markdown，面试官不会读完。
 
-按 `docs/06` §8，项目**还不能标完成**：Postgres 并发证明未闭合；未参与实现的
-新智能体平行审查未做。
+Phase 5 已按选项 B 收口（2026-09-02）：v0 以 SQLite 串行写为验收门，PostgreSQL
+**不在作品集完成范围内**。按 `docs/06` §8，项目**还不能标完成**的剩余项是：
+未参与实现的新智能体平行审查。
 
 ## 已核对事实（不要回退）
 
@@ -32,31 +32,29 @@
 
 ## 本轮已改
 
-对齐现役入口，不改业务代码、不延长价格窗口、不重跑评测：
+对齐现役入口，并按选项 B 收口 Phase 5 合同，不改业务代码、不延长价格窗口、
+不重跑评测、不引入 PostgreSQL：
 
 - `docs/README_DETAILED.md`：宿主 UI 已接入；GitHub / Demo 已公开。
 - `docs/12_phase6_publish_checklist.md`：Demo URL 已部署；默认模式与
   `render.yaml` 一致为 `preparation_scripted`。
-- `docs/09_project_status.md` / `docs/10_public_demo_status.md`：核对日与
-  Phase 6 状态。
-- `tests/test_public_status_docs.py`：禁止现役入口再写「UI 未接入 / Demo 未部署 /
-  仍待选平台」。
+- `docs/06_portfolio_completion_plan.md` / `docs/09` / `docs/11`：Phase 5 v0
+  以 SQLite 可证项验收；PostgreSQL 不在作品集完成范围内。
+- `tests/test_public_status_docs.py`：禁止现役入口把 Demo / UI / Phase 5 写成未决。
 
-## 待你拍板（二选一，不要悬着）
+## 已拍板：Phase 5 选项 B（2026-09-02）
 
-Phase 5 现在是合同漏洞：SQLite 能证幂等重放和竞争 confirm 不双执行，**不能**证
-行锁、最后一件库存、故障半提交回滚。`docs/11_phase5_concurrency_plan.md` 已写清。
+SQLite 能证幂等重放和竞争 confirm 不双执行，**不能**证行锁、最后一件库存、
+故障半提交回滚。`docs/11_phase5_concurrency_plan.md` 已写清。
 
-| 选项 | 做什么 | 何时选 |
-|---|---|---|
-| A. 窄证明 | Compose 加 Postgres；只加「两审批抢最后一件库存」+「杀进程后同审批重试回到首次 `ActionExecution`」 | 面试会追问并发，且你愿意扩测试面 |
-| B. 正式降级 | 在 `docs/06` / `docs/09` 写明 v0 以 SQLite 串行写为边界，PG 不在作品集完成范围内 | 默认。作品级原型够用 |
-
-未拍板前，不要一边说 Phase 6 已发布，一边让 Phase 5 无限「仍待」。
+决定：v0 以 SQLite 库级串行写为边界。PostgreSQL **不在作品集完成范围内**。
+不引入 Compose Postgres、不扩并发测试面。生产化迁库仍列在
+`docs/README_DETAILED.md`「生产化前必须修改」。
 
 ## 不要做
 
 - 多 Agent / LangGraph / MCP / 完整 Eval 框架 / 政策向量 RAG。
+- 为展示引入 PostgreSQL / Alembic / 双引擎测试矩阵。
 - 同题重跑 holdout v1 / v2；在离线路由门变绿前开 holdout v3。
 - 把开发集 `40/40` 或公开回归 `28/28` 说成 holdout。
 - 公开 Demo 部署 live DeepSeek 或项目 Key。
@@ -95,6 +93,6 @@ A/B/C 做成离线回归。新 holdout 需要新 `case_set`、重绑 49/49 校�
 
 ## 建议下一刀（需另授权）
 
-1. Phase 5：选 A 或 B，改合同并改测试/文档。
+1. 用 `evals/run_shadow_offline.py` 把 holdout 失败聚类 A/B/C 做成离线路由回归。
 2. 可选：一页「面试 3 分钟」脚本（可附确认卡截图，抗 Render 冷启动）。
-3. 未拍板前不要动 Agent、工具面或付费路径。
+3. 未另授权前不要动 Agent、工具面、付费路径或数据库引擎。

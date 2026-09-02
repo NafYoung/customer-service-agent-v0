@@ -98,18 +98,18 @@ docker compose --profile public_demo up --build public-demo
 
 ## 尚未完成（留给后续）
 
-### Phase 5（并发 / 故障）
-
-- **骨架已落**：`docs/11_phase5_concurrency_plan.md` + `tests/test_action_concurrency.py`
-  （SQLite 可证：幂等重放、竞争 confirm 不双执行；2/2 通过）
-- 仍待拍板：PostgreSQL + Alembic、库存竞争、故障注入与完整回滚、跨连接丢响应重试
-  （窄证明或正式降级，见 `docs/15_review_recommendations.md`）
-
 ### Holdout（独立评测）
 
 - v1 / v2 均已唯一正式运行并**退役**；禁止同题重跑。
 - v2 聚合 FAIL 与加固：`docs/testing/holdout-v2-postmortem.md`。
 - 新盲测需新 `case_set` + 重绑校准 + 另授权。
+
+## Phase 5（并发 / 故障）
+
+**v0 已收口（选项 B，2026-09-02）**：SQLite 可证幂等重放、竞争 confirm 不双执行
+（`tests/test_action_concurrency.py` 2/2）。PostgreSQL 行锁、最后一件库存线性化、
+故障半提交跨连接回滚**不在作品集完成范围内**；生产化再迁库。边界：
+`docs/11_phase5_concurrency_plan.md`。
 
 ## Phase 6 发布门（GitHub / 公开站）
 
@@ -124,6 +124,7 @@ docker compose --profile public_demo up --build public-demo
 公网 URL 已回填 README。后续改 `DEMO_AGENT_MODE` 后需 Manual Deploy 一次。
 步骤：`docs/13_hosted_demo_render.md`。收口意见：
 `docs/15_review_recommendations.md`。
+
 ## 关键文件
 
 - `app/demo/` — BFF、会话、scripted Preparation runner、离线回放、确认投影
@@ -136,7 +137,7 @@ docker compose --profile public_demo up --build public-demo
 - `tests/test_demo_preparation_integration.py`
 - `tests/test_action_concurrency.py` — Phase 5 SQLite 并发骨架
 - `docs/08_host_confirmation_public_demo.md` — 权威安全设计
-- `docs/11_phase5_concurrency_plan.md` — SQLite vs PostgreSQL 边界
+- `docs/11_phase5_concurrency_plan.md` — SQLite 可证边界（v0 不迁 PostgreSQL）
 - `docs/12_phase6_publish_checklist.md` — 公开发布检查表
 - `docs/13_hosted_demo_render.md` — Render 托管步骤
 - `docs/15_review_recommendations.md` — 现役收口意见
