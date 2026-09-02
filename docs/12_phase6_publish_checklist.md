@@ -8,7 +8,7 @@
 权威验收合同仍以 `docs/06_portfolio_completion_plan.md` §Phase 6 为准；
 本文件是可执行检查表，**不**自动创建远程仓库或部署。
 
-## 当前状态（2026-07-31）
+## 当前状态（2026-09-02）
 
 | 项 | 状态 |
 |---|---|
@@ -16,8 +16,9 @@
 | Docker `public_demo` profile（无 DeepSeek Key） | 可跑 |
 | 发布卫生脚本 | `scripts/check_public_demo_secrets.sh` + `scripts/check_publish_preflight.sh` |
 | 公开 GitHub URL | **已创建**：[NafYoung/customer-service-agent-v0](https://github.com/NafYoung/customer-service-agent-v0) |
-| 托管演示 URL | **未部署** |
+| 托管演示 URL | **已部署**：https://rivet-public-demo.onrender.com/ （`preparation_scripted`，无 DeepSeek Key） |
 | README 指标与 holdout 叙事 | 已与 `docs/09` 对齐 |
+| 现役收口意见 | `docs/15_review_recommendations.md` |
 
 ## A. 发布前卫生（本地，免费）
 
@@ -81,7 +82,8 @@ gitleaks detect --source . --no-git || true
 
 推荐约束：
 
-- 默认 `APP_MODE=public_demo` + `DEMO_AGENT_MODE=offline_replay`；
+- 默认 `APP_MODE=public_demo` + `DEMO_AGENT_MODE=preparation_scripted`
+  （`render.yaml` 现役；`offline_replay` 仅作更短路径对照）；
 - **不**注入项目 DeepSeek Key；
 - `DEMO_COOKIE_SECURE=true`（HTTPS）；
 - `DEMO_ALLOWED_ORIGIN` 可空（回退 `RENDER_EXTERNAL_URL`），或锁死为公网 Origin；
@@ -112,6 +114,7 @@ Key 子串。
 - `docs/09_project_status.md` — 现役评测证据
 - `docs/10_public_demo_status.md` — 本地演示进度
 - `docs/13_hosted_demo_render.md` — Render 托管步骤
+- `docs/15_review_recommendations.md` — 现役收口意见
 - `docs/testing/holdout-v2-postmortem.md` — holdout FAIL 聚合归因
 - `render.yaml` — Render Blueprint
 - `scripts/check_public_demo_secrets.sh`

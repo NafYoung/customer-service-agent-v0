@@ -154,4 +154,4 @@ uvicorn app.main:app --reload --env-file .env
 - 演示账号：`linfan@example.com` / `246810`  
 - 测试：`pytest` · `make verify`  
 
-更多（架构图、取消全流程 curl、Eval 协议、文档索引）→ [`docs/README_DETAILED.md`](docs/README_DETAILED.md) · [`docs/09_project_status.md`](docs/09_project_status.md)
+更多（架构图、取消全流程 curl、Eval 协议、文档索引）→ [`docs/README_DETAILED.md`](docs/README_DETAILED.md) · [`docs/09_project_status.md`](docs/09_project_status.md) · [`docs/15_review_recommendations.md`](docs/15_review_recommendations.md)

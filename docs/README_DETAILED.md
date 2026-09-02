@@ -2,7 +2,7 @@
 
 一个面向求职作品的鞋服电商售后项目。当前版本是**确定性交易后端原型 + 分阶段有界单 Agent 核心**，已经具备 DeepSeek 的 OpenAI-compatible 适配，但不是已经闭合全部安全边界的端到端客服 Agent。
 
-它把语言理解与交易执行分开：只读 Agent 仍固定使用 6 个查询与资格工具；独立 Preparation Agent 核心可使用这 6 个工具和 3 个明确的 `prepare_*` 工具，但不能认证、转人工、展示、确认或执行。公开宿主 UI 尚未接入该核心。当前保存的是用于开发和评测的工具调试轨迹，不是安全审计日志。
+它把语言理解与交易执行分开：只读 Agent 仍固定使用 6 个查询与资格工具；独立 Preparation Agent 核心可使用这 6 个工具和 3 个明确的 `prepare_*` 工具，但不能认证、转人工、展示、确认或执行。公开宿主 UI 已接入该核心（`preparation_scripted`；live 仅本地）。工具调试轨迹仍不是安全审计日志；每次执行另写 `DecisionSnapshot`（不含凭证）。
 
 所有品牌、客户、订单、物流和政策均为合成数据，不包含真实公司或客户资料。
 
@@ -28,9 +28,11 @@
 
 尚未完成 / 明确不做：
 
-- 公开 GitHub 仓库与托管演示 URL（仓库已公开；托管仍见
-  `docs/12_phase6_publish_checklist.md`）；
-- PostgreSQL 高并发库存、完整故障注入与生产身份 / 审计系统；
+- 公开 GitHub 与托管 Demo 已上线（https://github.com/NafYoung/customer-service-agent-v0 、
+  https://rivet-public-demo.onrender.com/）；Phase 6 卫生清单见
+  `docs/12_phase6_publish_checklist.md`。
+- PostgreSQL 高并发库存、完整故障注入与生产身份 / 审计系统（Phase 5 仍待拍板，
+  见 `docs/15_review_recommendations.md`）；
 - 向量检索、真实电商 / ERP / 物流 / 支付接口；
 - **禁止**同题集重跑已退役的 holdout v1 / v2；新盲测需新题集与另授权。
 
@@ -418,10 +420,13 @@ provider request ID 或本机环境细节。
 - `docs/08_host_confirmation_public_demo.md`：宿主确认、零密钥公开演示和
   生产边界设计；
 - `docs/09_project_status.md`：当前完成度、验证证据和下次恢复顺序；
-- `docs/10_public_demo_status.md`：本地公开演示进度与 Phase 4–6 缺口；
-- `docs/research/`：2026-08 品类调研快照（总报告 + 国内原始报告 + Canvas 面板）；
+- `docs/10_public_demo_status.md`：本地公开演示进度与 Phase 5 缺口；
+- `docs/11_phase5_concurrency_plan.md`：SQLite 可证边界与 Postgres 仍待项；
+- `docs/12_phase6_publish_checklist.md`：公开 GitHub / 托管卫生清单（Demo 已部署）；
+- `docs/13_hosted_demo_render.md`：Render 托管步骤；
 - `docs/14_architecture_decisions.md`：架构决策记录（单 Agent、确定性后端、结构化政策、原子命题裁判、自研评测、预算闸门）；
-- `docs/12_phase6_publish_checklist.md`：首次公开 GitHub / 托管前检查表；
+- `docs/15_review_recommendations.md`：2026-09-02 修改意见（收口，不改架构）；
+- `docs/research/`：2026-08 品类调研快照（总报告 + 国内原始报告 + Canvas 面板）；
 - `docs/testing/readonly-holdout-v2-protocol.md`：v1 退役后的校准门、
   v2 封存和唯一正式运行协议；
 - `docs/testing/holdout-v2-postmortem.md`：holdout v2 FAIL 聚合归因与加固；

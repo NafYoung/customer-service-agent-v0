@@ -102,26 +102,28 @@ docker compose --profile public_demo up --build public-demo
 
 - **骨架已落**：`docs/11_phase5_concurrency_plan.md` + `tests/test_action_concurrency.py`
   （SQLite 可证：幂等重放、竞争 confirm 不双执行；2/2 通过）
-- 仍待：PostgreSQL + Alembic、库存竞争、故障注入与完整回滚、跨连接丢响应重试
-
-### Phase 6 发布门（GitHub / 公开站）
-
-清单：`docs/12_phase6_publish_checklist.md`。本地卫生脚本：
-
-```bash
-./scripts/check_public_demo_secrets.sh
-./scripts/check_publish_preflight.sh
-```
-
-公网 URL 已回填 README。Render 改 `DEMO_AGENT_MODE` 后需 Manual Deploy 一次。
-
-步骤：`docs/13_hosted_demo_render.md`。
+- 仍待拍板：PostgreSQL + Alembic、库存竞争、故障注入与完整回滚、跨连接丢响应重试
+  （窄证明或正式降级，见 `docs/15_review_recommendations.md`）
 
 ### Holdout（独立评测）
 
 - v1 / v2 均已唯一正式运行并**退役**；禁止同题重跑。
 - v2 聚合 FAIL 与加固：`docs/testing/holdout-v2-postmortem.md`。
 - 新盲测需新 `case_set` + 重绑校准 + 另授权。
+
+## Phase 6 发布门（GitHub / 公开站）
+
+**已完成**：公开仓 + Demo URL（`preparation_scripted`）。清单：
+`docs/12_phase6_publish_checklist.md`。本地卫生脚本：
+
+```bash
+./scripts/check_public_demo_secrets.sh
+./scripts/check_publish_preflight.sh
+```
+
+公网 URL 已回填 README。后续改 `DEMO_AGENT_MODE` 后需 Manual Deploy 一次。
+步骤：`docs/13_hosted_demo_render.md`。收口意见：
+`docs/15_review_recommendations.md`。
 ## 关键文件
 
 - `app/demo/` — BFF、会话、scripted Preparation runner、离线回放、确认投影
@@ -137,6 +139,7 @@ docker compose --profile public_demo up --build public-demo
 - `docs/11_phase5_concurrency_plan.md` — SQLite vs PostgreSQL 边界
 - `docs/12_phase6_publish_checklist.md` — 公开发布检查表
 - `docs/13_hosted_demo_render.md` — Render 托管步骤
+- `docs/15_review_recommendations.md` — 现役收口意见
 - `docs/testing/holdout-v2-postmortem.md` — holdout v2 FAIL 归因
 - `render.yaml` — Render Blueprint
 - `docs/handoff-holdout-v2.md` — holdout v2 独立智能体交接（题集已退役）

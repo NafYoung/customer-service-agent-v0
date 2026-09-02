@@ -1,6 +1,6 @@
 # 项目现役状态
 
-最后核对：2026-08-19（P1-2 live 每会话软闸门 + 模型路由预留；此前 P1-1 转人工闭环接线；2026-08-18 行业对标章节）
+最后核对：2026-09-02（文档现役入口对齐 + 修改意见 `docs/15_review_recommendations.md`；此前 2026-08-19 P1-2 live 每会话软闸门 + 模型路由预留）
 
 本地分支：以当前 Git 为准
 
@@ -32,7 +32,7 @@ holdout 失败后加固链：`9337e55`（prompt/回归）→ `84eca79` / `69030d
 | Eval 证据与预算闸门 | verified-current | 开发集 40/40；live 账本可用 |
 | holdout v1 | verified-current / retired | 唯一正式结果 46/80、`pass^4=0.35`；禁止重跑 |
 | Preparation Agent | **verified-current** | 核心 `1b034cd`；公开 UI `preparation_scripted`；本地可选 `preparation_live` |
-| 宿主确认、并发、UI、公开演示 | **updated** | reject/tool_trace/补槽 + 浏览器手工验收；Demo https://rivet-public-demo.onrender.com/ （仍 `preparation_scripted`）；Phase 5 Postgres 仍待 |
+| 宿主确认、并发、UI、公开演示 | **updated** | reject/tool_trace/补槽 + 浏览器手工验收；Demo https://rivet-public-demo.onrender.com/ （`preparation_scripted`）；Phase 5 Postgres 仍待拍板（见 `docs/15_review_recommendations.md`） |
 | 转人工闭环（demo 宿主） | **updated** | reject / 会话限额 / live 预算耗尽 → 落 `SupportTicket` 并回传工单号（按原因去重）；Agent 保持精确 9 工具；live 预算 run_id 派生修复 |
 | 护栏分层（live demo） | **updated** | 每会话 attempt 软闸门（触发转人工）+ 模型路由预留（query/action 双模型，留空回退）；全局 ¥20/¥18 硬上限不变 |
 | 决策审计快照 | **updated** | 每次执行在同一事务写 `DecisionSnapshot`（规则版本/政策版本/资格输入/确认来源/结果；不含凭证）；幂等重放不重复写 |
@@ -45,7 +45,7 @@ holdout 失败后加固链：`9337e55`（prompt/回归）→ `84eca79` / `69030d
 | 公开回归 7×4（holdout 绑定历史） | historical | `eval-20260731t080946z-dd64553ceb3e` **28/28** @ `8884b1a` |
 | 公开回归 7×4（加固后现役） | **passed** | `eval-20260731t102036z-9be142ce84ec` **28/28** @ `f7f221a`；`pass^4=1.00`；业务写入 0 |
 | holdout v2 | **failed / retired** | 唯一正式跑 44/80、`pass^4=0.40`；禁止同题集重跑；见 `docs/testing/holdout-v2-postmortem.md` |
-| 作品集对外叙事 | **updated** | README 指标与 holdout FAIL→加固→复验对齐；README + `README_DETAILED` 新增行业对标章节（per-resolution 成本 / Air Canada 判例 / 仅退款退潮背景）；`docs/12_phase6_publish_checklist.md` |
+| 作品集对外叙事 | **updated** | README 指标与 holdout FAIL→加固→复验对齐；README + `README_DETAILED` 行业对标章节；公开仓与 Demo URL 已回填；现役收口意见见 `docs/15_review_recommendations.md` |
 | 架构决策记录 | **updated** | `docs/14_architecture_decisions.md`：单 Agent / 确定性后端 / 结构化政策 / 原子命题裁判 / 自研评测 / 预算闸门 |
 | 指标口径与合规叙事 | **updated** | README + `evals/README.md` 补充 resolution/deflection/handoff 口径定义与成本换算；演示 UI 增加「本回复由 AI 生成」标识；README 增 PIPL/PCI 声明 |
 | 公开 GitHub | **created** | https://github.com/NafYoung/customer-service-agent-v0 |
@@ -58,7 +58,7 @@ holdout 失败后加固链：`9337e55`（prompt/回归）→ `84eca79` / `69030d
 | 规范 live 路径 | `artifacts/private/deepseek-budget.sqlite3` |
 | 正式硬上限 | ¥20（未上调） |
 | 自动执行上限 | ¥18（未上调） |
-| 价格快照 | 2026-08-19 刷新：官方定价改为空闲/高峰双档；按**高峰档保守上界**录入（缓存命中 0.10 / 未命中 3.0 / 输出 9.0 元每百万）；`pricing/deepseek-v4-flash-2026-08-19.json`，`valid_until` 2026-08-26 |
+| 价格快照 | 2026-08-19 刷新：官方定价改为空闲/高峰双档；按**高峰档保守上界**录入（缓存命中 0.10 / 未命中 3.0 / 输出 9.0 元每百万）；`pricing/deepseek-v4-flash-2026-08-19.json`，`valid_until` 2026-08-26。**墙钟已过期（2026-09-02）**：未授权新快照前，live DeepSeek 必须失败关闭；禁止延长 `valid_until` 或编造费率。公开 Demo 无 Key，不受影响 |
 | 当前 remaining_execution | 以 live 账本为准（加固后多次公开回归后仍远高于执行闸） |
 | reserved / uncertain | 以 live 账本为准 |
 
@@ -138,8 +138,9 @@ holdout，需在干净树上重绑校准 + 同提交公开回归。
 3. ~~holdout v2 唯一正式运行。~~ **已跑；未过门；题集退役。**
 4. ~~holdout 失败后 Prompt/回归/裁判加固 + 公开 7×4 复验。~~ **完成。**
 5. ~~作品集叙事收口（README + Phase 6 清单）。~~ **完成（本地）。**
-6. Phase 6：公开仓已创建并 push；可选托管演示仍待选平台（见 `docs/12_phase6_publish_checklist.md` §D）。
-7. 可选（需新授权）：新 holdout 题集（新 `case_set_sha256`，先重绑校准）；**禁止**同题集调参重跑。
+6. ~~Phase 6：公开仓 + 托管 Demo。~~ **完成**（GitHub + https://rivet-public-demo.onrender.com/ ，`preparation_scripted`）。卫生清单见 `docs/12_phase6_publish_checklist.md`。
+7. Phase 5 Postgres：仍待拍板（窄证明或正式降级，见 `docs/15_review_recommendations.md`）。未拍板前不扩并发测试面。
+8. 可选（需新授权）：新 holdout 题集（新 `case_set_sha256`，先重绑校准）；**禁止**同题集调参重跑。离线路由门变绿前不要开 v3。
 
 ## 不可突破的恢复边界
 
