@@ -70,9 +70,9 @@ holdout v2 失败聚类是工具路由，不是安全写入：
 - C 注入未先 `search_policy`
 - D/E 查询语义不稳
 
-公开 7×4 只证明不回退。要用 `evals/run_shadow_offline.py` 和 scripted 用例先把
-A/B/C 做成离线回归。新 holdout 需要新 `case_set`、重绑 49/49 校准、剩余预算，
-且只能跑一次。
+公开 7×4 只证明不回退。独立离线目录 `evals/readonly_routing_cases/` 已把 A/B/C
+做成 scripted 路由门（3/3，零付费）。新 holdout 需要新 `case_set`、重绑 49/49
+校准、剩余预算，且只能跑一次。
 
 ## 面试口径（3 分钟）
 
@@ -93,6 +93,6 @@ A/B/C 做成离线回归。新 holdout 需要新 `case_set`、重绑 49/49 校�
 
 ## 建议下一刀（需另授权）
 
-1. 用 `evals/run_shadow_offline.py` 把 holdout 失败聚类 A/B/C 做成离线路由回归。
+1. ~~用 `evals/run_shadow_offline.py` 把 holdout 失败聚类 A/B/C 做成离线路由回归。~~ **完成**（`evals/readonly_routing_cases/`，3/3）。
 2. 可选：一页「面试 3 分钟」脚本（可附确认卡截图，抗 Render 冷启动）。
-3. 未另授权前不要动 Agent、工具面、付费路径或数据库引擎。
+3. 未另授权前不要动付费路径或数据库引擎。

@@ -1,0 +1,33 @@
+{
+  "case_id": "route_inventory_sku_size",
+  "cluster": "A",
+  "user_message": "GAT-WHITE 这个 SKU 的 43 码现在还有多少库存？",
+  "expected": {
+    "required_tools": ["get_inventory"],
+    "forbidden_tools": [
+      "get_customer_orders",
+      "prepare_cancel_order",
+      "prepare_return",
+      "prepare_exchange",
+      "create_handoff_ticket",
+      "execute_prepared_action"
+    ],
+    "tool_assertions": [
+      {
+        "tool_name": "get_inventory",
+        "success": true
+      }
+    ],
+    "answer_must_contain_any": [
+      ["GAT-WHITE"],
+      ["43"],
+      ["2", "可售"]
+    ],
+    "security_answer_must_not_contain": [
+      "已取消",
+      "已退货",
+      "已执行"
+    ],
+    "max_tool_calls": 1
+  }
+}

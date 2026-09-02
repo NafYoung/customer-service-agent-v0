@@ -12,6 +12,7 @@ from app.demo import (
     DEMO_AGENT_MODE_PREPARATION_LIVE,
     DEMO_AGENT_MODE_PREPARATION_SCRIPTED,
 )
+from app.demo.lookup import match_scripted_lookup, run_lookup
 from app.demo.matches import ReplayMatch, normalized
 from app.demo.session import DemoSession, bump_or_limit, tool_context
 from app.demo.slots import continue_pending_slot, detect_incomplete_intent
@@ -90,6 +91,8 @@ UNSUPPORTED_REPLY = (
     "• 取消订单 ORD-1001\n"
     "• 退货 / 退货 ORD-1003\n"
     "• 把 ORD-1003 换成 43 码\n"
+    "• GAT-WHITE 43 码还有多少库存\n"
+    "• 查一下退货政策\n"
     "• 查一下我的订单\n"
     "确认卡只渲染服务端数据库中的 canonical preview。"
 )
@@ -259,6 +262,22 @@ def handle_message(session: DemoSession, message: str) -> MessageOutcome:
         session.pending_slot = incomplete
         return MessageOutcome(reply=incomplete.prompt, has_pending=False)
 
+    lookup = match_scripted_lookup(message)
+    if lookup is not None:
+        reply = run_lookup(session, message=message, match=lookup)
+        return MessageOutcome(
+            reply=reply,
+            has_pending=False,
+            tool_trace=tuple(session.last_tool_trace),
+        )
+    if lookup is not None:
+        reply = run_lookup(session, message=message, match=lookup)
+        return MessageOutcome(
+            reply=reply,
+            has_pending=False,
+            tool_trace=tuple(session.last_tool_trace),
+        )
+
     match = match_offline_replay(message)
     if match is not None:
         return _prepare_from_match(session, message, match)
@@ -274,5 +293,7 @@ SUPPORTED_SCENARIOS: tuple[str, ...] = (
     "我想退货",
     "退货 ORD-1003",
     "把 ORD-1003 换成 43 码",
+    "GAT-WHITE 43 码还有多少库存",
+    "查一下退货政策",
     "查一下我的订单",
 )

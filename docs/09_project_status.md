@@ -1,6 +1,6 @@
 # 项目现役状态
 
-最后核对：2026-09-02（Phase 5 选项 B：v0 以 SQLite 串行写为边界；此前文档现役入口对齐 + 修改意见 `docs/15_review_recommendations.md`）
+最后核对：2026-09-02（离线 A/B/C 路由门 `evals/readonly_routing_cases/`；此前 Phase 5 选项 B：v0 以 SQLite 串行写为边界）
 
 本地分支：以当前 Git 为准
 
@@ -38,7 +38,7 @@ holdout 失败后加固链：`9337e55`（prompt/回归）→ `84eca79` / `69030d
 | 决策审计快照 | **updated** | 每次执行在同一事务写 `DecisionSnapshot`（规则版本/政策版本/资格输入/确认来源/结果；不含凭证）；幂等重放不重复写 |
 | 幂等与状态机硬闸 | **updated** | 退货/换货执行增加「仅已签收可发起」硬闸；退货/换货进行中申请增加 SQLite 部分唯一索引兜底；`DecisionSnapshot.approval_id` 唯一；并发执行冲突映射 409 |
 | 凭证校验占位（宿主侧） | **updated** | `verify_return_evidence` 契约 + 确定性 mock（`FORGED-` 前缀演示风控）；仅宿主可用（`HOST_TOOL_NAMES`），永不进入 Agent allowlist；`/v1/evidence/verify` 路由含归属复核 |
-| shadow 离线回放 | **updated** | `evals/run_shadow_offline.py`：零付费/零写入的 scripted 覆盖+风险回放；公开回归基线 3/7 覆盖、3/7 风险（不与模型评测混同） |
+| shadow 离线回放 | **updated** | `evals/run_shadow_offline.py`：零付费/零写入的 scripted 覆盖+风险回放；公开回归基线 3/7 覆盖、3/7 风险（不与模型评测混同）；holdout 聚类 A/B/C 独立目录 `evals/readonly_routing_cases/` 路由 3/3 |
 | 回答强制引用 | **updated** | 两个系统提示词新增 Evidence citations（政策 ID/版本，禁编造）；scripted/离线回复带 `POL-* v0.1` 引用；独立引用用例目录 `evals/readonly_citation_cases/`（3 条，离线 shadow 校验 3/3；不动冻结的开发/回归集） |
 | 原子命题语义门 | **verified-current** | `atomic-claims-v4`；校准 **#4** @ `8884b1a` 49/49 |
 | DeepSeek 语义校准 | **passed** | #4：`eval-20260731t080100z-4d65de51789c` **49/49**；review GO |
@@ -140,7 +140,7 @@ holdout，需在干净树上重绑校准 + 同提交公开回归。
 5. ~~作品集叙事收口（README + Phase 6 清单）。~~ **完成（本地）。**
 6. ~~Phase 6：公开仓 + 托管 Demo。~~ **完成**（GitHub + https://rivet-public-demo.onrender.com/ ，`preparation_scripted`）。卫生清单见 `docs/12_phase6_publish_checklist.md`。
 7. ~~Phase 5 Postgres 拍板。~~ **选项 B（2026-09-02）**：v0 以 SQLite 库级串行写为验收门；PostgreSQL 行锁 / 最后一件库存线性化不在作品集完成范围内。证据：`docs/11_phase5_concurrency_plan.md` + `tests/test_action_concurrency.py`。
-8. 可选（需新授权）：新 holdout 题集（新 `case_set_sha256`，先重绑校准）；**禁止**同题集调参重跑。离线路由门变绿前不要开 v3。
+8. 可选（需新授权）：新 holdout 题集（新 `case_set_sha256`，先重绑校准）；**禁止**同题集调参重跑。离线 A/B/C 路由门见 `evals/readonly_routing_cases/`（3/3）。
 
 ## 不可突破的恢复边界
 

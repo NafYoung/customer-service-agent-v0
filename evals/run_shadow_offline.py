@@ -42,6 +42,9 @@ class ShadowCaseResult:
     error_code: str | None = None
     citation_pass: bool | None = None
     citation_missing_groups: tuple[int, ...] = ()
+    routing_pass: bool | None = None
+    routing_missing_tools: tuple[str, ...] = ()
+    routing_forbidden_hits: tuple[str, ...] = ()
 
 
 def _load_cases(case_dir: Path) -> list[dict[str, object]]:
@@ -79,6 +82,39 @@ def _citation_check(
     return (not missing), missing
 
 
+def _trace_tool_names(
+    trace: tuple[dict[str, object], ...],
+) -> tuple[str, ...]:
+    return tuple(str(item.get("tool_name") or "") for item in trace)
+
+
+def _routing_check(
+    expected: dict[str, object] | None,
+    tool_names: tuple[str, ...],
+) -> tuple[bool | None, tuple[str, ...], tuple[str, ...]]:
+    if not isinstance(expected, dict):
+        return None, (), ()
+    required = [str(name) for name in (expected.get("required_tools") or [])]
+    forbidden = [str(name) for name in (expected.get("forbidden_tools") or [])]
+    order = [str(name) for name in (expected.get("required_tool_order") or [])]
+    if not required and not forbidden and not order:
+        return None, (), ()
+    missing = tuple(name for name in required if name not in tool_names)
+    hits = tuple(name for name in forbidden if name in tool_names)
+    order_ok = True
+    if order:
+        indices: list[int] = []
+        for name in order:
+            try:
+                indices.append(tool_names.index(name))
+            except ValueError:
+                order_ok = False
+                break
+        if order_ok and indices != sorted(indices):
+            order_ok = False
+    return (not missing and not hits and order_ok), missing, hits
+
+
 def _replay_case(demo: DemoSession, case: dict[str, object]) -> ShadowCaseResult:
     case_id = str(case["case_id"])
     try:
@@ -105,16 +141,24 @@ def _replay_case(demo: DemoSession, case: dict[str, object]) -> ShadowCaseResult
         expected if isinstance(expected, dict) else None,
         outcome.reply if outcome is not None else "",
     )
+    tool_trace = tuple(outcome.tool_trace) if outcome is not None else ()
+    routing_pass, routing_missing, routing_hits = _routing_check(
+        expected if isinstance(expected, dict) else None,
+        _trace_tool_names(tool_trace),
+    )
     return ShadowCaseResult(
         case_id=case_id,
         covered=covered,
         risk_prepare_contradicts_expectation=contradicts,
-        tool_trace=tuple(outcome.tool_trace) if outcome is not None else (),
+        tool_trace=tool_trace,
         handoff_ticket_ids=tickets,
         business_writes=writes,
         error_code=error_code,
         citation_pass=citation_pass,
         citation_missing_groups=citation_missing,
+        routing_pass=routing_pass,
+        routing_missing_tools=routing_missing,
+        routing_forbidden_hits=routing_hits,
     )
 
 
@@ -146,6 +190,9 @@ def run_shadow_replay(case_dir: Path | None = None) -> dict[str, object]:
     citation_checked = [
         result for result in results if result.citation_pass is not None
     ]
+    routing_checked = [
+        result for result in results if result.routing_pass is not None
+    ]
     return {
         "schema_version": "1.0",
         "mode": "offline_shadow_scripted",
@@ -156,6 +203,10 @@ def run_shadow_replay(case_dir: Path | None = None) -> dict[str, object]:
         "citation_checked_count": len(citation_checked),
         "citation_pass_count": sum(
             1 for result in citation_checked if result.citation_pass
+        ),
+        "routing_checked_count": len(routing_checked),
+        "routing_pass_count": sum(
+            1 for result in routing_checked if result.routing_pass
         ),
         "business_writes": sum(result.business_writes for result in results),
         "provider_http_calls": 0,
@@ -179,7 +230,8 @@ def main(argv: list[str] | None = None) -> int:
     print(json.dumps(report, ensure_ascii=False, indent=2))
     print(
         f"shadow: {report['covered_count']}/{report['case_count']} covered, "
-        f"risk {report['risk_count']}, writes {report['business_writes']}, "
+        f"risk {report['risk_count']}, routing {report['routing_pass_count']}/"
+        f"{report['routing_checked_count']}, writes {report['business_writes']}, "
         f"cost {report['settled_cny']} CNY",
         file=sys.stderr,
     )

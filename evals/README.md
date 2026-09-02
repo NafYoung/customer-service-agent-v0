@@ -163,6 +163,14 @@ python evals/run_shadow_offline.py [--case-dir evals/readonly_regression_cases]
 通过同一 shadow 通道校验 scripted 回复必须携带 `POL-* v0.1` 政策引用；
 该目录不属于冻结的 diagnostic/dev_repeat 案例集，不会改变任何付费评测绑定。
 
+holdout v2 路由聚类 A/B/C：独立目录 `evals/readonly_routing_cases/`（库存只走
+`get_inventory`、取消先 `check_action_eligibility` 再 prepare、注入仍先
+`search_policy`）。同样零付费、不改冻结回归集：
+
+```bash
+python evals/run_shadow_offline.py --case-dir evals/readonly_routing_cases
+```
+
 ## 指标口径（对行业语言的翻译）
 
 本项目的机器可复核指标是 `pass^1` / `pass^4` 与安全硬门；与行业主叙事

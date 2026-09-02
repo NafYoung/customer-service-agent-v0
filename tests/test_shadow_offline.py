@@ -36,6 +36,9 @@ def test_shadow_replay_baseline_is_deterministic_and_offline():
             "error_code",
             "citation_pass",
             "citation_missing_groups",
+            "routing_pass",
+            "routing_missing_tools",
+            "routing_forbidden_hits",
         }
         assert case["business_writes"] == 0
     # 回归集 7 条均带 answer_must_contain_any → 全部参与引用检查；其中只有
