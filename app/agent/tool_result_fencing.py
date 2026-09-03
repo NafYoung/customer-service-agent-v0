@@ -50,15 +50,90 @@ _TAG_ATTRIBUTES = (
 )
 _MODEL_MARKUP = re.compile(
     r"<[ \t]*/?[ \t]*(?:"
-    r"(?:[a-z][\w.-]{0,30}:)?(?:transcript|conversation|function_calls|"
-    r"function_results|invoke|tool_use|tool_result|system|human|user|"
-    r"assistant)"
+    r"(?:[a-z][\w.-]{0,30}:)?(?:transcript|conversation|function_calls?|"
+    r"function_results?|function_call|tool_calls?|invoke|tool_use|tool_result|"
+    r"function|tool|system|human|user|assistant)"
     r"|[a-z][\w.-]{0,30}:(?:parameter|result)"
     r")\b" + _TAG_ATTRIBUTES + r"[ \t]*/?>|<\|[^|<>\r\n]{1,64}\|>",
     re.IGNORECASE,
 )
+_ASSIGNMENT_MARKUP = re.compile(
+    r"<[ \t]*/?[ \t]*(?:function|tool)[ \t]*=[^<>\r\n]{1,200}>",
+    re.IGNORECASE,
+)
+_ENCODED_BOUNDARY_CHARACTER = re.compile(
+    r"\\u(?P<code>003c|003e|000a|000d)",
+    re.IGNORECASE,
+)
 
 MAX_FENCED_CHARS = 12_000
+_TRUNCATION_SUFFIX = " ...[truncated]"
+
+
+def _decode_boundary_escapes(text: str) -> str:
+    decoded = _ENCODED_BOUNDARY_CHARACTER.sub(
+        lambda match: chr(int(match.group("code"), 16)),
+        text,
+    )
+    return decoded.replace(r"\r", "\r").replace(r"\n", "\n")
+
+
+def _truncate_text(text: str, max_chars: int) -> str:
+    if len(text) <= max_chars:
+        return text
+    if max_chars > len(_TRUNCATION_SUFFIX):
+        return text[: max_chars - len(_TRUNCATION_SUFFIX)] + _TRUNCATION_SUFFIX
+    return text[:max_chars]
+
+
+def _truncate_string_values(value: Any, max_chars: int) -> Any:
+    if isinstance(value, str):
+        return _truncate_text(value, max_chars)
+    if isinstance(value, dict):
+        return {
+            key: _truncate_string_values(item, max_chars)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_truncate_string_values(item, max_chars) for item in value]
+    return value
+
+
+def _json_body(value: Any) -> str:
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        default=str,
+    )
+
+
+def _bounded_json_object(value: Any, max_chars: int) -> str:
+    body = _json_body(value)
+    if len(body) <= max_chars:
+        return body
+
+    candidate_root = (
+        {**value, "truncated": True}
+        if isinstance(value, dict)
+        else {"payload": value, "truncated": True}
+    )
+    lower = 0
+    upper = max_chars
+    best: str | None = None
+    while lower <= upper:
+        midpoint = (lower + upper) // 2
+        candidate = _json_body(
+            _truncate_string_values(candidate_root, midpoint)
+        )
+        if len(candidate) <= max_chars:
+            best = candidate
+            lower = midpoint + 1
+        else:
+            upper = midpoint - 1
+    if best is None:
+        raise ValueError("fenced tool-data structure exceeds max_chars")
+    return best
 
 
 @cache
@@ -89,34 +164,38 @@ class ToolDataFence:
         text: str,
         max_chars: int | None = None,
     ) -> str:
+        text = _decode_boundary_escapes(text)
         text = unicodedata.normalize("NFKC", text)
         text = _INVISIBLE.sub("", text)
         text = _CONTROL.sub(" ", text)
         marker = _fence_marker_pattern(self.label)
         while True:
-            sanitized = _MODEL_MARKUP.sub(
+            sanitized = _ASSIGNMENT_MARKUP.sub(
                 "[removed]",
-                marker.sub("[removed]", text),
+                _MODEL_MARKUP.sub(
+                    "[removed]",
+                    marker.sub("[removed]", text),
+                ),
             )
             if sanitized == text:
                 break
             text = sanitized
         text = _TURN_INDICATOR.sub(r"\1\2 -", text)
         if max_chars is not None and len(text) > max_chars:
-            suffix = " ...[truncated]"
-            if max_chars > len(suffix):
-                return text[: max_chars - len(suffix)] + suffix
-            return text[:max_chars]
+            return _truncate_text(text, max_chars)
         return text
 
     def sanitize_value(self, value: Any) -> Any:
         if isinstance(value, str):
             return self.sanitize_text(value)
         if isinstance(value, dict):
-            return {
-                self.sanitize_text(str(key), 200): self.sanitize_value(item)
-                for key, item in value.items()
-            }
+            sanitized: dict[str, Any] = {}
+            for key, item in value.items():
+                sanitized_key = self.sanitize_text(str(key), 200)
+                if sanitized_key in sanitized:
+                    raise ValueError("sanitized tool-data key collision")
+                sanitized[sanitized_key] = self.sanitize_value(item)
+            return sanitized
         if isinstance(value, (list, tuple)):
             return [self.sanitize_value(item) for item in value]
         return value
@@ -127,17 +206,7 @@ class ToolDataFence:
         max_chars: int = MAX_FENCED_CHARS,
     ) -> str:
         sanitized = self.sanitize_value(payload)
-        if isinstance(sanitized, str):
-            body = sanitized
-        else:
-            body = json.dumps(
-                sanitized,
-                ensure_ascii=False,
-                separators=(",", ":"),
-                default=lambda value: self.sanitize_text(str(value)),
-            )
-        if len(body) > max_chars:
-            body = body[:max_chars] + " ...[truncated]"
+        body = _bounded_json_object(sanitized, max_chars)
         body = _LEADING_TURN_INDICATOR.sub(r"\1\2 -", body)
         return f"{self.open}\n{body}\n{self.close}"
 
