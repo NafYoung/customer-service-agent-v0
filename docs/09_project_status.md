@@ -4,7 +4,7 @@
 
 本地分支：`codex/commerce-agent-fencing`
 
-已验证实现检查点：`0712f8e`
+已验证实现检查点：`b23ec77`
 
 当前候选检查点：本文件所在的干净 Git 提交；以实际
 `git rev-parse HEAD` 为准。
@@ -53,13 +53,13 @@
 ruff: passed
 mypy: 58 source files passed
 schema freshness: passed
-pytest: 624 passed
-branch coverage: 83.35%
+pytest: 633 passed
+branch coverage: 83.46%
 pip-audit: no known vulnerabilities
 Reference Eval: 8/8
 ```
 
-本轮 fencing 聚焦门覆盖 24 个单元、Agent 循环和对抗测试，全部通过；完整门
+本轮 fencing 聚焦门覆盖 34 个单元、Agent 循环和对抗测试，全部通过；完整门
 同时覆盖既有 Host、价格窗口、状态机和评测合同。验证仅使用离线 scripted
 model 和 `httpx.MockTransport`，未发起真实模型请求。
 

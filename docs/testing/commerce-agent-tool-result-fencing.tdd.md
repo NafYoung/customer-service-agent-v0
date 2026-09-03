@@ -10,7 +10,8 @@
 由此形成两个用户旅程：
 
 1. 作为受控客服 Agent 的宿主，我希望第三方政策文本进入下一轮模型上下文前
-   被固定边界包裹并清洗伪造控制标记，以免数据伪装成角色、工具或 fence 边界。
+   被固定边界包裹并清洗已覆盖的常见伪造控制标记，以免数据伪装成角色、工具
+   或 fence 边界。
 2. 作为调试和评测人员，我希望保留剔除敏感字段后的原始 trace，同时只把清洗
    副本交给模型，以便复现攻击载荷且不破坏取证。
 
@@ -57,13 +58,14 @@ ModuleNotFoundError: No module named 'app.agent.tool_result_fencing'
 | # | 可验证保证 | 测试 | 类型 | 结果 |
 |---|---|---|---|---|
 | 1 | 正常中文政策、数字和比较符仍可读，NFKC 归一化结果稳定 | `test_sanitizer_preserves_normal_policy_text` | unit | PASS |
-| 2 | 不可见/bidi/control、伪造 role、tool、特殊令牌和 fence marker 被中性化 | `test_sanitizer_neutralizes_hidden_and_forged_model_boundaries` | unit | PASS |
+| 2 | 不可见/bidi/control、测试覆盖的常见 role、tool、特殊令牌和 fence marker 被中性化 | `test_sanitizer_neutralizes_hidden_and_forged_model_boundaries`、`test_sanitizer_neutralizes_provider_and_encoded_markup_variants` | unit | PASS |
 | 3 | 每条模型可见工具消息只有一个固定 fence，带服务端生成的工具来源 | `test_tool_message_has_fixed_server_provenance_and_escape_proof_fence` | unit | PASS |
-| 4 | 超大工具数据有固定上下文上限 | `test_tool_message_caps_oversized_model_context` | unit | PASS |
-| 5 | 参数错误和业务错误也经过同一信封，错误码仍可供模型处理 | `test_agent_returns_invalid_arguments_to_model_without_executing_tool`、`test_agent_surfaces_customer_safe_tool_error_and_can_finish` | integration | PASS |
-| 6 | 普通自然语言注入只能留在数据 fence 内，不能改变只读工具权限 | `test_plain_untrusted_policy_instruction_stays_inside_a_server_tool_fence`、`test_untrusted_policy_instruction_cannot_unlock_next_round_prepare_tool_call` | adversarial integration | PASS |
-| 7 | 结构化恶意标记在原始 trace 中可复现，在模型副本中已清洗，业务状态不变 | `test_untrusted_policy_markup_cannot_escape_the_server_tool_fence` | adversarial integration | PASS |
-| 8 | Preparation Agent 继承同一工具循环，因此 prepare 前的查询结果也经过该边界 | 完整 `tests/test_preparation_agent.py` 与全套回归 | integration | PASS |
+| 4 | 超大工具数据有固定上下文上限，截断后仍是合法 JSON，并保留来源、`ok` 和显式截断标记 | `test_tool_message_caps_oversized_model_context` | unit | PASS |
+| 5 | 两个原始键清洗成同一键时失败关闭，不静默覆盖字段 | `test_sanitizer_rejects_key_collisions_instead_of_overwriting_data` | unit | PASS |
+| 6 | 参数错误和业务错误也经过同一信封，错误码仍可供模型处理 | `test_agent_returns_invalid_arguments_to_model_without_executing_tool`、`test_agent_surfaces_customer_safe_tool_error_and_can_finish` | integration | PASS |
+| 7 | 普通自然语言注入只能留在数据 fence 内，不能改变只读工具权限 | `test_plain_untrusted_policy_instruction_stays_inside_a_server_tool_fence`、`test_untrusted_policy_instruction_cannot_unlock_next_round_prepare_tool_call` | adversarial integration | PASS |
+| 8 | 结构化恶意标记在原始 trace 中可复现，在模型副本中已清洗，业务状态不变 | `test_untrusted_policy_markup_cannot_escape_the_server_tool_fence` | adversarial integration | PASS |
+| 9 | Preparation Agent 的成功、参数错误和业务错误都直接断言同一来源信封与 fence | `test_preparation_agent_fences_success_validation_and_business_tool_results` | integration | PASS |
 
 ## 4. 完整验证
 
@@ -71,8 +73,8 @@ ModuleNotFoundError: No module named 'app.agent.tool_result_fencing'
 ruff: passed
 mypy: 58 source files passed
 schema freshness: passed
-pytest: 624 passed
-branch coverage: 83.35%（门槛 80%）
+pytest: 633 passed
+branch coverage: 83.46%（门槛 80%）
 pip-audit: no known vulnerabilities
 Reference Eval: 8/8
 ```
@@ -94,6 +96,8 @@ cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30
   不能直接拼接回模型 prompt 或展示给终端客户。
 - 12,000 字符上限会截断过大结果；当前合成工具结果远小于该值。真实后端接入前
   仍需为每个工具定义分页、字段最小化和业务级大小限制。
+- sanitizer 是经测试的结构标记 denylist，不是对所有 provider 格式、转义层级
+  或未来协议的完备解析器；新增模型适配器或工具协议时必须增加对应攻击样本。
 - 本轮没有读取 `.env`、私有预算账本或私有 Eval artifact，没有调用真实模型，
   也没有证明生产身份、并发、安全审计或真实业务效果。
 
@@ -102,6 +106,12 @@ cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30
 ```text
 a35252b test: specify fenced tool-result boundary
 0712f8e fix: fence model-visible tool results
+3e58bb8 test: cover fencing review findings
+b23ec77 fix: preserve structured fenced payloads
 ```
 
-两个提交均位于 `codex/commerce-agent-fencing`，RED 和 GREEN 历史未被改写。
+四个 RED/GREEN 提交均位于 `codex/commerce-agent-fencing`，历史未被改写。
+
+第一次独立复核未发现 P0/P1，并指出超长 JSON、标记变体、Preparation 直接证据
+和键碰撞四项问题。第二轮 RED 为 `7 failed, 27 passed`，修复后同一聚焦命令为
+`34 passed`；上表和最终完整门记录的是复核修复后的结果。
