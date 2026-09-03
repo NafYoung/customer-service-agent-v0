@@ -4,7 +4,7 @@
 
 本地分支：`codex/commerce-agent-fencing`
 
-已验证实现检查点：`07df2f7`
+已验证实现检查点：`0712f8e`
 
 当前候选检查点：本文件所在的干净 Git 提交；以实际
 `git rev-parse HEAD` 为准。
@@ -18,7 +18,7 @@
 | 事实面 | 状态 | 证据与边界 |
 |---|---|---|
 | 确定性后端与只读 Agent | verified-current | 完整离线门和 Reference Eval 要求保留 |
-| 模型可见工具数据边界 | changed-pending-verification | 第三方文本固定 fencing、服务端来源信封、原始 trace 与模型副本分离；待本提交完整离线门确认 |
+| 模型可见工具数据边界 | changed-and-verified-offline | 第三方文本固定 fencing、服务端来源信封、原始 trace 与模型副本分离；完整离线门与对抗测试已通过 |
 | Preparation Agent | verified-current | 单 Agent，精确 9 工具白名单，最多生成一个 Approval，不获得认证、展示、确认或执行权限 |
 | 受信宿主流 | changed-and-verified-offline | `/v1/host/messages` 串联 Agent；服务端 canonical card、空 body 按钮确认和确定性幂等执行已有端到端测试 |
 | 人工接管 | changed-and-verified-offline | manual mode 持久化；接管会取消同会话未完成 Approval，之后的消息、prepare、present、confirm 和 execute 全部失败关闭 |
@@ -30,16 +30,19 @@
 
 ## 本轮新增能力
 
-1. 受信宿主端点只从认证会话和宿主 header 注入客户、会话与确认权限，
+1. 模型可见的服务端工具结果使用固定 `<rivet_tool_data>` 边界与来源信封；
+   第三方文本中的伪造角色、工具、特殊令牌和 fence 逃逸标记在回传模型前清洗，
+   原始脱敏 trace 仍供离线取证。
+2. 受信宿主端点只从认证会话和宿主 header 注入客户、会话与确认权限，
    不信任模型或浏览器提交的 preview/hash/event id。
-2. 取消、退货和换货的低风险合成路径可以走完
+3. 取消、退货和换货的低风险合成路径可以走完
    `message -> prepare -> canonical present -> trusted confirm -> execute`。
-3. 破损、瑕疵、错发和客户主动要求人工都进入持久 manual mode；模型自由文本
+4. 破损、瑕疵、错发和客户主动要求人工都进入持久 manual mode；模型自由文本
    不能创建转交工单。
-4. live 入口固定 `deepseek-v4-flash`、官方 HTTPS 端点、温度 0 和当前审查过的
+5. live 入口固定 `deepseek-v4-flash`、官方 HTTPS 端点、温度 0 和当前审查过的
    v2 价格文件。其预算按官方峰时 USD 费率与 `10 CNY/USD` 保守换算计算；
    这是内部上界，不是供应商最终账单。
-5. 当前价格政策有效至 `2026-09-07T17:40:23Z`；过期后必须重新从官方来源
+6. 当前价格政策有效至 `2026-09-07T17:40:23Z`；过期后必须重新从官方来源
    核对、冻结新文件并重跑受影响的审查，不得只延长日期。
 
 ## 最近验证
@@ -48,16 +51,17 @@
 
 ```text
 ruff: passed
-mypy: 57 source files passed
+mypy: 58 source files passed
 schema freshness: passed
-pytest: 619 passed
-branch coverage: 83.30%
+pytest: 624 passed
+branch coverage: 83.35%
 pip-audit: no known vulnerabilities
 Reference Eval: 8/8
 ```
 
-聚焦门另外覆盖 47 个 Host/价格窗口测试，全部通过。验证仅使用离线
-scripted model 和 `httpx.MockTransport`，未发起真实模型请求。
+本轮 fencing 聚焦门覆盖 24 个单元、Agent 循环和对抗测试，全部通过；完整门
+同时覆盖既有 Host、价格窗口、状态机和评测合同。验证仅使用离线 scripted
+model 和 `httpx.MockTransport`，未发起真实模型请求。
 
 当前仅有一条已知非阻断警告：Starlette `TestClient` 的旧 `httpx` 兼容入口提示
 未来迁移到 `httpx2`。
