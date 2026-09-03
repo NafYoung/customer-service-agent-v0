@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 import unicodedata
 from dataclasses import dataclass
@@ -58,7 +59,8 @@ _MODEL_MARKUP = re.compile(
     re.IGNORECASE,
 )
 _ASSIGNMENT_MARKUP = re.compile(
-    r"<[ \t]*/?[ \t]*(?:function|tool)[ \t]*=[^<>\r\n]{1,200}>",
+    r"<[ \t]*/?[ \t]*(?:function_call|tool_call|function|tool)"
+    r"[ \t]*=[^<>\r\n]{1,200}>",
     re.IGNORECASE,
 )
 _ENCODED_BOUNDARY_CHARACTER = re.compile(
@@ -104,7 +106,7 @@ def _json_body(value: Any) -> str:
         value,
         ensure_ascii=False,
         separators=(",", ":"),
-        default=str,
+        allow_nan=False,
     )
 
 
@@ -198,7 +200,13 @@ class ToolDataFence:
             return sanitized
         if isinstance(value, (list, tuple)):
             return [self.sanitize_value(item) for item in value]
-        return value
+        if value is None or isinstance(value, (bool, int)):
+            return value
+        if isinstance(value, float):
+            if not math.isfinite(value):
+                raise ValueError("non-finite number in tool data")
+            return value
+        return self.sanitize_text(str(value))
 
     def fence_payload(
         self,
