@@ -10,6 +10,7 @@ from sqlalchemy import func, select
 from app.agent.openai_compatible import AssistantTurn, ToolCall
 from app.agent.preparation import PreparationAgent
 from app.agent.readonly import AgentRunError
+from app.agent.tool_result_fencing import TOOL_RESULT_FENCE
 from app.config import Settings
 from app.database import Database
 from app.models import (
@@ -70,6 +71,21 @@ def final_turn(content: str) -> AssistantTurn:
         finish_reason="stop",
         usage=None,
     )
+
+
+def _model_visible_tool_envelope(model: ScriptedModel) -> dict[str, object]:
+    tool_message = next(
+        message
+        for message in model.calls[1]["messages"]
+        if message["role"] == "tool"
+    )
+    content = tool_message["content"]
+    assert content.startswith(f"{TOOL_RESULT_FENCE.open}\n")
+    assert content.endswith(f"\n{TOOL_RESULT_FENCE.close}")
+    body = content[
+        len(TOOL_RESULT_FENCE.open) + 1 : -len(TOOL_RESULT_FENCE.close) - 1
+    ]
+    return json.loads(body)
 
 
 def build_runtime(
@@ -161,6 +177,61 @@ def test_preparation_contracts_are_an_exact_allowlist():
         "origin_tool_call_id",
     ):
         assert forbidden not in serialized
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "arguments", "expected_ok", "expected_error"),
+    [
+        (
+            "search_policy",
+            '{"query":"退货","region":"CN","channel":"ONLINE","top_k":1}',
+            True,
+            None,
+        ),
+        (
+            "get_order",
+            '{"order_id":"ORD-1001","customer_id":"CUST-002"}',
+            False,
+            "INVALID_TOOL_ARGUMENTS",
+        ),
+        (
+            "get_order",
+            '{"order_id":"ORD-DOES-NOT-EXIST"}',
+            False,
+            "ORDER_NOT_FOUND",
+        ),
+    ],
+)
+def test_preparation_agent_fences_success_validation_and_business_tool_results(
+    tool_name: str,
+    arguments: str,
+    expected_ok: bool,
+    expected_error: str | None,
+):
+    database, tools, context, _ = build_runtime()
+    model = ScriptedModel(
+        tool_turn(tool_name, arguments, call_id=f"fenced-{tool_name}"),
+        final_turn("已处理工具结果，未准备或执行任何操作。"),
+    )
+    agent = PreparationAgent(model=model, tools=tools, max_tool_rounds=2)
+
+    with database.session() as session:
+        result = agent.run(
+            session,
+            user_text="请先查询，不要执行操作。",
+            context=context,
+        )
+
+    envelope = _model_visible_tool_envelope(model)
+    assert envelope["source"] == {
+        "kind": "server_tool",
+        "tool_name": tool_name,
+    }
+    assert envelope["payload"]["ok"] is expected_ok
+    if expected_error is not None:
+        assert envelope["payload"]["error"]["code"] == expected_error
+    assert result.prepared_action is None
+    database.engine.dispose()
 
 
 @pytest.mark.parametrize(
