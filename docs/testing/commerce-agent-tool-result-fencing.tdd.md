@@ -49,7 +49,7 @@ ModuleNotFoundError: No module named 'app.agent.tool_result_fencing'
 
 ## 3. GREEN
 
-实现检查点为 `0712f8e`。相同聚焦命令结果：
+第一轮实现检查点为 `0712f8e`。在该提交上，相同聚焦命令结果：
 
 ```text
 24 passed
@@ -66,6 +66,31 @@ ModuleNotFoundError: No module named 'app.agent.tool_result_fencing'
 | 7 | 普通自然语言注入只能留在数据 fence 内，不能改变只读工具权限 | `test_plain_untrusted_policy_instruction_stays_inside_a_server_tool_fence`、`test_untrusted_policy_instruction_cannot_unlock_next_round_prepare_tool_call` | adversarial integration | PASS |
 | 8 | 结构化恶意标记在原始 trace 中可复现，在模型副本中已清洗，业务状态不变 | `test_untrusted_policy_markup_cannot_escape_the_server_tool_fence` | adversarial integration | PASS |
 | 9 | Preparation Agent 的成功、参数错误和业务错误都直接断言同一来源信封与 fence | `test_preparation_agent_fences_success_validation_and_business_tool_results` | integration | PASS |
+| 10 | 超长错误仍是严格 JSON，并保留来源、`ok=false`、错误码和截断标记 | `test_oversized_error_keeps_strict_json_source_status_and_error_code` | unit | PASS |
+| 11 | bytes、自定义对象等非 JSON 值先字符串化再清洗；NaN/Infinity 失败关闭 | `test_non_json_values_are_stringified_then_sanitized`、`test_non_finite_numbers_fail_closed_instead_of_emitting_nonstandard_json` | unit | PASS |
+
+两轮独立复核后的新增 RED/GREEN 使用以下聚焦命令，明确包含 Preparation 的
+直接证据：
+
+```bash
+.venv/bin/python -m pytest -q \
+  tests/test_tool_result_fencing.py \
+  tests/test_preparation_agent.py
+```
+
+第一次复核的 RED/GREEN：
+
+```text
+3e58bb8: 7 failed, 27 passed
+b23ec77: 34 passed
+```
+
+第二次复核的 RED/GREEN：
+
+```text
+871ccd4: 8 failed, 35 passed
+bd39bba: 43 passed
+```
 
 ## 4. 完整验证
 
@@ -73,7 +98,7 @@ ModuleNotFoundError: No module named 'app.agent.tool_result_fencing'
 ruff: passed
 mypy: 58 source files passed
 schema freshness: passed
-pytest: 633 passed
+pytest: 642 passed
 branch coverage: 83.46%（门槛 80%）
 pip-audit: no known vulnerabilities
 Reference Eval: 8/8
@@ -108,10 +133,14 @@ a35252b test: specify fenced tool-result boundary
 0712f8e fix: fence model-visible tool results
 3e58bb8 test: cover fencing review findings
 b23ec77 fix: preserve structured fenced payloads
+871ccd4 test: reject non-json fencing escapes
+bd39bba fix: enforce strict fenced json values
 ```
 
-四个 RED/GREEN 提交均位于 `codex/commerce-agent-fencing`，历史未被改写。
+六个 RED/GREEN 提交均位于 `codex/commerce-agent-fencing`，历史未被改写。
 
 第一次独立复核未发现 P0/P1，并指出超长 JSON、标记变体、Preparation 直接证据
 和键碰撞四项问题。第二轮 RED 为 `7 failed, 27 passed`，修复后同一聚焦命令为
-`34 passed`；上表和最终完整门记录的是复核修复后的结果。
+`34 passed`。第二次独立复核仍未发现 P0/P1，并补出 assignment 变体与非 JSON
+值边界；第三轮 RED/GREEN 为 `8 failed, 35 passed` → `43 passed`。上表和最终
+完整门记录的是全部复核修复后的结果。

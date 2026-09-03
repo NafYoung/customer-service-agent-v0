@@ -4,7 +4,7 @@
 
 本地分支：`codex/commerce-agent-fencing`
 
-已验证实现检查点：`b23ec77`
+已验证实现检查点：`bd39bba`
 
 当前候选检查点：本文件所在的干净 Git 提交；以实际
 `git rev-parse HEAD` 为准。
@@ -18,7 +18,7 @@
 | 事实面 | 状态 | 证据与边界 |
 |---|---|---|
 | 确定性后端与只读 Agent | verified-current | 完整离线门和 Reference Eval 要求保留 |
-| 模型可见工具数据边界 | changed-and-verified-offline | 第三方文本固定 fencing、服务端来源信封、原始 trace 与模型副本分离；完整离线门与对抗测试已通过 |
+| 模型可见工具数据边界 | changed-and-verified-offline | 第三方文本固定 fencing、严格 JSON 来源信封、原始 trace 与模型副本分离；完整离线门与对抗测试已通过 |
 | Preparation Agent | verified-current | 单 Agent，精确 9 工具白名单，最多生成一个 Approval，不获得认证、展示、确认或执行权限 |
 | 受信宿主流 | changed-and-verified-offline | `/v1/host/messages` 串联 Agent；服务端 canonical card、空 body 按钮确认和确定性幂等执行已有端到端测试 |
 | 人工接管 | changed-and-verified-offline | manual mode 持久化；接管会取消同会话未完成 Approval，之后的消息、prepare、present、confirm 和 execute 全部失败关闭 |
@@ -53,13 +53,13 @@
 ruff: passed
 mypy: 58 source files passed
 schema freshness: passed
-pytest: 633 passed
+pytest: 642 passed
 branch coverage: 83.46%
 pip-audit: no known vulnerabilities
 Reference Eval: 8/8
 ```
 
-本轮 fencing 聚焦门覆盖 34 个单元、Agent 循环和对抗测试，全部通过；完整门
+本轮 fencing 聚焦门覆盖 43 个单元、Agent 循环和对抗测试，全部通过；完整门
 同时覆盖既有 Host、价格窗口、状态机和评测合同。验证仅使用离线 scripted
 model 和 `httpx.MockTransport`，未发起真实模型请求。
 
