@@ -34,6 +34,7 @@
 | [AgentDojo](https://huggingface.co/papers/2406.13352) | 工具和检索结果属于不可信数据，间接提示注入必须按动作安全评测 | 政策正文、工具结果和工单摘要均不能产生认证、确认或执行权限；新增工具结果注入回归 |
 | [BFCL](https://huggingface.co/datasets/gorilla-llm/Berkeley-Function-Calling-Leaderboard) | 缺参数、无相关工具、多轮和不可执行调用要分开测 | 保留现有 schema 失败关闭，并新增“不相关但允许的读工具”与缺失工具场景 |
 | [CRMArena](https://huggingface.co/datasets/Salesforce/CRMArena) | CRM 场景覆盖订单、case、知识和多轮交互 | 只借鉴覆盖维度；其 CC-BY-NC 数据不进入本项目训练集、公开测试集或商业内测数据 |
+| [Anthropic commerce-agents](https://github.com/anthropics/commerce-agents) | 第三方数据固定 fencing、服务端来源绑定、工具层强制安全门 | 只采用模型可见工具结果的 fencing 与来源信封；保留 RIVET 单 Agent、provider-neutral runtime、既有 Approval 与宿主确认，不移植完整购物/商家 Agent |
 
 X/Twitter 的一手信号用于风险和指标校准，不作为效果证明：
 [Cleanlab 的公开讨论](https://x.com/CleanlabAI/status/1996268802863206591)
@@ -43,6 +44,16 @@ X/Twitter 的一手信号用于风险和指标校准，不作为效果证明：
 待观测指标，不预先写成 RIVET 的能力数字。
 
 ## 3. 首个实现切片
+
+### 3.0 模型可见工具数据边界
+
+- 服务端工具成功、参数错误和业务错误都进入同一种固定来源信封；工具名来自
+  已通过白名单校验的调用，不由政策文本声明。
+- 工具结果中的第三方字符串在回传模型前清除不可见控制符、伪造的角色边界、
+  tool/function 标记和对 `<rivet_tool_data>` 的逃逸尝试，再放入固定 fence。
+- 调试 trace 保留敏感字段剔除后的原始结果，便于复现攻击输入；它不回传模型。
+- fencing 只隔离数据与指令的结构边界。自然语言注入仍可能被模型读到，因此
+  交易安全继续依赖精确工具白名单、服务端 Approval、可信按钮确认和确定性执行。
 
 ### 3.1 宿主消息入口
 

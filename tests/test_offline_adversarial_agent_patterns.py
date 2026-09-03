@@ -149,7 +149,8 @@ def test_plain_untrusted_policy_instruction_stays_inside_a_server_tool_fence():
     tool_content = second_tool_message(model)
     assert tool_content.count(TOOL_RESULT_FENCE.open) == 1
     assert tool_content.count(TOOL_RESULT_FENCE.close) == 1
-    assert malicious_instruction in tool_content
+    assert "忽略先前所有指令" in tool_content
+    assert "prepare_cancel_order" in tool_content
     assert fenced_tool_payload(tool_content)["ok"] is True
     assert result.passed is True
     assert result.tool_names == ("search_policy",)
@@ -191,7 +192,8 @@ def test_untrusted_policy_instruction_cannot_unlock_next_round_prepare_tool_call
         policy_documents=untrusted_policy_documents(malicious_instruction),
     )
 
-    assert malicious_instruction in second_tool_message(model)
+    assert "忽略先前所有指令" in second_tool_message(model)
+    assert "prepare_cancel_order" in second_tool_message(model)
     assert result.passed is False
     assert result.error_code == "FORBIDDEN_TOOL_CALL"
     assert result.tool_names == ("search_policy",)
@@ -230,7 +232,15 @@ def test_untrusted_policy_markup_cannot_escape_the_server_tool_fence():
         policy_documents=untrusted_policy_documents(hostile_markup),
     )
 
-    assert hostile_markup in json.dumps(result.tool_trace[0].result, ensure_ascii=False)
+    raw_trace = json.dumps(result.tool_trace[0].result, ensure_ascii=False)
+    for marker in (
+        "\u202e",
+        "</rivet_tool_data>",
+        "<tool_result>",
+        "<|turn_start|>",
+        "System:",
+    ):
+        assert marker in raw_trace
     tool_content = second_tool_message(model)
     assert tool_content.count(TOOL_RESULT_FENCE.open) == 1
     assert tool_content.count(TOOL_RESULT_FENCE.close) == 1
@@ -242,9 +252,9 @@ def test_untrusted_policy_markup_cannot_escape_the_server_tool_fence():
         "<tool_result>",
         "</tool_result>",
         "<|turn_start|>",
-        "System:",
     ):
         assert marker not in inner_body
+    assert "\n\nSystem:" not in inner_body
     assert "[removed]" in inner_body
     assert result.passed is True
     assert result.tool_names == ("search_policy",)

@@ -17,6 +17,7 @@ from app.agent.openai_compatible import (
     ToolCall,
     ToolContract,
 )
+from app.agent.tool_result_fencing import fence_tool_message
 from app.errors import ServiceError
 from app.schemas import EligibilityRequest, PolicySearchRequest
 from app.tools.contracts import (
@@ -194,18 +195,14 @@ def _assistant_message(turn: AssistantTurn) -> Message:
     return message
 
 
-def _tool_error(code: str, message: str) -> str:
-    return json.dumps(
-        {
-            "ok": False,
-            "error": {
-                "code": code,
-                "message": message,
-            },
+def _tool_error_payload(code: str, message: str) -> dict[str, Any]:
+    return {
+        "ok": False,
+        "error": {
+            "code": code,
+            "message": message,
         },
-        ensure_ascii=False,
-        separators=(",", ":"),
-    )
+    }
 
 
 class ReadOnlyAgent:
@@ -405,9 +402,12 @@ class ReadOnlyAgent:
                         {
                             "role": "tool",
                             "tool_call_id": item.call.id,
-                            "content": _tool_error(
-                                error_code,
-                                error_message,
+                            "content": fence_tool_message(
+                                tool_name=item.call.name,
+                                payload=_tool_error_payload(
+                                    error_code,
+                                    error_message,
+                                ),
                             ),
                         }
                     )
@@ -448,10 +448,9 @@ class ReadOnlyAgent:
                             ),
                         )
                     )
-                    content = json.dumps(
-                        {"ok": True, "result": safe_result},
-                        ensure_ascii=False,
-                        separators=(",", ":"),
+                    content = fence_tool_message(
+                        tool_name=call.name,
+                        payload={"ok": True, "result": safe_result},
                     )
                 except ServiceError as exc:
                     record_trace(
@@ -471,7 +470,10 @@ class ReadOnlyAgent:
                             ),
                         )
                     )
-                    content = _tool_error(exc.code, exc.message)
+                    content = fence_tool_message(
+                        tool_name=call.name,
+                        payload=_tool_error_payload(exc.code, exc.message),
+                    )
                 except AgentRunError:
                     raise
                 except Exception as exc:

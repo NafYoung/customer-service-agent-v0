@@ -1,8 +1,8 @@
 # 项目现役状态
 
-最后核对：2026-08-31
+最后核对：2026-09-03
 
-本地分支：`codex/business-pilot-host`
+本地分支：`codex/commerce-agent-fencing`
 
 已验证实现检查点：`07df2f7`
 
@@ -18,6 +18,7 @@
 | 事实面 | 状态 | 证据与边界 |
 |---|---|---|
 | 确定性后端与只读 Agent | verified-current | 完整离线门和 Reference Eval 要求保留 |
+| 模型可见工具数据边界 | changed-pending-verification | 第三方文本固定 fencing、服务端来源信封、原始 trace 与模型副本分离；待本提交完整离线门确认 |
 | Preparation Agent | verified-current | 单 Agent，精确 9 工具白名单，最多生成一个 Approval，不获得认证、展示、确认或执行权限 |
 | 受信宿主流 | changed-and-verified-offline | `/v1/host/messages` 串联 Agent；服务端 canonical card、空 body 按钮确认和确定性幂等执行已有端到端测试 |
 | 人工接管 | changed-and-verified-offline | manual mode 持久化；接管会取消同会话未完成 Approval，之后的消息、prepare、present、confirm 和 execute 全部失败关闭 |

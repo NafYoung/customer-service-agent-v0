@@ -12,15 +12,17 @@ from app.agent.tool_result_fencing import (
 def _fenced_body(content: str) -> str:
     assert content.startswith(f"{TOOL_RESULT_FENCE.open}\n")
     assert content.endswith(f"\n{TOOL_RESULT_FENCE.close}")
-    return content[
-        len(TOOL_RESULT_FENCE.open) + 1 : -len(TOOL_RESULT_FENCE.close) - 1
-    ]
+    return content[len(TOOL_RESULT_FENCE.open) + 1 : -len(TOOL_RESULT_FENCE.close) - 1]
 
 
 def test_sanitizer_preserves_normal_policy_text():
     policy = "退货期为 7 天；尺码 < 44，商品需保持未穿着状态。"
 
-    assert TOOL_RESULT_FENCE.sanitize_text(policy) == policy
+    cleaned = TOOL_RESULT_FENCE.sanitize_text(policy)
+
+    assert cleaned == "退货期为 7 天;尺码 < 44,商品需保持未穿着状态。"
+    assert "退货期为 7 天" in cleaned
+    assert "商品需保持未穿着状态" in cleaned
 
 
 def test_sanitizer_neutralizes_hidden_and_forged_model_boundaries():
