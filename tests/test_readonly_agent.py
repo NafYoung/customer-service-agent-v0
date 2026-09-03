@@ -8,6 +8,7 @@ from sqlalchemy import func, select
 
 from app.agent.openai_compatible import AssistantTurn, ToolCall
 from app.agent.readonly import AgentRunError, ReadOnlyAgent
+from app.agent.tool_result_fencing import TOOL_RESULT_FENCE
 from app.config import Settings
 from app.database import Database
 from app.models import Approval, ToolEvent
@@ -50,6 +51,17 @@ def final_turn(content: str):
         finish_reason="stop",
         usage=None,
     )
+
+
+def tool_message_payload(content: str) -> dict[str, object]:
+    assert content.startswith(f"{TOOL_RESULT_FENCE.open}\n")
+    assert content.endswith(f"\n{TOOL_RESULT_FENCE.close}")
+    body = content[
+        len(TOOL_RESULT_FENCE.open) + 1 : -len(TOOL_RESULT_FENCE.close) - 1
+    ]
+    envelope = json.loads(body)
+    assert envelope["source"]["kind"] == "server_tool"
+    return envelope["payload"]
 
 
 def build_runtime():
@@ -191,7 +203,7 @@ def test_agent_returns_invalid_arguments_to_model_without_executing_tool():
     tool_message = next(
         message for message in second_request if message["role"] == "tool"
     )
-    tool_payload = json.loads(tool_message["content"])
+    tool_payload = tool_message_payload(tool_message["content"])
     assert tool_payload["ok"] is False
     assert tool_payload["error"]["code"] == "INVALID_TOOL_ARGUMENTS"
     with database.session() as session:
@@ -220,7 +232,7 @@ def test_agent_surfaces_customer_safe_tool_error_and_can_finish():
 
     assert result.tool_trace[0].success is False
     assert result.tool_trace[0].error_code == "ORDER_NOT_FOUND"
-    tool_payload = json.loads(
+    tool_payload = tool_message_payload(
         next(
             message
             for message in model.calls[1]["messages"]
