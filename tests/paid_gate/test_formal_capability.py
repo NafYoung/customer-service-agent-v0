@@ -636,7 +636,6 @@ def test_formal_execution_capability_rejects_mounts_mock_injection_zero_calls(
             budget_guard=guard,
             budget_report_provider=report_provider,
         )
-        # Keep default _transport; only remount a MockTransport.
         mounts[mount_key] = injected
         assert type(bound_model._client._transport) is httpx.HTTPTransport
         assert bound_model.live_transport_mode() == "default"

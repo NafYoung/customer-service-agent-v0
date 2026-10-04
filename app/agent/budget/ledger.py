@@ -109,8 +109,6 @@ class SQLiteBudgetLedger:
         self._initialize()
 
     def bind_now_provider(self, now_provider: Callable[[], datetime]) -> None:
-        """Share the guard's clock so run identity timestamps stay coherent."""
-
         self._now_provider = now_provider
 
     def _prepare_private_path(self) -> None:
