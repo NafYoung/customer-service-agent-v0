@@ -1,5 +1,3 @@
-"""One reader for order id, target size, and intent in a customer sentence."""
-
 from __future__ import annotations
 
 import re
@@ -29,8 +27,6 @@ class CustomerUtterance:
 
 
 def parse_customer_utterance(text: str) -> CustomerUtterance:
-    """Return the order id, target size, and intent written in `text`."""
-
     sentence = text.strip()
     target_size, has_target_size = _read_size(sentence)
     return CustomerUtterance(

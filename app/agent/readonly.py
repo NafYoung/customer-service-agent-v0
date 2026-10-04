@@ -195,8 +195,6 @@ def _assistant_message(turn: AssistantTurn) -> Message:
     return message
 
 
-# Keep this text aligned with semantic-judge phrase overlays and regression
-# answer_must_contain_any for reg_missing_exchange_size_clarify.
 _MISSING_EXCHANGE_SIZE_REPLY = (
     "请提供想换成的目标尺码。在您告知目标尺码之前，"
     "我无法判断是否符合换货条件，也不会预占库存或完成换货。"
@@ -204,8 +202,6 @@ _MISSING_EXCHANGE_SIZE_REPLY = (
 
 
 def exchange_request_missing_target_size(user_text: str) -> bool:
-    """Host-side gate: exchange intent without an explicit target size."""
-
     parsed = parse_customer_utterance(user_text)
     return parsed.intent == "exchange" and not parsed.has_target_size
 

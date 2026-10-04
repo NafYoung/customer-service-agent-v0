@@ -1,5 +1,3 @@
-"""One customer-fact parser, shared by the agent gate and the demo."""
-
 from __future__ import annotations
 
 import re
