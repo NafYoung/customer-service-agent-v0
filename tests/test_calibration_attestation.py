@@ -350,7 +350,11 @@ def _matching_temporary_calibration_ledger(
             return fixed_now.astimezone(tz)
 
     monkeypatch.setattr(
-        "app.agent.deepseek_budget.datetime",
+        "app.agent.budget.ledger.datetime",
+        _FixedDateTime,
+    )
+    monkeypatch.setattr(
+        "app.agent.budget.guard.datetime",
         _FixedDateTime,
     )
     ledger_path = tmp_path / "trusted-private" / "budget.sqlite3"
