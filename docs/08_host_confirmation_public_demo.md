@@ -224,6 +224,14 @@ Return/Exchange 业务表应以唯一 `approval_id` 作为第二道 exactly-once
 基础设施 5xx 不应把 Approval 永久置为失败；确定性的 stale/out-of-stock
 等业务冲突可以终止审批并消费确认。
 
+HTTP `confirm` 和公开演示确认都调用 `confirm_and_execute`。执行返回 4xx 时，
+HTTP 使用默认策略 `mark_failed`。过期码调用 `mark_expired`，其它 4xx 调用
+`mark_failed`。5xx 不改审批状态。公开演示在 2027-01-04 之前传入
+`leave_retryable`，4xx 后审批留在 `CONFIRMED`，确认事件不被消费。该日期写在
+`DEMO_ON_EXECUTE_4XX_EXPIRES_ON`。到期后演示必须改用 HTTP 默认策略，或把这个
+日期改成新的复核日。测试 `test_demo_leave_retryable_exception_is_dated` 在
+到期当天变红。
+
 ## 9. 公开演示隐私与滥用边界
 
 - 页面明确只允许虚构演示数据；

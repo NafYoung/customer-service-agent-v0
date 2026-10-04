@@ -6,8 +6,10 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Header, Query, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from app.errors import AuthenticationError, ServiceError
+from app.host.confirmation import confirm_and_execute
 from app.models import ToolEvent
 from app.schemas import (
     AuthRequest,
@@ -286,65 +288,20 @@ def confirm_prepared_action(
     _require_host_confirmation(request, x_host_confirmation_token)
     tools = _tools(request)
 
-    try:
-        with request.app.state.database.session() as session:
-            customer_id = tools.auth_service.resolve_customer_id(
-                session,
-                credentials.credentials,
-            )
-            confirmation = tools.action_service.record_confirmation(
-                session,
-                customer_id=customer_id,
-                conversation_id=x_conversation_id,
-                approval_id=approval_id,
-                request=payload,
-            )
-    except ServiceError as exc:
-        if exc.code == "APPROVAL_EXPIRED":
-            _terminalize_expired_approval(
-                request,
-                auth_token=credentials.credentials,
-                conversation_id=x_conversation_id,
-                approval_id=approval_id,
-            )
-        raise
+    def resolve_customer_id(session: Session) -> str:
+        return tools.auth_service.resolve_customer_id(
+            session,
+            credentials.credentials,
+        )
 
-    try:
-        with request.app.state.database.session() as session:
-            customer_id = tools.auth_service.resolve_customer_id(
-                session,
-                credentials.credentials,
-            )
-            return tools.action_service.execute_confirmed_action(
-                session,
-                customer_id=customer_id,
-                conversation_id=x_conversation_id,
-                approval_id=approval_id,
-                confirmation_event_id=confirmation.confirmation_event_id,
-            )
-    except ServiceError as exc:
-        if exc.status_code < 500:
-            with request.app.state.database.session() as session:
-                customer_id = tools.auth_service.resolve_customer_id(
-                    session,
-                    credentials.credentials,
-                )
-                if exc.code == "APPROVAL_EXPIRED":
-                    tools.action_service.mark_expired(
-                        session,
-                        customer_id=customer_id,
-                        conversation_id=x_conversation_id,
-                        approval_id=approval_id,
-                    )
-                else:
-                    tools.action_service.mark_failed(
-                        session,
-                        customer_id=customer_id,
-                        conversation_id=x_conversation_id,
-                        approval_id=approval_id,
-                        failure_code=exc.code,
-                    )
-        raise
+    return confirm_and_execute(
+        open_session=request.app.state.database.session,
+        action_service=tools.action_service,
+        resolve_customer_id=resolve_customer_id,
+        conversation_id=x_conversation_id,
+        approval_id=approval_id,
+        request=payload,
+    )
 
 
 @router.post("/tickets", response_model=TicketRead, tags=["handoff"])
