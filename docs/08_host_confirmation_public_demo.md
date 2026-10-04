@@ -67,6 +67,10 @@ single process / single worker
 该 Key，绝不能静默回退到付费模型。`preparation_scripted` 仍为零外网：用
 scripted `ChatModel` 驱动真实 Preparation Agent。
 
+`preparation_scripted` 和 `offline_replay` 都调用 `parse_customer_utterance`
+读取订单号和目标尺码。「ORD-1003 换货 尺码43」的目标尺码是 43，两条路径都
+准备换货。没有目标尺码的换货句仍先澄清。
+
 ## 4. 浏览器 BFF 契约
 
 公开路由：
