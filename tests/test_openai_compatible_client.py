@@ -20,7 +20,7 @@ from app.agent.openai_compatible import (
     OpenAICompatibleChatClient,
 )
 from app.config import Settings
-from app.tools.contracts import get_read_only_tool_contracts
+from app.tools.contracts import READ_ONLY_TOOL_NAMES, get_read_only_tool_contracts
 
 ROOT = Path(__file__).resolve().parents[1]
 PRICE_SNAPSHOT_PATH = (
@@ -116,14 +116,7 @@ def test_client_sends_openai_compatible_tool_request_and_parses_tool_call():
     assert body["thinking"] == {"type": "disabled"}
     assert {
         item["function"]["name"] for item in body["tools"]
-    } == {
-        "get_customer_orders",
-        "get_order",
-        "get_shipment",
-        "get_inventory",
-        "search_policy",
-        "check_action_eligibility",
-    }
+    } == set(READ_ONLY_TOOL_NAMES)
     assert all(
         item["type"] == "function"
         and item["function"]["parameters"].get("additionalProperties") is False

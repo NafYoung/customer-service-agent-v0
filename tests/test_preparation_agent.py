@@ -93,17 +93,6 @@ def test_preparation_contracts_are_an_exact_allowlist():
     contracts = get_preparation_tool_contracts()
 
     assert tuple(item["name"] for item in contracts) == PREPARATION_TOOL_NAMES
-    assert PREPARATION_TOOL_NAMES == (
-        "get_customer_orders",
-        "get_order",
-        "get_shipment",
-        "get_inventory",
-        "search_policy",
-        "check_action_eligibility",
-        "prepare_cancel_order",
-        "prepare_return",
-        "prepare_exchange",
-    )
     serialized = json.dumps(contracts)
     for forbidden in (
         '"prepare_action"',

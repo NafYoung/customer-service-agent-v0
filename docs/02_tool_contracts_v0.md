@@ -8,7 +8,8 @@ Schema 见 `docs/openapi.json`。这些契约用途不同，不能把整份 Open
 
 ## 1. 边界
 
-完整交易阶段规划了 10 个最小工具：
+<!-- BEGIN generated tool names: scripts/export_contracts.py -->
+`get_tool_contracts()` 导出 11 个工具名：
 
 1. `get_customer_orders`
 2. `get_order`
@@ -20,6 +21,10 @@ Schema 见 `docs/openapi.json`。这些契约用途不同，不能把整份 Open
 8. `prepare_return`
 9. `prepare_exchange`
 10. `create_handoff_ticket`
+11. `verify_return_evidence`
+
+宿主专用工具名不进入 Agent 白名单：`verify_return_evidence`。
+<!-- END generated tool names -->
 
 以下能力明确不在 Agent Schema 中：
 
