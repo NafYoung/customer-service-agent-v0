@@ -14,7 +14,7 @@ class OrderService:
     def _owned_order_query(
         customer_id: str,
         order_id: str,
-    ) -> Select[tuple[Order]]:
+    ) -> Select[Order]:
         return (
             select(Order)
             .where(Order.id == order_id, Order.customer_id == customer_id)
