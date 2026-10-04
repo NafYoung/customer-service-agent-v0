@@ -11,16 +11,27 @@ from app.agent.deepseek_budget import logical_call_sha256
 from app.agent.openai_compatible import AssistantTurn
 from evals import calibration_attestation as calibration_attestation_module
 from evals import run_semantic_judge_calibration as calibration_cli
+from evals import semantic_judge as semantic_judge_module
 from evals.calibration_attestation import validate_calibration_attestation
 from evals.canonical_pricing import canonical_budget_price_payload
 from evals.semantic_calibration import load_calibration_fixtures
+
+_CHECKED_AT = datetime(2026, 8, 20, 12, tzinfo=UTC)
+
+
+class _FrozenClock(datetime):
+    @classmethod
+    def now(cls, tz=None):
+        if tz is None:
+            return _CHECKED_AT.replace(tzinfo=None)
+        return _CHECKED_AT.astimezone(tz)
 
 
 class _ClosedBudgetGuard:
     def __init__(self, attempt_count: int):
         self.attempt_count = attempt_count
         self.closed = False
-        self.started_at = datetime.now(UTC)
+        self.started_at = _CHECKED_AT
         self.completed_at: datetime | None = None
         self.response_digests: dict[str, str] = {}
 
@@ -36,7 +47,7 @@ class _ClosedBudgetGuard:
 
     def close(self) -> None:
         self.closed = True
-        self.completed_at = datetime.now(UTC)
+        self.completed_at = _CHECKED_AT
 
     def snapshot(self) -> dict[str, object]:
         assert self.closed is True
@@ -208,6 +219,13 @@ def test_holdout_eligible_calibration_writes_a_validated_closed_report(
     budget_guard = _ClosedBudgetGuard(len(fixtures))
     model = _CanonicalCalibrationModel(budget_guard)
     clean_checks: list[str | None] = []
+    monkeypatch.setattr(calibration_cli, "datetime", _FrozenClock)
+    monkeypatch.setattr(semantic_judge_module, "datetime", _FrozenClock)
+    monkeypatch.setattr(
+        calibration_attestation_module,
+        "datetime",
+        _FrozenClock,
+    )
     monkeypatch.setattr(
         calibration_cli,
         "DEFAULT_OUTPUT_ROOT",
