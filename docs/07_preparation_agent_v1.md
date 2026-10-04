@@ -8,6 +8,7 @@ Agent。它可以完成自然语言信息收集、查询、资格判断和一次
 
 精确工具白名单为：
 
+<!-- BEGIN generated tool names: PREPARATION_TOOL_NAMES -->
 ```text
 get_customer_orders
 get_order
@@ -19,6 +20,7 @@ prepare_cancel_order
 prepare_return
 prepare_exchange
 ```
+<!-- END generated tool names -->
 
 以下能力不存在于该 Agent 的工具 Schema：
 

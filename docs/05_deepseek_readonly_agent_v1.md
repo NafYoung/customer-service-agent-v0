@@ -5,6 +5,7 @@
 本阶段把自然语言理解接到现有确定性后端，但不开放任何业务写入。模型只
 能使用：
 
+<!-- BEGIN generated tool names: READ_ONLY_TOOL_NAMES -->
 ```text
 get_customer_orders
 get_order
@@ -13,6 +14,7 @@ get_inventory
 search_policy
 check_action_eligibility
 ```
+<!-- END generated tool names -->
 
 `prepare_*`、`create_handoff_ticket`、认证、展示、确认、执行和调试接口都
 不在运行时工具列表中。未知工具名会在调用业务代码前失败关闭。
