@@ -30,11 +30,13 @@ v0 是供 Agent 调用的确定性交易后端原型。它已有业务规则、�
 
 Preparation 阶段在此基础上只新增：
 
+<!-- BEGIN generated tool names: PREPARE_TOOL_NAMES -->
 ```text
 prepare_cancel_order
 prepare_return
 prepare_exchange
 ```
+<!-- END generated tool names -->
 
 模型不可调用或接触：
 

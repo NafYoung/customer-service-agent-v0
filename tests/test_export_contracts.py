@@ -2,6 +2,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from app.tools.contracts import (
+    PREPARATION_TOOL_NAMES,
+    PREPARE_TOOL_NAMES,
+    READ_ONLY_TOOL_NAMES,
+)
 from scripts import export_contracts
 
 
@@ -63,6 +68,64 @@ def test_blank_line_does_not_hide_a_tool_name_list():
         "docs/handwritten.md:1: handwritten tool-name list. "
         "改 app/tools/contracts.py"
     ]
+
+
+def _text_fence(names: tuple[str, ...]) -> str:
+    return "```text\n" + "\n".join(names) + "\n```\n"
+
+
+def test_fenced_tool_name_lists_fail_at_every_known_site():
+    sites = (
+        ("docs/05_deepseek_readonly_agent_v1.md", READ_ONLY_TOOL_NAMES),
+        ("docs/07_preparation_agent_v1.md", PREPARATION_TOOL_NAMES),
+        ("docs/04_agent_integration_plan.md", PREPARE_TOOL_NAMES),
+        ("docs/new_fenced_roster.md", READ_ONLY_TOOL_NAMES),
+    )
+
+    for path, names in sites:
+        violations = export_contracts.handwritten_roster_violations(
+            _text_fence(names),
+            path=path,
+        )
+        assert violations == [
+            f"{path}:1: handwritten tool-name list. 改 app/tools/contracts.py"
+        ]
+
+
+def test_mixed_fenced_text_is_not_a_tool_roster():
+    source = (
+        "```text\n"
+        "generic prepare_action\n"
+        "create_handoff_ticket\n"
+        "authenticate_customer\n"
+        "```\n"
+    )
+
+    assert (
+        export_contracts.handwritten_roster_violations(
+            source,
+            path="docs/07_preparation_agent_v1.md",
+        )
+        == []
+    )
+
+
+def test_generated_tool_name_fence_is_not_a_handwritten_roster():
+    source = (
+        export_contracts.marked_tool_name_fence(
+            "READ_ONLY_TOOL_NAMES",
+            READ_ONLY_TOOL_NAMES,
+        )
+        + "\n"
+    )
+
+    assert (
+        export_contracts.handwritten_roster_violations(
+            source,
+            path="docs/05_deepseek_readonly_agent_v1.md",
+        )
+        == []
+    )
 
 
 def test_generated_tool_name_block_is_not_a_handwritten_roster():

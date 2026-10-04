@@ -18,6 +18,9 @@ os.environ["ENABLE_DEBUG_ROUTES"] = "false"
 from app.main import create_app
 from app.tools.contracts import (
     HOST_TOOL_NAMES,
+    PREPARATION_TOOL_NAMES,
+    PREPARE_TOOL_NAMES,
+    READ_ONLY_TOOL_NAMES,
     get_preparation_tool_contracts,
     get_read_only_tool_contracts,
     get_tool_contracts,
@@ -31,6 +34,8 @@ TOOL_NAME_SECTION_END = "<!-- END generated tool names -->"
 _LIST_ITEM = re.compile(r"^\s*(?:\d+\.|[-*])\s+`([A-Za-z0-9_]+)`\s*$")
 _QUOTED_COLLECTION = re.compile(r"[\(\[\{]([^\[\]\{\}\(\)]*)[\)\]\}]", re.S)
 _QUOTED_NAME = re.compile(r"""["']([A-Za-z0-9_]+)["']""")
+_FENCE_LINE = re.compile(r"^\s*```")
+_GENERATED_BEGIN_MARK = "<!-- BEGIN generated tool names:"
 
 
 def render_contracts() -> dict[str, str]:
@@ -108,6 +113,32 @@ def marked_tool_name_section() -> str:
     return f"{TOOL_NAME_SECTION_BEGIN}\n{body}\n{TOOL_NAME_SECTION_END}"
 
 
+def marked_tool_name_fence(label: str, names: Sequence[str]) -> str:
+    begin = f"{_GENERATED_BEGIN_MARK} {label} -->"
+    body = "```text\n" + "\n".join(names) + "\n```"
+    return f"{begin}\n{body}\n{TOOL_NAME_SECTION_END}"
+
+
+def generated_tool_name_fences() -> tuple[tuple[Path, str], ...]:
+    return (
+        (
+            ROOT / "docs" / "05_deepseek_readonly_agent_v1.md",
+            marked_tool_name_fence("READ_ONLY_TOOL_NAMES", READ_ONLY_TOOL_NAMES),
+        ),
+        (
+            ROOT / "docs" / "07_preparation_agent_v1.md",
+            marked_tool_name_fence(
+                "PREPARATION_TOOL_NAMES",
+                PREPARATION_TOOL_NAMES,
+            ),
+        ),
+        (
+            ROOT / "docs" / "04_agent_integration_plan.md",
+            marked_tool_name_fence("PREPARE_TOOL_NAMES", PREPARE_TOOL_NAMES),
+        ),
+    )
+
+
 def find_tool_name_section_drift(path: Path | None = None) -> list[str]:
     target = path or (ROOT / "docs" / "02_tool_contracts_v0.md")
     text = target.read_text(encoding="utf-8")
@@ -131,6 +162,34 @@ def find_tool_name_section_drift(path: Path | None = None) -> list[str]:
         f"{display}: generated tool-name section does not match "
         f"get_tool_contracts(). 改 {CONTRACTS_PATH}"
     ]
+
+
+def find_generated_tool_name_fence_drift() -> list[str]:
+    problems: list[str] = []
+    for path, block in generated_tool_name_fences():
+        text = path.read_text(encoding="utf-8")
+        if text.count(block) == 1:
+            continue
+        problems.append(
+            f"{_display_path(path)}: generated tool-name fence does not "
+            f"match {CONTRACTS_PATH}. 改 {CONTRACTS_PATH}"
+        )
+    return problems
+
+
+def write_generated_tool_name_fences() -> None:
+    for path, block in generated_tool_name_fences():
+        text = path.read_text(encoding="utf-8")
+        begin = block.splitlines()[0]
+        start = text.find(begin)
+        end = -1 if start < 0 else text.find(TOOL_NAME_SECTION_END, start)
+        if start < 0 or end < 0:
+            raise ValueError(
+                f"{_display_path(path)}: missing generated tool-name fence. "
+                f"改 {CONTRACTS_PATH}"
+            )
+        end += len(TOOL_NAME_SECTION_END)
+        path.write_text(text[:start] + block + text[end:], encoding="utf-8")
 
 
 def write_tool_name_section(path: Path | None = None) -> None:
@@ -200,6 +259,7 @@ def _markdown_roster_violations(source: str, path: str) -> list[str]:
     names = exported_tool_names()
     spans = _generated_line_spans(source)
     violations = _markdown_list_violations(source, path, names, spans)
+    violations.extend(_fenced_roster_violations(source, path, names, spans))
     for match in _QUOTED_COLLECTION.finditer(source):
         values = _pure_quoted_names(match.group(1))
         if values is None or not _is_tool_roster(values, names):
@@ -272,11 +332,38 @@ def _is_tool_roster(values: list[str], names: frozenset[str]) -> bool:
     return len(values) >= 2 and all(value in names for value in values)
 
 
+def _fenced_roster_violations(
+    source: str,
+    path: str,
+    names: frozenset[str],
+    spans: list[tuple[int, int]],
+) -> list[str]:
+    violations: list[str] = []
+    in_fence = False
+    fence_line = 0
+    body: list[str] = []
+    for line_number, line in enumerate(source.splitlines(), start=1):
+        if _FENCE_LINE.match(line) is None:
+            if in_fence and line.strip():
+                body.append(line.strip())
+            continue
+        if not in_fence:
+            in_fence = True
+            fence_line = line_number
+            body = []
+            continue
+        if _is_tool_roster(body, names) and not _line_in_spans(fence_line, spans):
+            violations.append(_violation(path, fence_line))
+        in_fence = False
+        body = []
+    return violations
+
+
 def _generated_line_spans(source: str) -> list[tuple[int, int]]:
     spans: list[tuple[int, int]] = []
     start: int | None = None
     for line_number, line in enumerate(source.splitlines(), start=1):
-        if TOOL_NAME_SECTION_BEGIN in line:
+        if _GENERATED_BEGIN_MARK in line:
             start = line_number
         elif TOOL_NAME_SECTION_END in line and start is not None:
             spans.append((start, line_number))
@@ -318,6 +405,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             ),
             *find_handwritten_tool_rosters(),
             *find_tool_name_section_drift(),
+            *find_generated_tool_name_fence_drift(),
         ]
         if problems:
             print("\n".join(problems))
@@ -326,6 +414,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     write_contracts()
     write_tool_name_section()
+    write_generated_tool_name_fences()
     print("Contracts exported.")
     return 0
 
