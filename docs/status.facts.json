@@ -1,0 +1,28 @@
+{
+  "holdout": {
+    "v1": {
+      "lifecycle": "retired",
+      "rerun_policy": "prohibited"
+    },
+    "v2": {
+      "lifecycle": "retired",
+      "rerun_policy": "prohibited"
+    }
+  },
+  "demo": {
+    "url": "https://rivet-public-demo.onrender.com/",
+    "agent_mode": "preparation_scripted"
+  },
+  "tools": {
+    "read_only": 6,
+    "preparation": 9,
+    "exported_contracts": 11
+  },
+  "price": {
+    "snapshot": "pricing/deepseek-v4-flash-2026-08-19.json",
+    "valid_until": "2026-08-26T03:15:00Z"
+  },
+  "historical_docs": {
+    "docs/testing": "historical"
+  }
+}

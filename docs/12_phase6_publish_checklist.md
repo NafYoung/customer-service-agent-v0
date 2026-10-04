@@ -6,9 +6,10 @@
 演示，且不泄露 Key、账本、私有 Eval artifact 或本机路径。
 
 权威验收合同仍以 `docs/06_portfolio_completion_plan.md` §Phase 6 为准；
-本文件是可执行检查表，**不**自动创建远程仓库或部署。
+本文件是可执行检查表，**不**自动创建远程仓库或部署。现役数字以
+`docs/status.facts.json` 为准。
 
-## 当前状态（2026-07-31）
+## 当前状态
 
 | 项 | 状态 |
 |---|---|
@@ -16,7 +17,7 @@
 | Docker `public_demo` profile（无 DeepSeek Key） | 可跑 |
 | 发布卫生脚本 | `scripts/check_public_demo_secrets.sh` + `scripts/check_publish_preflight.sh` |
 | 公开 GitHub URL | **已创建**：[NafYoung/customer-service-agent-v0](https://github.com/NafYoung/customer-service-agent-v0) |
-| 托管演示 URL | **未部署** |
+| 托管演示 URL | https://rivet-public-demo.onrender.com/ （`preparation_scripted`） |
 | README 指标与 holdout 叙事 | 已与 `docs/09` 对齐 |
 
 ## A. 发布前卫生（本地，免费）
