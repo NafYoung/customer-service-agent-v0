@@ -507,6 +507,8 @@ def _formal_budget_guard(
     run_id: str,
     settings: Settings,
 ) -> DeepSeekBudgetGuard:
+    price_snapshot = load_canonical_price_snapshot()
+    checked_at = price_snapshot.captured_at + timedelta(hours=1)
     return DeepSeekBudgetGuard(
         ledger=SQLiteBudgetLedger(
             path=tmp_path / f"{run_id}.sqlite3",
@@ -515,9 +517,10 @@ def _formal_budget_guard(
         ),
         run_id=run_id,
         purpose="holdout_formal",
-        price_snapshot=load_canonical_price_snapshot(),
+        price_snapshot=price_snapshot,
         model=settings.deepseek_model,
         max_output_tokens=settings.deepseek_max_tokens,
+        now=checked_at,
     )
 
 
