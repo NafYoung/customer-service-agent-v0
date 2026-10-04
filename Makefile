@@ -1,4 +1,4 @@
-.PHONY: install run test coverage eval export schema-check lint typecheck audit verify clean
+.PHONY: install run test coverage eval export schema-check import-lint lint typecheck audit verify clean
 
 PYTHON ?= python
 
@@ -23,6 +23,9 @@ export:
 schema-check:
 	$(PYTHON) scripts/export_contracts.py --check
 
+import-lint:
+	$(PYTHON) scripts/check_import_lint.py
+
 lint:
 	$(PYTHON) -m ruff check app evals tests scripts
 
@@ -32,7 +35,7 @@ typecheck:
 audit:
 	$(PYTHON) -m pip_audit -r requirements.txt --progress-spinner off
 
-verify: lint typecheck schema-check coverage audit
+verify: lint typecheck schema-check import-lint coverage audit
 
 clean:
 	rm -rf .pytest_cache htmlcov .coverage customer_service.db data

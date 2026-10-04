@@ -25,6 +25,7 @@ from app.tools.contracts import (
     get_read_only_tool_contracts,
     get_tool_contracts,
 )
+from scripts.check_import_lint import find_import_lint_violations
 from scripts.check_status_facts import find_status_fact_drift
 
 CONTRACTS_PATH = "app/tools/contracts.py"
@@ -408,6 +409,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             *find_tool_name_section_drift(),
             *find_generated_tool_name_fence_drift(),
             *find_status_fact_drift(),
+            *find_import_lint_violations(),
         ]
         if problems:
             print("\n".join(problems))

@@ -14,10 +14,13 @@ from app.demo.schemas import (
 from app.demo.session import DemoSession, bump_or_limit, ensure_handoff_ticket
 from app.enums import ApprovalStatus, ConfirmationSource
 from app.errors import ConflictError, NotFoundError, ServiceError
-from app.host.confirmation import ExecuteFailurePolicy, confirm_and_execute
+from app.host.confirmation import (
+    ExecuteFailurePolicy,
+    assert_preview_matches,
+    confirm_and_execute,
+)
 from app.models import Approval, ConfirmationEvent
 from app.schemas import ConfirmActionRequest, PresentApprovalRequest
-from app.services.actions import ActionService
 from app.utils import utcnow
 
 DEMO_ON_EXECUTE_4XX = ExecuteFailurePolicy.LEAVE_RETRYABLE
@@ -75,7 +78,7 @@ def load_pending_approval(db: Session, demo: DemoSession) -> Approval:
             "会话中的待确认操作与数据库不一致。",
             status_code=409,
         )
-    ActionService._assert_preview_matches(approval, demo.pending_preview_hash)
+    assert_preview_matches(approval, demo.pending_preview_hash)
     if approval.origin_server_run_id != demo.server_run_id:
         raise ConflictError(
             "DEMO_ORIGIN_MISMATCH",
