@@ -11,6 +11,7 @@ from app.tools.contracts import (
 from scripts import export_contracts
 from scripts.check_status_facts import (
     FACTS_PATH,
+    PUBLISH_DOC,
     STATUS_DOC,
     find_status_fact_drift,
     load_status_facts,
@@ -56,9 +57,9 @@ def test_wrong_demo_agent_mode_names_docs_09_and_facts():
 
 
 def test_missing_demo_url_in_publish_checklist_names_facts():
-    publish = Path("docs/12_phase6_publish_checklist.md").read_text(encoding="utf-8")
+    publish = Path(PUBLISH_DOC).read_text(encoding="utf-8")
     documents = {
-        "docs/12_phase6_publish_checklist.md": publish.replace(
+        PUBLISH_DOC: publish.replace(
             "https://rivet-public-demo.onrender.com",
             "https://example.invalid",
         )
@@ -67,5 +68,18 @@ def test_missing_demo_url_in_publish_checklist_names_facts():
     violations = find_status_fact_drift(documents=documents)
     joined = "\n".join(violations)
 
-    assert "docs/12_phase6_publish_checklist.md" in joined
+    assert PUBLISH_DOC in joined
     assert FACTS_PATH in joined
+
+
+def test_dropped_demo_agent_mode_in_publish_checklist_names_facts():
+    publish = Path(PUBLISH_DOC).read_text(encoding="utf-8")
+    documents = {PUBLISH_DOC: publish.replace("（`preparation_scripted`）", "")}
+
+    violations = find_status_fact_drift(documents=documents)
+    joined = "\n".join(violations)
+
+    assert violations
+    assert PUBLISH_DOC in joined
+    assert FACTS_PATH in joined
+    assert "demo_agent_mode" in joined

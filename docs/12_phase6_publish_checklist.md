@@ -80,9 +80,14 @@ gitleaks detect --source . --no-git || true
 
 权威步骤：`docs/13_hosted_demo_render.md`（Blueprint：`render.yaml`）。
 
+现役公网 `DEMO_AGENT_MODE` 以 `docs/status.facts.json` 的
+`demo.agent_mode` 为准，现为 `preparation_scripted`，与 `render.yaml` 一致。
+`offline_replay` 仍是 `public_demo` 允许的对照模式，不是现役公网默认。
+
 推荐约束：
 
-- 默认 `APP_MODE=public_demo` + `DEMO_AGENT_MODE=offline_replay`；
+- `APP_MODE=public_demo`；
+- 现役 `DEMO_AGENT_MODE` 用 facts 文件里的值，不要改成 live 模型；
 - **不**注入项目 DeepSeek Key；
 - `DEMO_COOKIE_SECURE=true`（HTTPS）；
 - `DEMO_ALLOWED_ORIGIN` 可空（回退 `RENDER_EXTERNAL_URL`），或锁死为公网 Origin；

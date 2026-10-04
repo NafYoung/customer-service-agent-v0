@@ -173,6 +173,14 @@ def _document_violations(
         publish_text = texts.get(PUBLISH_DOC, "")
         if url and url not in publish_text:
             violations.append(f"{PUBLISH_DOC}: demo url does not match {FACTS_PATH}")
+        elif mode:
+            live_rows = [
+                line for line in publish_text.splitlines() if url in line
+            ]
+            if any(mode not in row for row in live_rows):
+                violations.append(
+                    f"{PUBLISH_DOC}: demo_agent_mode does not match {FACTS_PATH}"
+                )
 
     price = facts.get("price")
     if isinstance(price, Mapping):
