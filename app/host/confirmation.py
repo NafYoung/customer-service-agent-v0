@@ -8,6 +8,7 @@ from typing import TypeVar
 from sqlalchemy.orm import Session
 
 from app.errors import ServiceError
+from app.models import Approval
 from app.schemas import ConfirmActionRequest, ExecuteActionResponse
 from app.services.actions import ActionService
 
@@ -20,6 +21,10 @@ ResolveCustomerId = Callable[[Session], str]
 class ExecuteFailurePolicy(StrEnum):
     MARK_FAILED = "mark_failed"
     LEAVE_RETRYABLE = "leave_retryable"
+
+
+def assert_preview_matches(approval: Approval, preview_hash: str) -> None:
+    ActionService._assert_preview_matches(approval, preview_hash)
 
 
 def confirm_and_execute(
