@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 import uuid
 from dataclasses import dataclass
 from typing import Any
@@ -18,6 +17,7 @@ from app.demo.slots import continue_pending_slot, detect_incomplete_intent
 from app.enums import IssueType, ItemCondition
 from app.errors import ValidationError
 from app.schemas import PrepareActionResponse
+from app.utterance import parse_customer_utterance
 
 
 @dataclass(frozen=True)
@@ -45,14 +45,10 @@ def match_offline_replay(message: str) -> ReplayMatch | None:
             ),
         )
     if "换货" in text or ("换成" in text and "码" in text):
-        # Require an explicit size token for complete exchange match.
-        if not re.search(r"\d{2}\s*码|[：:]\s*\d{2}|\d{2}$", message):
-            if "换" in text and "码" not in text and "43" not in message:
-                return None
-        size_match = re.search(r"(\d{2})\s*码|换成\s*(\d{2})|(\d{2})$", message)
-        target = "43"
-        if size_match:
-            target = next(g for g in size_match.groups() if g)
+        parsed = parse_customer_utterance(message)
+        if parsed.target_size is None:
+            return None
+        target = parsed.target_size
         return ReplayMatch(
             kind="exchange",
             order_id="ORD-1003",

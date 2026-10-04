@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -29,6 +28,7 @@ from app.tools.contracts import (
     get_read_only_tool_contracts,
 )
 from app.tools.facade import CustomerServiceTools, ToolCallContext
+from app.utterance import parse_customer_utterance
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _DEFAULT_SYSTEM_PROMPT = _PROJECT_ROOT / "app" / "agent" / "readonly_system_prompt.md"
@@ -195,11 +195,6 @@ def _assistant_message(turn: AssistantTurn) -> Message:
     return message
 
 
-_EXCHANGE_INTENT_MARKERS = ("换货", "换成", "换到", "调换")
-_SIZE_TOKEN_RE = re.compile(
-    r"(?:目标尺码|想换成|换到|换成)\s*[：:]?\s*[A-Za-z0-9一二三四五六七八九十]+"
-    r"|\d+\s*码|[A-Za-z]\s*码"
-)
 # Keep this text aligned with semantic-judge phrase overlays and regression
 # answer_must_contain_any for reg_missing_exchange_size_clarify.
 _MISSING_EXCHANGE_SIZE_REPLY = (
@@ -211,10 +206,8 @@ _MISSING_EXCHANGE_SIZE_REPLY = (
 def exchange_request_missing_target_size(user_text: str) -> bool:
     """Host-side gate: exchange intent without an explicit target size."""
 
-    text = user_text.strip()
-    if not any(marker in text for marker in _EXCHANGE_INTENT_MARKERS):
-        return False
-    return _SIZE_TOKEN_RE.search(text) is None
+    parsed = parse_customer_utterance(user_text)
+    return parsed.intent == "exchange" and not parsed.has_target_size
 
 
 def _tool_error(code: str, message: str) -> str:

@@ -2,17 +2,9 @@
 
 from __future__ import annotations
 
-import re
-
 from app.demo.matches import PrepareKind, ReplayMatch, normalized
 from app.demo.session import DemoSession, PendingSlot
-
-_ORDER_RE = re.compile(r"ORD-?\s*(\d{4})", re.IGNORECASE)
-_SIZE_RE = re.compile(
-    r"(?:换成|换到|目标尺码|尺码)\s*[：:]?\s*(\d{2}|[A-Za-z])|"
-    r"(\d{2})\s*码",
-    re.IGNORECASE,
-)
+from app.utterance import parse_customer_utterance
 
 _DEFAULTS = {
     "cancel": {"order_id": "ORD-1001"},
@@ -26,17 +18,11 @@ _DEFAULTS = {
 
 
 def _extract_order_id(message: str) -> str | None:
-    match = _ORDER_RE.search(message)
-    if not match:
-        return None
-    return f"ORD-{match.group(1)}"
+    return parse_customer_utterance(message).order_id
 
 
 def _extract_size(message: str) -> str | None:
-    match = _SIZE_RE.search(message)
-    if not match:
-        return None
-    return next(group for group in match.groups() if group)
+    return parse_customer_utterance(message).target_size
 
 
 def _prompt_for(kind: PrepareKind, *, missing: str) -> str:
