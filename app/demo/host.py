@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from typing import Any
 
 from sqlalchemy import select
@@ -13,10 +14,14 @@ from app.demo.schemas import (
 from app.demo.session import DemoSession, bump_or_limit, ensure_handoff_ticket
 from app.enums import ApprovalStatus, ConfirmationSource
 from app.errors import ConflictError, NotFoundError, ServiceError
+from app.host.confirmation import ExecuteFailurePolicy, confirm_and_execute
 from app.models import Approval, ConfirmationEvent
 from app.schemas import ConfirmActionRequest, PresentApprovalRequest
 from app.services.actions import ActionService
 from app.utils import utcnow
+
+DEMO_ON_EXECUTE_4XX = ExecuteFailurePolicy.LEAVE_RETRYABLE
+DEMO_ON_EXECUTE_4XX_EXPIRES_ON = date(2027, 1, 4)
 
 
 def _active_approvals(
@@ -189,27 +194,22 @@ def confirm_pending(
     ui_event_id = demo.pending_ui_event_id
     assert approval_id is not None
 
-    with demo.database.session() as db:
-        confirmation = demo.tools.action_service.record_confirmation(
-            db,
-            customer_id=demo.customer_id,
-            conversation_id=demo.conversation_id,
-            approval_id=approval_id,
-            request=ConfirmActionRequest(
-                preview_hash=preview_hash,
-                ui_event_id=ui_event_id,
-                confirmation_source=ConfirmationSource.BUTTON,
-            ),
-        )
+    def resolve_customer_id(_session: Session) -> str:
+        return demo.customer_id
 
-    with demo.database.session() as db:
-        executed = demo.tools.action_service.execute_confirmed_action(
-            db,
-            customer_id=demo.customer_id,
-            conversation_id=demo.conversation_id,
-            approval_id=approval_id,
-            confirmation_event_id=confirmation.confirmation_event_id,
-        )
+    executed = confirm_and_execute(
+        open_session=demo.database.session,
+        action_service=demo.tools.action_service,
+        resolve_customer_id=resolve_customer_id,
+        conversation_id=demo.conversation_id,
+        approval_id=approval_id,
+        request=ConfirmActionRequest(
+            preview_hash=preview_hash,
+            ui_event_id=ui_event_id,
+            confirmation_source=ConfirmationSource.BUTTON,
+        ),
+        on_execute_4xx=DEMO_ON_EXECUTE_4XX,
+    )
 
     demo.pending_approval_id = None
     demo.pending_preview_hash = None
