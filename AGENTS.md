@@ -22,7 +22,7 @@
 - 公开演示不得携带 DeepSeek Key，不得产生模型网络出口。
 - 模型永远不能获得认证、`present`、`confirm`、`execute`、debug 或任意
   SQL/网络工具。
-- holdout v1 已退役，禁止重跑；新 holdout 只允许一次正式运行。
+- holdout v1 与 holdout v2 已退役，禁止重跑；新 holdout 只允许一次正式运行。
 
 ## 代码约定
 
@@ -43,7 +43,7 @@
 
 ## 当前状态
 
-现役进度、验证证据和唯一恢复顺序见
+现役数字以 `docs/status.facts.json` 为准。现役进度、验证证据和唯一恢复顺序见
 `docs/09_project_status.md`；阶段验收合同见
 `docs/06_portfolio_completion_plan.md`。不要从旧会话或历史 artifact
-推断当前完成度。
+推断当前完成度。`docs/testing/` 是史稿。

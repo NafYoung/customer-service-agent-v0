@@ -20,9 +20,9 @@ Preparation Agent 检查点：`1b034cd`（核心）；宿主 UI 接入见本分�
 
 holdout 失败后加固链：`9337e55`（prompt/回归）→ `84eca79` / `69030d2` / `f7f221a`（语义裁判恢复 + 短语）
 
-本文是项目恢复工作的现役入口。阶段验收标准仍以
-`docs/06_portfolio_completion_plan.md` 为准；历史结果保留在对应
-`docs/testing/` 报告中。
+本文是项目恢复工作的现役入口。现役数字以 `docs/status.facts.json` 为准。
+阶段验收标准仍以 `docs/06_portfolio_completion_plan.md` 为准；
+`docs/testing/` 是史稿，不代表当前完成度。
 
 ## 当前结论
 
@@ -138,7 +138,7 @@ holdout，需在干净树上重绑校准 + 同提交公开回归。
 3. ~~holdout v2 唯一正式运行。~~ **已跑；未过门；题集退役。**
 4. ~~holdout 失败后 Prompt/回归/裁判加固 + 公开 7×4 复验。~~ **完成。**
 5. ~~作品集叙事收口（README + Phase 6 清单）。~~ **完成（本地）。**
-6. Phase 6：公开仓已创建并 push；可选托管演示仍待选平台（见 `docs/12_phase6_publish_checklist.md` §D）。
+6. Phase 6：公开仓已创建并 push；托管演示已上线（见 `docs/status.facts.json` 与 `docs/12_phase6_publish_checklist.md` §D）。
 7. 可选（需新授权）：新 holdout 题集（新 `case_set_sha256`，先重绑校准）；**禁止**同题集调参重跑。
 
 ## 不可突破的恢复边界

@@ -25,6 +25,7 @@ from app.tools.contracts import (
     get_read_only_tool_contracts,
     get_tool_contracts,
 )
+from scripts.check_status_facts import find_status_fact_drift
 
 CONTRACTS_PATH = "app/tools/contracts.py"
 TOOL_NAME_SECTION_BEGIN = (
@@ -406,6 +407,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             *find_handwritten_tool_rosters(),
             *find_tool_name_section_drift(),
             *find_generated_tool_name_fence_drift(),
+            *find_status_fact_drift(),
         ]
         if problems:
             print("\n".join(problems))
