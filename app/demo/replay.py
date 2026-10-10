@@ -80,8 +80,9 @@ def match_offline_replay(message: str) -> ReplayMatch | None:
 
 
 UNSUPPORTED_REPLY = (
-    "当前演示支持固定售后场景（scripted）或本地 live DeepSeek。"
-    "公开演示路径不会调用在线模型。\n"
+    "这句话超出了在线演示的预录脚本范围。"
+    "公开演示不会调用在线模型（避免在公网暴露密钥），只认下面几句；"
+    "真实模型可以理解自由表达，效果见项目 README 的录屏。\n"
     "可尝试：\n"
     "• 取消订单 ORD-1001\n"
     "• 退货 / 退货 ORD-1003\n"

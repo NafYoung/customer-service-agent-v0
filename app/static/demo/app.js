@@ -18,6 +18,7 @@
   const resetBtn = document.getElementById("reset");
   const modeBadgeEl = document.getElementById("mode-badge");
   const panelNoteEl = document.getElementById("panel-note");
+  const scriptedNoticeEl = document.getElementById("scripted-notice");
 
   function setStatus(text, kind) {
     statusEl.textContent = text || "";
@@ -28,6 +29,8 @@
     state.mode = data.demo_agent_mode || null;
     state.modeLabel = data.mode_label || data.demo_agent_mode || "";
     if (modeBadgeEl) modeBadgeEl.textContent = state.modeLabel || "演示";
+    // 非 live 模式的意图理解是预录脚本，必须对访客说明，避免被误认为真实模型。
+    if (scriptedNoticeEl) scriptedNoticeEl.hidden = state.mode === "preparation_live";
     if (panelNoteEl) {
       if (state.mode === "preparation_live") {
         panelNoteEl.textContent = "本地 live DeepSeek · 预算闸门";

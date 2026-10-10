@@ -104,6 +104,31 @@ body {
   animation: rise 0.7s ease-out 0.12s both;
 }
 
+.scripted-notice {
+  position: relative;
+  z-index: 1;
+  margin: 1rem clamp(1.25rem, 4vw, 3.5rem) 0;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--brass);
+  background: rgba(196, 163, 90, 0.08);
+  color: var(--paper);
+  font-family: var(--serif);
+  font-size: 0.86rem;
+  line-height: 1.6;
+}
+
+.scripted-notice strong {
+  margin-right: 0.5rem;
+  color: var(--brass-hot);
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.1em;
+}
+
+.scripted-notice a {
+  color: var(--brass-hot);
+}
+
 .stage {
   display: grid;
   grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.9fr);
